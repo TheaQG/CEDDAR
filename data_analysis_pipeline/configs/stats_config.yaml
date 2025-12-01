@@ -1,0 +1,41 @@
+global:
+  plot_only: false
+
+plotting:
+  save_cutout_example: true
+  example_date: "20101010"
+  fig_save_dir: ${env:DATA_FIGS_DIR}
+  show: false
+  save: true
+  visualize_data: true
+  visualize_aggregated: true
+  plot_stats: [mean, std, min, max] # Which statistics to plot
+  zero_floor_mm_day: 0.01
+
+statistics:
+  save_global_pixel_stats: true
+  stats_save_dir: ${env:STATS_SAVE_DIR}
+  aggregate: true
+  print_results: ["global"]
+  save_full_stats_npz: true
+
+data:
+  aggregation_time: monthly
+  data_dir: ${env:DATA_DIR}
+  n_workers: ${env:SLURM_CPUS_PER_TASK}
+  split: train # 'train', 'val', 'test' or 'all'
+  verbose: true # Whether to enable verbose logging during data loading (only for debugging, slows down processing)
+
+highres:
+  model: DANRA 
+  variables: ['temp', 'prcp']
+  agg_methods: ['mean', 'sum']
+  domain_size: [589, 789]
+  crop_region: [170, 350, 340, 520]
+
+lowres:
+  model: ERA5
+  condition_variables: ['temp', 'prcp', 'ewvf', 'nwvf', 'cape', 'msl', 'z_pl_1000', 'z_pl_250', 'z_pl_500', 'z_pl_850'] # ['prcp', 'temp', 'ewvf', 'nwvf', 'cape', ....] (ERA5 variables)
+  agg_methods: ['mean', 'sum', 'mean', 'mean', 'mean', 'mean', 'mean', 'mean', 'mean', 'mean']
+  domain_size: [589, 789]
+  crop_region: [170, 350, 340, 520]

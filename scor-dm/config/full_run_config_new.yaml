@@ -1,0 +1,188 @@
+# sbgm/config/default_config.yaml
+
+experiment:
+  name: sbgm_cfgTest
+  config_name: sbgm_cfgTest
+  # Date of the experiment, taken from the environment variable or set to current date
+  date: 14_08_2025 #${env:EXP_DATE} # Date for the experiment, 
+
+paths:
+  data_dir: ${env:DATA_DIR} # Directory for input data
+  checkpoint_dir: ${env:CKPT_DIR} # Directory for model checkpoints
+  checkpoint_name: sbgm_cfgTest.pth.tar  # Name of the checkpoint file
+  sample_dir: ${env:SAMPLE_DIR} # Directory for saving samples
+  evaluation_dir: ${env:EVAL_DIR} # Directory for evaluation figures, stats etc.
+  specific_fig_name: test__plot_fct # Specific figure name to save
+  path_save: ${env:SAMPLE_DIR} # Path to save figures
+  lsm_path: ${env:DATA_DIR}/data_lsm/truth_fullDomain/lsm_full.npz # Path to land-sea mask data
+  topo_path: ${env:DATA_DIR}/data_topo/truth_fullDomain/topo_full.npz # Path to topography data
+  stats_load_dir: ${env:STATS_LOAD_DIR} # Directory to load statistics from
+
+highres:
+  model: DANRA # Model type for high-resolution data
+  variable: prcp # Variable to process
+  data_size: [128, 128] # Size of the data to process
+  scaling_method: log_zscore # Method for scaling the data
+  full_domain_dims: [589, 789]
+  buffer_frac: 0.2
+  cutout_domains: [170, 350, 340, 520] # [x1, x2, y1, y2], coordinates for cutout
+
+# highres:
+#   model: DANRA # Model type for high-resolution data
+#   variable: prcp # Variable to process
+#   data_size: [128, 128] # Size of the data to process
+#   scaling_method: log_zscore # Method for scaling the data
+#   full_domain_dims: [589, 789]
+#   scaling_params: 
+#     glob_min: 0.0
+#     glob_max: 180
+#     glob_min_log: -18
+#     glob_max_log: 6
+#     glob_mean_log: -3.9685
+#     glob_std_log: 6.5996
+#     buffer_frac: 0.2
+#   cutout_domains: [170, 350, 340, 520] # [x1, x2, y1, y2], coordinates for cutout
+
+lowres:
+  model: ERA5 # Model type for low-resolution data
+  full_domain_dims: [589, 789]
+  condition_variables: ["temp", "prcp"] # Variables for conditioning
+  scaling_methods: ["zscore", "log_zscore"] # Scaling methods for low-res data
+  buffer_frac: 0.2
+  data_size: [128, 128] # Size of the low-res data
+  resize_factor: 1 # Factor to resize low-res data (used for testing at lower resolutions)
+  cutout_domains: [170, 350, 340, 520] # [x1, x2, y1, y2], coordinates for cutout
+# lowres:
+#   model: ERA5 # Model type for low-resolution data
+#   condition_variables: ["temp", "prcp"] # Variables for conditioning
+#   scaling_methods: ["zscore", "log_zscore"] # Scaling methods for low-res data
+#   scaling_params:
+#     - glob_mean: 8.9147
+#       glob_std: 6.0034
+#     - glob_min: 0.0
+#       glob_max: 80
+#       glob_min_log: -19
+#       glob_max_log: 5
+#       glob_mean_log: -2.7854
+#       glob_std_log: 5.3563
+#       buffer_frac: 0.2
+#   data_size: [128, 128] # Size of the low-res data
+#   cutout_domains: !!null # No cutout for low-res data
+#   resize_factor: 1 # Factor to resize low-res data (used for testing at lower resolutions)
+
+sampler:
+  sampler_type: pc_sampler # Type of sampler to use
+  n_timesteps: 1500 # Number of timesteps for sampling
+  time_embedding: 256 # Dimension of time embedding
+  last_fmap_channels: 512 # Channels in the last feature map
+  num_heads: 4 # Number of attention heads
+  block_layers: [2, 2, 2, 2] # Number of layers in each block
+
+data_handling:
+  cache_size: 0 # Size of the cache for data handling
+  cache_size_train: 0 # Size of the cache for data handling
+  cache_size_valid: 0 # Size of the cache for validation data
+  cache_size_gen: 0 # Size of the cache for test data
+  num_workers: ${env:SLURM_CPUS_PER_TASK} # Number of workers for data loading
+  n_gen_samples: 3 # Number of generated samples (for visualization)
+  pin_memory: true # Whether to pin memory for faster data transfer
+
+transforms:
+  scaling: true # Whether to apply scaling
+  force_matching_scale: false # Whether to force matching scale
+  sample_w_cutouts: true # Whether to sample with cutouts
+  
+
+stationary_conditions:
+  geographic_conditions:
+    sample_w_geo: true # Whether to sample with geographic conditions
+    sample_w_sdf: true # Whether to sample with SDF (Signed Distance Function)
+    geo_variables: ['lsm', 'topo'] # Geographic variables to include
+    topo_min: -12 # Minimum value for topography visualization
+    topo_max: 12 # Maximum value for topography visualization
+    norm_min: 0 # Minimum normalization value for topography
+    norm_max: 1 # Maximum normalization value for topography
+  seasonal_conditions:
+    sample_w_cond_season: true # Whether to sample with seasonal conditions
+    n_seasons: 4 # Number of seasons in the data
+    
+
+
+visualization:
+  transform_back_bf_plot: true # Whether to transform back before plotting
+  create_figs: true # Whether to create figures during visualization
+  save_figs: true # Whether to save figures 
+  plot_losses: true # Whether to plot losses
+  plot_initial_sample: true # Whether to plot first samples
+  show_figs: false # Whether to show figures during visualization
+  show_both_orig_scaled: false # Whether to show both original and scaled data
+  show_geo: true # Whether to show geographic information
+  show_ocean: true # Whether to show ocean data
+  force_matching_scale: false # Whether to force matching scale in visualization
+
+training:
+  seed: 42 # Random seed for reproducibility
+  device: cuda # Device to use for training (e.g., 'cuda' or 'cpu')
+  use_mixed_precision: false # Whether to use mixed precision training
+  verbose: true # Whether to print verbose output during training
+  batch_size: 16 # Batch size for training
+  learning_rate: 0.0005 # Learning rate for training
+  min_lr: 0.000001 # Minimum learning rate
+  lr_scheduler: ReduceLROnPlateau # Learning rate scheduler to use
+  lr_scheduler_params: # ReduceLROnPlateau
+    factor: 0.5 # Factor by which to reduce the learning rate
+    patience: 10 # Patience for the scheduler
+    threshold: 0.01 # Threshold for the scheduler
+    min_lr: 0.000001 # Minimum learning rate for the scheduler
+  # lr_scheduler_params: # StepLR
+    # step_size: 10 # Step size for the scheduler
+    # gamma: 0.1 # Gamma for the scheduler
+  # lr_scheduler_params: # CosineAnnealingLR
+    # T_max: 100 # Maximum number of iterations for the scheduler
+    # eta_min: 0.000001 # Minimum learning rate for the scheduler
+  weight_init: true # Whether to initialize weights
+  custom_weight_initializer: !!null # Custom weight initializer (if any)
+  with_ema: false # Whether to use Exponential Moving Average
+  load_ema: false # Whether to load EMA weights
+  ema_decay: 0.9999 # Decay rate for EMA
+  weight_decay: 0.000001 # Weight decay for regularization
+  epochs: 1500 # Number of epochs for training
+  loss_type: sdfweighted # Type of loss function to use
+  sdf_weighted_loss: true # Whether to use SDF weighted loss
+  optimizer: adam # Optimizer to use for training
+  load_checkpoint: false # Whether to load a checkpoint
+  early_stopping: true # Whether to use early stopping
+  early_stopping_params:
+    patience: 150 # Patience for early stopping
+    min_delta: 0.0001 # Minimum delta for early stopping
+
+classifier_free_guidance:
+  enabled: true # Whether to use classifier-free guidance
+  drop_prob: 0.1 # Dropout probability for guidance
+  guidance_scale: 7.0 # Scale for guidance
+
+evaluation:
+  n_gen_samples: 1 # Number of samples to generate
+  n_steps: 1500 # Number of generation steps
+  batch_size: 4 # Batch size for generation
+  device: cpu # Device to use for generation (e.g., 'cuda' or 'cpu')
+  seed: 42 # Random seed for generation
+  gen_type: ['multiple', 'single', 'repeated'] # Type of generation to perform, 
+  save_samples: true # Whether to save generated samples
+  save_path_generation: ${env:SAMPLE_DIR}/generated_samples.npz # Path to save generated samples
+  save_figs: true # Whether to save figures of generated samples
+  fig_name: generated_samples # Name for the generated sample figures
+  n_samples_threshold_plot: 4 # Maximum number of samples to show in plot
+  transform_back: true # Whether to transform back before saving samples
+  n_repeats: 3 # Number of times to repeat generation for evaluation
+  plot_examples: true # Whether to plot examples of generated samples
+  show_plots: false # Whether to show plots of generated samples
+  generation_dir: ${env:SAMPLE_DIR}/evaluations # Directory for generation outputs
+  mask_plots: false # Whether to mask plots or not
+  save_stats: true # Whether to save evaluation stats or not
+  plot_w_cond: true # Whether to plot conditions or not
+  plot_w_lsm: false # Whether to plot with lsm
+  eval_gen_type: ['multiple']
+  eval_stat_methods: ['pixel_stats', 'spatial_stats'] # Methods for evaluation statistics
+
+  

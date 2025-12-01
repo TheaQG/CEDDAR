@@ -1,0 +1,39 @@
+# evaluation_main.yaml
+
+data:
+  test_years: [2020, 2021, 2022]
+  seasons: [ALL, DJF, MAM, JJA, SON]
+  hr_mask_path: null # Path to high-res mask file (npz or zarr). If null, no mask is applied.
+  basins_path: null # Path to basin mask file (npz or zarr). If null, no basin metrics are computed.
+  lr_to_hr_resampler: "already_resampled" # or bilinear
+
+generation:
+  ensemble_size: 32
+  sampler:
+    steps: 40
+    sigma_min_mode: "max(edm_sigma_min, sigma_star)" # Optional, from sigma* logic
+    seed: 1234
+    
+evaluation:
+  thresholds_mm: [1.0, 5.0, 10.0] # Thresholds in mm/day for categorical metrics
+  fss_scales_km: [5, 10, 20, 50] # Scales in km for FSS metric
+  grid_km_per_px: 2.5 # Grid resolution in km/px for FSS metric
+  wet_threshold_mm: 1.0 # Threshold in mm/day for wet/dry classification when computing categorical metrics
+  reliability_bins: 10 # Number of bins for reliability diagram
+  spread_skill_bins: 10 # Number of bins for spread-skill plot
+  pit_bins: 20 # Number of bins for PIT histogram
+  psd_ignore_low_k_bins: 1 # Number of lowest k bins to ignore when computing PSD metrics (to avoid noise)
+
+  # random reference settings (for FSS)
+  random_ref:
+    type: "phase_randomized" # or "spatial_shuffle" or "iid_marginal"
+    per_day: true # Whether to generate a new random reference for each day (true) or use a single reference for the whole dataset (false)
+
+output:
+  root_dir: "saved/eval_run_2020_2022/"
+  save_ensembles: true
+  save_pmm: true
+  figures: true
+  tables: true
+  case_days: ["2021-08-07", "2020-10-19", "2022-02-17"] # List of case study days to generate detailed plots for
+  log_every: 20

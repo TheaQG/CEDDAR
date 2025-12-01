@@ -1,0 +1,40 @@
+# cfg/era5_pipeline.yaml
+area: [60, -80, 40, 40]        # N,W,S,E  (edit!)
+dataset: reanalysis-era5-single-levels
+format: netcdf
+variables:
+  2m_temperature:
+    short: t2m
+    daily_stat: daymean
+  total_precipitation:
+    short: tp
+    daily_stat: daysum
+  potential_evaporation:
+    short: pev
+    daily_stat: daymean
+  convective_available_potential_energy:
+    short: cape
+    daily_stat: daymax
+  vertical_integral_of_northward_water_vapour_flux:
+    short: wvf_north
+    daily_stat: daymean
+  vertical_integral_of_eastward_water_vapour_flux:
+    short: wvf_east
+    daily_stat: daymean
+  mean_sea_level_pressure:
+    short: msl
+    daily_stat: daymean
+pressure_levels: []        # Set to None for single-level data
+years: [1991, 2020]            # inclusive range
+max_workers: 3
+tmp_dir: /tmp/era5_downloads
+grid_file: /scratch/project_465001695/quistgaa/Data/Data_ERA5_tmp/grid/mygrid_danra_small
+weights_file: /scratch/project_465001695/quistgaa/Data/Data_ERA5_tmp/weights/ERA5_to_DANRA_bil_weights_new.nc
+# grid_file: /Users/au728490/OneDrive - Aarhus universitet/PhD_AU/Python_Scripts/Data/mygrid_danra_small
+# weights_file: /Users/au728490/OneDrive - Aarhus universitet/PhD_AU/Python_Scripts/Data/ERA5_to_DANRA_bil_weights_new.nc
+lumi:
+  user:  quistgaa
+  host:  lumi.csc.fi
+  raw_dir:   /scratch/project_465001695/quistgaa/Data/Data_ERA5_tmp/raw/{var}/
+  daily_dir: /scratch/project_465001695/quistgaa/Data/Data_ERA5_tmp/daily/{var}/        # after daymean
+  npz_dir:   /scratch/project_465001695/quistgaa/Data/Data_ERA5_tmp/npz/{var}/           # final split

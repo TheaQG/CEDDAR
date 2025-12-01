@@ -1,0 +1,44 @@
+global:
+  plot_only: false
+run_name: comparison_run_001  # Name for this comparison run
+
+comparison:
+  variables: [temp, prcp]             # Variable to compare (must exist in both HR and LR)
+  transformations: {prcp: log_zscore, temp: zscore} # Per-variable transformations
+  modes:
+    # - mode: distribution
+    #   comparison_types: ['power_spectra', 'pixel_distributions', 'seasonal_histograms']
+    #   max_days: false
+    - mode: field
+      comparison_types: ['field_statistics', 'qualitative_visual']
+      dates: ["20000222", "20101010", "20101030"]
+      combine_into_grid: true
+      mask: null
+      n_max: 5
+      add_dk_outline: true       # NEW: overlay DK outline on qualitative panels
+      include_difference: true   # NEW: add per-row Difference (HR - LR) column
+    # - mode: timeseries
+  split: all                 # Data split: 'train', 'valid', 'test', or 'all'
+  save: true                 # Whether to save figures to disk
+  show: false                # Whether to display figures interactively
+  save_path: ${env:DATA_FIGS_DIR} #${env:EVAL_DIR}/comparison_outputs/prcp
+  print_results: true        # Whether to print metrics to stdout
+
+paths:
+  data_dir: ${env:DATA_DIR}  # Base directory for all model data
+
+data:
+  n_workers: ${env:SLURM_CPUS_PER_TASK}                # Controls parallelism in DataLoader
+  verbose: false             # More logging during file loading
+
+highres:
+  model: DANRA
+  domain_size: [589, 789]
+  crop_region: [170, 350, 340, 520]
+  grid_spacing_km: 2.5
+
+lowres:
+  model: ERA5
+  domain_size: [589, 789]
+  crop_region: [170, 350, 340, 520]
+  grid_spacing_km: 2.5

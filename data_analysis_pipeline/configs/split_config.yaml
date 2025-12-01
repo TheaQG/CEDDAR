@@ -1,0 +1,29 @@
+# 
+
+paths:
+  data_dir: ${env:DATA_DIR}
+
+highres:
+  variables: ['prcp', 'temp']
+  filtered: true
+  filter_str: all_filtered
+  model: DANRA
+  domain_size: [589, 789]
+
+lowres:
+  condition_variables: [temp, prcp, ewvf, nwvf, cape, msl, z_pl_250, z_pl_500, z_pl_850, z_pl_1000]
+  model: ERA5
+  domain_size: [589, 789]
+
+split_params:
+  run_split: true
+  run_convert_to_zarr: true
+  split_type: Time
+  data_split_params: 
+    train_years: [1990, 2016]
+    valid_years: [2016, 2019]
+    test_years: [2019, 2022] #{'train_frac': 0.7, 'valid_frac': 0.1, 'test_frac': 0.2}
+  overwrite: true
+  overwrite_zarr: true
+  keep_npz: false
+  seed: 42

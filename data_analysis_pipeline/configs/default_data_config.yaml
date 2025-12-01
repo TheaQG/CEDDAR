@@ -1,0 +1,18 @@
+# data_analysis_pipeline/configs/default_data_config.yaml
+
+statistics:
+  variable: prcp # Variable to analyze
+  model: DANRA # Model type for analysis
+  split_type: all # Type of data split for analysis, (e.g., 'all', 'train', 'test', 'valid')
+  data_dir: ${env:DATA_DIR} # Directory for input data
+  create_figs: true # Whether to create figures during analysis
+  show_figs: false # Whether to display figures during analysis
+  save_stats: true # Whether to save statistics
+  save_figs: true # Whether to save figures
+  print_final_stats: true # Whether to print final statistics
+  fig_path: ${env:EVAL_DIR}/figures # Path to save figures
+  stats_path: ${env:EVAL_DIR}/stats # Path to save statistics
+  transformations: zscore # Transformations to apply to the data, choose from ['zscore', 'log_zscore', 'log', 'log01', 'log_minus1_1', 'none']
+  show_only_transformed: false # Whether to show only transformed data
+  time_agg: daily # Time aggregation level, choose from ['daily', 'monthly', 'yearly']
+  n_workers: ${env:SLURM_CPUS_PER_TASK} # Number of workers for data loading

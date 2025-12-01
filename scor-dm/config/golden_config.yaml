@@ -1,0 +1,254 @@
+# ===============================
+# Experiment: paper1_expA  (focus: extremes & spread)
+# ===============================
+experiment_name: golden_config
+
+# -------------------------------
+# PATHS
+# -------------------------------
+paths:
+  data_dir: ${env:DATA_DIR}
+  checkpoint_dir: ${env:CHECKPOINT_DIR}
+  training_sample_dir: ${env:SAMPLE_DIR}
+  evaluation_dir: ${env:EVALUATION_DIR}
+  log_dir: ${env:LOG_DIR}
+  lsm_dir: ${env:DATA_DIR}/data_lsm/truth_fullDomain/lsm_full.npz
+  topo_dir: ${env:DATA_DIR}/data_topo/truth_fullDomain/topo_full.npz
+  stats_load_dir: ${env:STATS_DIR}
+
+# -------------------------------
+# DATA / CONDITIONING
+# -------------------------------
+data:
+  # HIGH RESOLUTION DATA (TARGET)
+  highres:
+    hr_var: prcp
+    scaling: zscore
+    buffer_frac: 0.05
+    model: DANRA
+    data_size: [128, 128]
+    pixel_size_km: 2.5
+    full_domain_dims: [589, 789]
+    cutout_domains: [170, 350, 340, 520]
+    stationary_cutout:
+      enabled: false
+      bounds: [200, 328, 380, 508]
+  # LOW RESOLUTION DATA (CONDITIONS)
+  lowres:
+    lr_vars: [prcp, temp]
+    scaling: [zscore, log_zscore]
+    buffer_frac: 0.05
+    model: ERA5
+    data_size: [128, 128]
+    pixel_size_km: 2.5
+    resize_factor: 1
+    cutout_domains: [170, 350, 340, 520]
+    cutout_name: danra
+    stationary_cutout:
+      enabled: false
+      bounds: [200, 328, 380, 508]
+  # STATISTICAL SCALING
+  scaling: # former 'transforms'
+    enabled: true
+    scaling_split: cache_size_train
+    log_eps: 0.01 # only used if log scaling is selected
+  # GEOGRAPHICAL CONDITIONS
+  geo_conds:
+    enabled: true
+    geo_vars: [topo, lsm]
+    scaling: [minmax, minmax]
+    topo_range: [-12, 12] 
+    topo_norm: [0, 1]
+    lsm_weights: [0.5, 1]
+    model: static
+  # TEMPORAL CONDITIONS
+  seasonal_conds:
+    enabled: true
+    resolution: daily
+    use_sin_cos_emb: true
+    use_leap_years: true
+
+# -------------------------------
+# MODEL ARCHITECTURE AND DIFFUSION
+# -------------------------------
+model:
+  type: edm
+  # UNet ARCHITECTURE
+  unet_params:
+    input_channels: 3
+    output_channels: 1
+    channels: 64
+    channel_multipliers: [1, 2, 4, 8]
+    num_res_blocks: 2
+    attention_resolutions: [16, 8]
+    use_fp16: true
+    use_resize_conv: false
+    decoder:
+      norm: group
+      gn_groups: 8
+      activation: SiLU
+  # DIFFUSION / EDM
+  edm_params:
+    sampling_steps: 40
+    P_mean: -1.5
+    P_std: 1.2
+    sigma_data: 1.0
+    sigma_min: 0.002
+    sigma_max: 80
+    rho: 7
+    S_churn: 6.0
+    S_min: 40.0
+    S_max: 80.0
+    S_noise: 1.10
+    predict_residual: true
+    baseline_space: hr
+  # SAMPLER 
+  sampler: # Some of these should be in unet_params ? Definitely...
+    sampler_type: edm_sampler
+    n_timesteps: 56
+    time_embedding: 256
+    last_fmap_channels: 512
+    num_heads: 4
+    block_layers: [2, 2, 2, 2]
+  # CLASSIFIER FREE GUIDANCE
+  classifier_free_guidance:
+    enabled: true
+    prob_drop_lr: 0.1
+    drop_prob_geo: 0.1
+    guidance_scale: 0.6
+    null_label_id: 0
+    null_scalar_value: 0.0
+    guidance_scale_max: 3.0
+    sigma_weighted: true
+    drop_lr_ups_in_uncond: true
+  # RAIN GATE MODULE
+  rain_gate:
+    enabled: true
+    included: [lsm, topo, lr_baseline]
+    wet_threshold_mm: 0.5
+    loss_weight_bce: 0.06
+    pos_weight: 1.15
+    c_hidden: 16
+    learning_rate: 0.0002
+
+
+# -------------------------------
+# TRAINING AND OPTIMIZATION
+# -------------------------------
+training:
+  seed: 504
+  device: cuda
+  verbose: true
+  epochs: 400
+  batch_size: 16
+  load_checkpoint: false
+  detect_anomaly: false
+  optimizer:
+    type: AdamW
+  # DATA HANDLING
+  data_handling:
+    cache_size: 0
+    cache_size_train: 0
+    cache_size_valid: 0
+    cache_size_gen: 0
+    num_workers: ${env:SLURM_CPUS_PER_TASK:4}
+    pin_memory: true
+  # OPTIMIZATION 
+  learning_rate:
+    lr_train: 1.0e-4
+    lr_scheduler: 
+      type: ReduceLROnPlateau
+      factor: 0.5
+      patience: 15
+      threshold: 0.0001
+      min_lr: 1.0e-6
+  # EARLY STOPPING
+  early_stopping:
+    enabled: false
+    patience: 75
+    min_delta: 0.0001
+  # INITIALIZATION 
+  weights:
+    initialize: true
+    weight_init: !!null
+  # EXPONENTIAL MOVING AVERAGE (EMA)
+  ema:
+    enabled: true
+    load_ema: false
+    ema_decay: 0.9999
+    weight_decay: 0.01
+    ema_warmup_steps: 2000
+    eval_use_ema: true
+  # LOSS FUNCTIONS AND SETTINGS
+  loss:
+    sdf_weighted: 
+      enabled: true
+      range: [0.5, 1.0]
+    rain_gate: # Whether to use the rain gate module for weighting the loss.
+      reweight_enabled: true
+      weight_strategy: prob 
+      weight_alpha: 0.8
+      prob_gamma: 2.0
+      clip_max: 3.0
+      binary_threshold: 0.5
+      detach_weights: true
+      reweight_warm_start_epochs: 10
+      reweight_ramp_epochs: 10
+    scale_control_loss:
+      enabled: false
+      method: auto_from_psd
+      preserve_scale_km: null
+      window: HANDLING
+      c_sigma: 1.0
+  # MONITORING DURING TRAINING
+  monitoring:
+    # MONITORING: VISUALIZATIONS DURING TRAINING
+    enabled: true
+    land_only: true
+    visualizations:
+      enabled: true
+      plot_every_n_epochs: 5
+      plot_every_n_steps: 1000
+      transform_back_bf_plot: true
+      save: true
+      show: false
+      plots_n_steps: [loss, hr_lr_corr, edm_cosine]
+      plots_n_epoch: [loss, initial, samples, fss, psd_slope, quantiles, weight_map]
+      end_of_epoch_evals:
+        eval_batches: 1
+        fss_km: [5, 10, 20, 50]
+        fss_threshold_mm: [1, 5, 10, 20]
+        psd_band: [0.05, 0.40]
+        wet_day_threshold: 1.0
+      plots_other: [initial, samples]
+      plot_params:
+        show_both_orig_scaled: false
+        show_geo: false
+        show_ocean: false
+        overlay_lsm_contour: true
+        add_boxplot_per_channel: true
+        add_boxplot_summary: true
+        plot_dual_lr_channel: 0
+    # MONITORING: DIAGNOSTICS DURING TRAINING
+    diagnostics_stats: 
+      enabled: true
+      train_postfix_every: 10
+      warn_if_abs_gt: 15.0
+      warn_if_phys_gt: 350.0
+
+      
+
+# -------------------------------
+# QUICKLOOK 
+# -------------------------------
+quicklook:
+
+# -------------------------------
+# GENERATION 
+# -------------------------------
+generation:
+
+# -------------------------------
+# EVALUATION 
+# -------------------------------
+evaluation:

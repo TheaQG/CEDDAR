@@ -1,0 +1,439 @@
+experiment:
+  name: baselines
+  config_name: baselines
+  # Date of the experiment, taken from the environment variable or set to current date
+  date: ${env:EXP_DATE} # Date for the experiment, 
+
+paths:
+  data_dir: ${env:DATA_DIR} # Directory for input data
+  checkpoint_dir: ${env:CKPT_DIR} # Directory for model checkpoints
+  checkpoint_name: sbgm_cfgTest.pth.tar  # Name of the checkpoint file
+  sample_dir: ${env:SAMPLE_DIR} # Directory for saving samples
+  evaluation_dir: ${env:EVAL_DIR} # Directory for evaluation figures, stats etc.
+  log_dir: ${env:LOG_DIR} # Directory for logs
+  specific_fig_name: test__plot_fct # Specific figure name to save
+  path_save: ${env:SAMPLE_DIR} # Path to save figures
+  lsm_path: ${env:DATA_DIR}/data_lsm/truth_fullDomain/lsm_full.npz # Path to land-sea mask data
+  topo_path: ${env:DATA_DIR}/data_topo/truth_fullDomain/topo_full.npz # Path to topography data
+  slope_path: ${env:DATA_DIR}/data_slope/truth_fullDomain/slope_full.npz # Path to slope data
+  stats_load_dir: ${env:STATS_LOAD_DIR} # Directory to load statistics from
+  root: ${env:SAMPLE_DIR}
+
+highres:
+  model: DANRA # Model type for high-resolution data
+  variable: prcp # Variable to process
+  data_size: [128, 128] # Size of the data to process
+  scaling_method: log_zscore # Method for scaling the data
+  full_domain_dims: [589, 789]
+  buffer_frac: 0.05
+  cutout_domains: [170, 350, 340, 520] # [x1, x2, y1, y2], coordinates for cutout
+  cutout_name: danra # Name of the cutout (for when wanting North Atlantic later, HR and LR cutouts can be different)
+  stationary_cutout: # Whether to use a stationary cutout or random crop from cutout domain (i.e. shifting geographic domain slightly)
+    enabled: false # Whether to use a stationary cutout or random crop from cutout domain (i.e. shifting geographic domain slightly)
+    bounds: [200, 328, 380, 508] # [y0, y0+128, x0, x0+128] bounds in full domain for HR data (for stationary cutout)
+
+lowres:
+  model: ERA5 # Model type for low-resolution data
+  full_domain_dims: [589, 789]
+  condition_variables: ["prcp"] # Variables for conditioning
+  scaling_methods: ["log_zscore"] # Scaling methods for low-res data
+  dual_lr: true # Whether to use dual (one scaled w. global (HR+LR) statistics, one with LR stats) low-res (prcp or temp) data. When true, LR parsed in two channels, one scaled w. LR stats, one w. HR+LR stats
+  lr_main_var_scale: "LR" # Which statistics to use for scaling the main low-res variable (prcp or temp) when dual_lr is False ("LR": lr only, "HR": hr only, "HR_LR": both)
+  lr_main_var_scale_method: "log_zscore" # Which scaling method to use for the main low-res variable (prcp or temp) when dual_lr is False
+  buffer_frac: 0.05
+  data_size: [128, 128] # Size of the low-res data
+  resize_factor: 1 # Factor to resize low-res data (used for testing at lower resolutions)
+  cutout_domains: [170, 350, 340, 520] # [x1, x2, y1, y2], coordinates for cutout
+  cutout_name: danra # Name of the cutout (for when wanting North Atlantic later, HR and LR cutouts can be different). If HR and LR cutouts are the same, they will be co-located
+  stationary_cutout: # Whether to use a stationary cutout or random crop from cutout domain
+    enabled: false # Whether to use a stationary cutout or random crop from cutout domain (i.e. shifting geographic domain slightly)
+    bounds: [200, 328, 380, 508] # [y0, y0+128, x0, x0+128] bounds in full domain for HR data (for stationary cutout)
+
+sampler:
+  sampler_type: edm_sampler #pc_sampler # Type of sampler to use
+  n_timesteps: 56 # Number of timesteps for sampling (EDM: suggested 35-50)
+  time_embedding: 256 # Dimension of time embedding
+  last_fmap_channels: 512 # Channels in the last feature map
+  num_heads: 4 # Number of attention heads
+  block_layers: [2, 2, 2, 2] # Number of layers in each block
+
+data_handling:
+  cache_size: 0 # Size of the cache for data handling
+  cache_size_train: 0 # Size of the cache for data handling
+  cache_size_valid: 0 # Size of the cache for validation data
+  cache_size_gen: 0 # Size of the cache for test data
+  num_workers: ${env:SLURM_CPUS_PER_TASK} # Number of workers for data loading
+  n_gen_samples: 8 # Number of generated samples (for visualization)
+  pin_memory: true # Whether to pin memory for faster data transfer
+
+transforms:
+  scaling: true # Whether to apply scaling
+  scaling_split: all # Which data split to use for computing scaling statistics (train, valid, test or all)
+  force_matching_scale: false # Whether to force matching scale
+  sample_w_cutouts: true # Whether to sample with cutouts
+  prcp_eps: 0.01 # Small epsilon value for precipitation data to avoid log(0)
+  
+
+stationary_conditions:
+  geographic_conditions:
+    sample_w_geo: true # Whether to sample with geographic conditions
+    sample_w_sdf: true # Whether to sample with SDF (Signed Distance Function)
+    geo_variables: ['lsm', 'topo'] # Geographic variables to include, 'slope' can be added
+    with_mask: false # Whether to include classifier-free guidance mask
+    topo_min: -12 # Minimum value for topography visualization
+    topo_max: 12 # Maximum value for topography visualization
+    norm_min: -1 # Minimum normalization value for topography and slope
+    norm_max: 1 # Maximum normalization value for topography and slope
+    max_land_weight: 1.0 # Maximum weight for land in SDF
+    min_ocean_weight: 0.5 # Minimum weight for ocean in SDF
+    topo_dx_m: 1000.0 # Grid spacing in meters (x)
+    topo_dy_m: 1000.0 # Grid spacing in meters (y)
+  seasonal_conditions:
+    sample_w_cond_season: true # Whether to sample with seasonal conditions
+    use_sin_cos_embedding: true # Whether to use sin/cos embedding for seasonal conditions
+    use_leap_years: true # Whether to account for leap years in seasonal conditions
+    n_seasons: 4 # Number of seasons in the data
+    
+
+visualization:
+  transform_back_bf_plot: true # Whether to transform back before plotting
+  create_figs: true # Whether to create figures during visualization
+  gen_and_plot_every_n_epochs: 10 # Frequency (in epochs) to generate samples during training
+  save_figs: true # Whether to save figures 
+  plot_losses: true # Whether to plot losses
+  plot_initial_sample: true # Whether to plot first samples
+  show_figs: false # Whether to show figures during visualization
+  show_both_orig_scaled: false # Whether to show both original and scaled data
+  show_geo: true # Whether to show geographic information
+  show_ocean: false # Whether to show ocean data
+  overlay_lsm_contour: true # Whether to overlay contour on initial plot (can be added to other plots if needed)
+  force_matching_scale: true # Whether to force matching scale in visualization
+  add_boxplot_per_panel: true # Whether to add boxplot per panel in visualization
+  add_boxplot_summary: true # Whether to add summary boxplot in visualization
+  plot_dual_lr_channel: 0 # What LR channel to plot when dual_lr is True (0 or 1)
+  # summary_boxplot_keys: # <-- optional; overrides default [generated, hr, matching-lr]
+  #   - generated
+  #   - prcp_hr
+  #   - prcp_lr
+
+
+model:
+  use_resize_conv: false # true -> bilinear + 3x3, false -> transposed conv
+  decoder_norm: "group" # Type of normalization in the decoder "instance" | "group"
+  decoder_gn_groups: 8 # Number of groups for group normalization (if used)
+  decoder_activation: "SiLU" # Activation function in the decoder "ReLU" | "SiLU" | "GELU" (SiLU smoother than ReLU)
+
+
+training:
+  seed: 504 # Random seed for reproducibility
+  device: cuda # Device to use for training (e.g., 'cuda' or 'cpu')
+  use_mixed_precision: false # Whether to use mixed precision training
+  use_grad_clip: false # Whether to use gradient clipping
+  grad_clip_norm: 0.0 # Gradient clipping norm (sset to None to disable)
+  verbose: true # Whether to print verbose output during training
+  batch_size: 16 # Batch size for training
+  learning_rate: 0.0002 # Learning rate for training
+  min_lr: 0.000001 # Minimum learning rate
+  lr_scheduler: ReduceLROnPlateau # Learning rate scheduler to use
+  lr_scheduler_params: # ReduceLROnPlateau
+    factor: 0.5 # Factor by which to reduce the learning rate
+    patience: 15 # Patience for the scheduler
+    threshold: 0.01 # Threshold for the scheduler
+    min_lr: 1e-6 # Minimum learning rate for the scheduler
+  weight_init: true # Whether to initialize weights
+  custom_weight_initializer: !!null # Custom weight initializer (if any) - currently not used, but should be 'kaiming', 'he' or 'xavier'
+  with_ema: false # Whether to use Exponential Moving Average. If false, all EMA params below are ignored
+  eval_use_ema: true # Whether to use EMA weights for evaluation (validation and generation)
+  load_ema: true # Whether to load EMA weights
+  ema_decay: 0.999 # Decay rate for EMA. 0.999-0.9995 is a good range for per-step decay with batch size 16-32. Lower for smaller batches, higher for larger batches.
+  weight_decay: 0.000001 # Weight decay for regularization
+  ema_warmup_steps: 2000 # Number of warmup steps for EMA
+  epochs: 400 # Number of epochs for training
+  loss_type: sdfweighted # Type of loss function to use
+  sdf_weighted_loss: true # Whether to use SDF weighted loss
+  optimizer: adamw # Optimizer to use for training (adam, adamw, sgd) (adamw for better decay)
+  load_checkpoint: false # Whether to load a checkpoint
+  early_stopping: true # Whether to use early stopping
+  early_stopping_params:
+    patience: 75 # Patience for early stopping
+    min_delta: 0.0001 # Minimum delta for early stopping
+  train_use_amp: false # Whether to use automatic mixed precision
+  train_postfix_every: 10 # Frequency of printing training postfix
+  detect_anomaly: false # Whether to detect anomalies (NaNs/Infs) during training
+  debug_device_asserts: false # Whether to enable device asserts for debugging
+  debug_pre_sigma_div: false # Whether to enable pre-sigma division debugging in the model
+
+classifier_free_guidance:
+  enabled: false # Whether to use classifier-free guidance
+  drop_prob_lr: 0.1 # Dropout probability for guidance on LR conditions, [0.1 - 0.2]. If over-conditioning (model copies LR too much), increase.
+  drop_prob_geo: 0.1 # Optional: lower drop for static geo; else omit and use drop_prob [0.05-0.1]. If spatial artifacts when geo present, reduce.. Keep drop_prob_geo <= drop_prob
+  guidance_scale: 1.0 # Scale for guidance 
+  null_label_id: 0 # Use 0 as "null" in label embedding 
+  null_scalar_value: 0.0 # Use -1 as "null" for continuous scalar conditions (e.g. seasons as cos/sin)
+  guidance_scale_max: 3.0 # Maximum scale for guidance
+  sigma_weighted: true # Whether to weight guidance scale with sigma (True recommended, False for ablation)
+  drop_lr_ups_in_uncond: true # Whether to drop lr_ups in unconditional branch (True recommended, False for ablation)
+
+edm:
+  enabled: true # Whether to use EDM (Elucidated Diffusion Models)
+  P_mean: -1.5 # Mean P for EDM
+  P_std: 1.2 # Standard deviation of P for EDM
+  sigma_data: 1.0 # Data is assumed N(0,1) after normalization
+  sigma_min: 0.002 # Minimum sigma for EDM
+  sigma_max: 80 # Maximum sigma for EDM
+  rho: 7.0 # Rho parameter for EDM
+  # Starting with modest churn, can increase later if samples too smooth
+  S_churn: 2.0 # Churn parameter for EDM
+  S_min: 40.0 # Minimum S for EDM (about 0.5 * sigma_max, typically)
+  S_max: 80.0 # Maximum S for EDM (typically equal to sigma_max)
+  S_noise: 1.0 # Noise parameter for EDM
+  sampling_steps: 40 # Number of sampling steps for EDM (suggested: 35-50)
+  predict_residual: true # Whether to predict residual from LR baseline
+  baseline_space: hr # Which z-space to use for lr_ups baseline: 'hr' | 'lr' | 'auto' (auto prefers *_hrspace if available)  
+  drop_lr_ups_in_uncond: true # Whether to drop lr_ups in unconditional branch (True recommended, False for ablation)
+
+rain_gate:
+  enabled: true # Whether to use rain-gating auxiliary loss
+  include_lsm: true # Whether to include land-sea mask as input to rain-gate head
+  include_topo: true # Whether to include topography as input to rain-gate head
+  include_lr_baseline: false # Whether to include lr_baseline as input to rain-gate head
+  wet_threshold_mm: 0.3 # Threshold in mm/day for wet/dry classification when computing BCE loss
+  wet_threshold_modelSpace: -10.0 # Threshold in model space (e.g. z-score) for wet/dry classification when computing BCE loss
+  loss_weight_bce: 0.02 # Weight of the BCE loss for rain gate
+  pos_weight: 1.15 # Positive class weight for BCE loss to handle class imbalance
+  c_hidden: 16 # Number of channels in hidden layers of rain-gate head
+  learning_rate: 0.0002 # Learning rate for rain gate head
+
+  # Selective, softer, reweighting of diffusion loss based on rain-gate predictions
+  reweight_enabled: false # Whether to reweight diffusion loss based on rain-gate predictions
+  weight_strategy: binary # Strategy for reweighting: 'prob' (use predicted probabilities), 'binary' (use binary predictions)
+  weight_alpha: 0.5 # Extra weight on wet pixels when reweighting
+  prob_gamma: 2.0 # Exponent for probabilities when reweighting (if using 'prob' strategy)
+  clip_max: 1.8 # Maximum clipping value for weights when reweighting
+  detach_weights: true # Whether to detach weights from computation graph when reweighting (recommended)
+  reweight_warm_start_epochs: 10 # Delay reweighting until after this many epochs (allows rain-gate to learn first)
+  reweight_ramp_epochs: 10 # Optional: ramp strength for 5 epochs after warm start
+  binary_threshold: 0.5 # Threshold for binary classification when reweighting (if using 'binary' strategy)
+
+scale_control:
+  enabled: false # Whether to use scale control auxiliary loss
+  method: auto_from_psd # or 'manual'
+  preserve_scale_km: null # If set, overrides auto_from_psd
+  pixel_km: 2.5 # Pixel size in km (for auto_from_psd)
+  land_only: true # Whether to compute scale control loss on land only
+  window: hann # Window type for FFT (e.g., 'hann', 'hamming', 'blackman')
+  c_sigma: 1.0 # 0.8-1.2 for balancing low/high freq emphasis
+
+ve_dsm: # Default parameters for VE-DSM loss
+  t_eps: 1e-3 # Small epsilon for VE-DSM
+
+monitoring:
+  edm_metrics_enabled: true # Whether to enable EDM metrics monitoring
+  edm_metrics_every: 50 # Frequency (in steps) to compute EDM metrics
+  edm_cosine_metric: true # Whether to compute the cosine similarity metric
+  plot_every_n_epochs: 5 # Frequency (in epochs) to plot training metrics
+  backtransform_extreme_prcp: true # Whether to back-transform extreme precipitation for monitoring
+  end_of_epoch:
+    enabled: true # Whether to enable end-of-epoch monitoring
+    eval_batches: 1 # How many gen batches to use for end-of-epoch evaluation
+    grid_km_per_px: 2.5 # Grid spacing in km/px
+    fss_km: [5, 10, 20] # FSS thresholds in km 
+    fss_threshold_mm: 1.0 # 1 mm/day event FSS; adjust if needed
+    psd_band: [0.05, 0.40] # radial frequency fraction for slope fit
+    wet_day_threshold_mm: 0.1 # Threshold for wet day in mm/day 
+    psd_compare_to_hr: true # Whether to compare generated samples PSD to high-resolution data PSD
+    quantiles_compare_to_hr: true # Whether to compare generated samples quantiles to high-resolution data quantiles
+
+diagnostics:
+  per_batch_stats: true # Whether to compute per-batch statistics
+  log_every: 100 # Frequency (in steps) to log training statistics
+  model_outputs: false # Whether to log model outputs
+  warn_if_abs_gt: 15.0 # Warn if any abs value greater than this
+  warn_if_phys_gt: 350.0 # Warn if any physical value greater than this (after back-transform)
+  save_histograms: true # Whether to save histograms of model outputs
+  histogram_bins: 200 # Number of bins for histograms
+  histogram_range: null # Range for histograms (null for automatic range)
+  histogram_every: 500 # Frequency (in steps) to save histograms
+  histogram_path: ${env:LOG_DIR}/histograms # Path to save histograms
+
+evaluation:
+  n_gen_samples: 1 # Number of samples to generate
+  n_steps: 56 # Number of generation steps
+  batch_size: 8 # Batch size for generation
+  device: cpu # Device to use for generation (e.g., 'cuda' or 'cpu')
+  seed: 504 # Random seed for generation
+  gen_type: ['multiple', 'single', 'repeated'] # Type of generation to perform, 
+  save_samples: true # Whether to save generated samples
+  save_path_generation: ${env:SAMPLE_DIR}/generated_samples.npz # Path to save generated samples
+  save_figs: true # Whether to save figures of generated samples
+  fig_name: generated_samples # Name for the generated sample figures
+  n_samples_threshold_plot: 4 # Maximum number of samples to show in plot
+  transform_back: true # Whether to transform back before saving samples
+  transform_lr_conditions: true # Whether to transform back LR conditions before saving samples
+  lr_dual_bt_target: HR # How to map dual channel 0; HR (default) or LR stats
+  n_repeats: 3 # Number of times to repeat generation for evaluation
+  plot_examples: true # Whether to plot examples of generated samples
+  show_plots: false # Whether to show plots of generated samples
+  show_figs: false 
+  show_ocean: false # Whether to show ocean in generated sample plots
+  generation_dir: ${env:SAMPLE_DIR}/evaluations # Directory for generation outputs
+  mask_plots: false # Whether to mask plots or not
+  save_stats: true # Whether to save evaluation stats or not
+  plot_w_cond: true # Whether to plot conditions or not
+  plot_w_lsm: false # Whether to plot with lsm
+  eval_gen_type: ['multiple']
+  eval_land_only: true # Whether to evaluate on land only (mask out ocean vals)
+  eval_stat_methods: ['pixel_stats', 'spatial_stats'] # Methods for evaluation statistics
+  stationary_cutout:
+    hr_enabled: true # Whether to use a stationary cutout or random crop from cutout domain (i.e. shifting geographic domain slightly)
+    lr_enabled: true # Whether to use a stationary cutout or random crop from cutout domain (i.e. shifting geographic domain slightly)
+    cutout_domains: [170, 350, 340, 520] # 
+    hr_bounds: [200, 328, 380, 508] # [y0, y0+128, x0, x0+128] bounds in full domain for HR data (for stationary cutout)
+    lr_bounds: [200, 328, 380, 508] # [y0, y0+128, x0, x0+128] bounds in full domain for LR data (for stationary cutout)
+
+generation:
+  fixed_dates: true # Whether to use same fixed dates every epoch for generation
+  random_dates: false # Whether to use random dates for generation (either random or sequential)
+  start_index: 0 # Start index for fixed dates
+  seed: 504 # Random seed for fixed dates
+
+  logging:
+    file_level: INFO # Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    console_level: WARNING # Console logging level
+    # log_to_file: true # Whether to log to a file
+    # log_to_console: true # Whether to log to console
+    # log_dir: ${env:LOG_DIR} # Directory for logs
+    # log_filename: training.log # Filename for the log file
+    # save_config: true # Whether to save the configuration to a file
+    # config_filename: config.yaml # Filename for the saved configuration
+
+full_gen_eval:
+  seed: 504 # Random seed for full evaluation
+  ensemble_size: 32 # Number of ensemble members to generate for full evaluation
+  max_dates: 800 # Maximum number of dates to evaluate (set to -1 for all available dates)
+  do_prob: true # Whether to do probabilistic generation evaluation
+  do_cap: true # Whether to do capability generation evaluation
+  do_ext: true # Whether to do extreme generation evaluation
+  gen_dir: null # Directory for generation outputs (if null, use default)
+  eval_dir: null # Directory for evaluation outputs (if null, use default)
+  grid_km_per_px: 2.5 # Grid spacing in km/px
+  fss_scales_km: [5, 10, 20] # FSS scales in km
+  thresholds_mm: [1.0, 5.0, 10.0] # Thresholds in mm/day for categorical metrics
+  wet_threshold_mm: 0.5 # Threshold for wet day in mm/day
+  reliability_bins: 10 # 
+  spread_skill_bins: 10
+  pit_bins: 20 # Number of bins for PIT histogram
+  psd_ignore_low_k_bins: 2
+  random_ref_kind: phase_randomized
+  seasonal_summaries: true
+  region_mask_path: null
+  pixel_dist_n_bins: 100
+  pixel_dist_vmax_percentile: 99.5
+  pixel_dist_save_cap: 5_000_000
+  yearly_maps: ["mean", "sum", "rx1", "rx5"]
+  add_yearly_ratio_diff: true
+  seasons: ["DJF", "MAM", "JJA", "SON"]
+  eval_land_only: true
+
+quicklook: # Quicklook generation settings
+  n_dates: 6 # Number of dates to generate quicklooks for
+  members_to_show: 5 # Number of ensemble members to show in quicklook
+  sampler_steps: null # Number of sampler steps (if null, use training config)
+  seed: null # Random seed (if null, random)
+  specific_dates: null # List of specific dates (YYYY-MM-DD) to generate quicklooks for (if null, random)
+  vmax_mm: null # Max value for colorbar in mm/day (if null, automatic)
+  save_png: true # Whether to save quicklook PNGs
+
+# # Baseline section consumed by baseline_main.run(cfg)
+# baseline:
+#   experiment_name: baseline_experiment  # Name for the baseline experiment (used in paths)
+#   # These two are overridden by CLI args --baseline_type / --baseline_split when provided
+#   type: all                     # bilinear | qm | unet_sr
+#   split: test                        # train | valid | test
+
+#   plotting:
+#     enabled: true                  # Whether to enable plotting of samples during baseline generation
+#     max_per_split: 5                   # Maximum number of plots to generate (per baseline, per split)
+#     vmax: null                     # Max value for colorbar in plots (in mm/day, after back-transform)
+#     cmap: Blues                  # Colormap for plots
+#     subdir: samples/baselines
+
+#   qm:
+#     wetday_threshold: 0.5
+#     quantiles: [0.00,0.01,0.02,0.05,0.10,0.20,0.40,0.60,0.80,0.90,0.95,0.98,0.99,0.995]
+
+#   unet_sr:
+#     in_channels: 3                   # lr_up, topo_hr, lsm_hr (auto-detected if present)
+#     out_channels: 1
+#     width: 48
+#     depth: 4
+#     residual: true
+#     act: SiLU
+#     loss: L1                         # L1 or MSE
+#     lr: 0.0015
+#     batch_size: 8
+#     max_steps: 20000
+#     amp: true
+
+#   eval:
+#     splits: [test]
+
+#     grid_km_per_px: 2.5
+#     fss_scales_km: [5, 10, 20]
+#     thresholds_mm: [1.0, 5.0, 10.0]
+#     wet_threshold_mm: 0.5
+#     reliability_bins: 10
+#     psd_ignore_low_k_bins: 1
+
+#     pixel_dist_bins: 200 # Number of bins for pixel-wise distribution histograms
+#     pixel_dist_vmax_percentile: 99.5 # Percentile for vmax in pixel-wise distribution histograms
+#     pixel_dist_save_cap: 20_000_000 # Cap on number of pixels to use for pixel-wise distribution histograms (for memory control)
+#     yearly_maps: ["mean","sum","rx1","rx5"] # Which yearly maps to compute and plot
+#     plot_after_eval: true # Whether to plot evaluation results after evaluation
+#     montage:
+#       n_dates: 4 # Number of dates to include in montage
+#       n_members: 1 # Number of members to include in montage
+
+
+baseline:
+  types: [bilinear, qm, unet_sr]
+  splits: [test]
+
+eval:
+  tasks:
+    - prcp_distributions
+    - prcp_scale
+    - prcp_spatial
+    - prcp_extremes
+    - prcp_temporal
+    - prcp_climatology   # ensembles/sigma* are auto-skipped
+
+  # general toggles
+  make_plots: true
+  land_only: true
+
+  # grids / scales
+  grid_km_per_px: 2.5
+  lr_grid_km_per_px: 31.0
+  fss_scales_km: [5, 10, 20, 40]
+  iss_scales_km: [5, 10, 20, 40]
+  thresholds_mm: [1.0, 5.0, 10.0, 20.0]
+
+  # distributions
+  pixel_dist_n_bins: 100            # <-- note the name
+  pixel_dist_vmax_percentile: 99.5
+  pixel_dist_save_cap: 20000000     # 20M (or whatever you like)
+
+  # PSD / scale
+  psd_ignore_low_k_bins: 2
+  low_k_max: 0.005       # 1/200 km^-1
+  high_k_min: 0.05       # 1/20 km^-1
+  compute_lr_fss: true
+  compute_lr_iss: true
+
+  # temporal
+  temporal_include_lr: true
+  temporal_wet_thr_mm: 1.0
+  temporal_max_lag: 30
+  temporal_max_spell: 25
+  temporal_group_by: year

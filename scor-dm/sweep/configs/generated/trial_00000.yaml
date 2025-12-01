@@ -1,0 +1,135 @@
+classifier_free_guidance:
+  drop_prob: 0.1
+  enabled: true
+  guidance_scale: 0.7367435886218596
+data_handling:
+  cache_size: 0
+  n_gen_samples: 3
+  num_workers: ${env:SLURM_CPUS_PER_TASK}
+experiment:
+  config_name: sbgm_fullRun
+  name: sbgm_fullRun
+highres:
+  cutout_domains:
+  - 170
+  - 350
+  - 340
+  - 520
+  data_size:
+  - 128
+  - 128
+  full_domain_dims:
+  - 589
+  - 789
+  model: DANRA
+  scaling_method: log_zscore
+  scaling_params:
+    buffer_frac: 0.2
+    glob_max: 180
+    glob_max_log: 6
+    glob_mean_log: -3.9685
+    glob_min: 0.0
+    glob_min_log: -18
+    glob_std_log: 6.5996
+  variable: prcp
+lowres:
+  condition_variables:
+  - temp
+  - prcp
+  cutout_domains: null
+  data_size:
+  - 128
+  - 128
+  model: ERA5
+  resize_factor: 1
+  scaling_methods:
+  - zscore
+  - log_zscore
+  scaling_params:
+  - glob_mean: 8.9147
+    glob_std: 6.0034
+  - buffer_frac: 0.2
+    glob_max: 80
+    glob_max_log: 5
+    glob_mean_log: -2.7854
+    glob_min: 0.0
+    glob_min_log: -19
+    glob_std_log: 5.3563
+paths:
+  checkpoint_dir: ${env:CKPT_DIR}
+  checkpoint_name: sbgm_fullRun
+  data_dir: ${env:DATA_DIR}
+  lsm_path: ${env:DATA_DIR}/data_lsm/truth_fullDomain/lsm_full.npz
+  path_save: ${env:SAMPLE_DIR}
+  sample_dir: ${env:SAMPLE_DIR}
+  specific_fig_name: test__plot_fct
+  topo_path: ${env:DATA_DIR}/data_topo/truth_fullDomain/topo_full.npz
+sampler:
+  block_layers:
+  - 3
+  - 3
+  - 3
+  - 3
+  last_fmap_channels: 512
+  n_timesteps: 978
+  num_heads: 12
+  sampler_type: pc_sampler
+  time_embedding: 192
+stationary_conditions:
+  geographic_conditions:
+    geo_variables:
+    - lsm
+    - topo
+    norm_max: 1
+    norm_min: 0
+    sample_w_geo: true
+    sample_w_sdf: true
+    topo_max: 12
+    topo_min: -12
+  seasonal_conditions:
+    n_seasons: 4
+    sample_w_cond_season: true
+training:
+  batch_size: 16
+  custom_weight_initializer: null
+  device: cuda
+  early_stopping: true
+  early_stopping_params:
+    min_delta: 0.0001
+    patience: 50
+  ema_decay: 0.9999
+  epochs: 1
+  leargning_rate: 4.3284502212938785e-05
+  learning_rate: 0.0005
+  load_checkpoint: false
+  load_ema: false
+  loss_type: sdfweighted
+  lr_scheduler: ReduceLROnPlateau
+  lr_scheduler_params:
+    factor: 0.5
+    min_lr: 1.0e-06
+    patience: 5
+    threshold: 0.01
+  min_lr: 1.0e-06
+  optimizer: adam
+  sdf_weighted_loss: true
+  seed: 42
+  use_mixed_precision: false
+  verbose: true
+  weight_decay: 1.0e-06
+  weight_init: true
+  with_ema: false
+transforms:
+  force_matching_scale: false
+  sample_w_cutouts: true
+  scaling: true
+visualization:
+  create_figs: true
+  plot_initial_sample: true
+  plot_losses: true
+  save_figs: true
+  show_both_orig_scaled: false
+  show_figs: false
+  show_geo: true
+  show_ocean: true
+  transform_back_bf_plot: true
