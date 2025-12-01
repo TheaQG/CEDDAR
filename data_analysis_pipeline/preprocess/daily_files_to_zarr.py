@@ -3,7 +3,7 @@
     for better storage and access to prevent memory errors.
 '''
 
-import zarr 
+import zarr # type: ignore
 import os 
 import argparse
 import logging

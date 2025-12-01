@@ -28,18 +28,18 @@ import numpy as np
 import torch
 
 # --- use the user's canonical implementations ---
-from sbgm.evaluate_sbgm.plot_utils import (
+from scor_dm.evaluate_sbgm.plot_utils import (
     plot_psd_curves,   # optional; will be tried in a try/except
     plot_pooled_pixel_distributions,
     plot_yearly_maps,
     plot_date_montages
 )
-from sbgm.monitoring import (
+from scor_dm.monitoring import (
     compute_fss_at_scales,        # gen_bt/hr_bt: [B,1,H,W]
     compute_psd_slope,            # returns {'psd_slope_gen', 'psd_slope_hr', 'psd_slope_delta'}
     compute_p95_p99_and_wet_day,  # tails dict
 )
-from sbgm.evaluate_sbgm.metrics_univariate import (
+from scor_dm.evaluate_sbgm.metrics_univariate import (
     reliability_exceedance_lr_binned,  # obs [H,W], ens [M,H,W]
     compute_isotropic_psd,             # returns {'k', 'psd'}
     compute_and_save_pooled_pixel_distributions,

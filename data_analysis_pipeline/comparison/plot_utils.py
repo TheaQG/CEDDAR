@@ -4,8 +4,8 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from sbgm.variable_utils import get_cmap_for_variable, get_unit_for_variable
-from sbgm.plotting_utils import get_dk_lsm_outline, overlay_outline
+from scor_dm.variable_utils import get_cmap_for_variable, get_unit_for_variable
+from scor_dm.plotting_utils import get_dk_lsm_outline, overlay_outline
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ def plot_samples_grid(
     show: bool = False,
     add_dk_outline: bool = True,
     include_difference: bool = False,
-    bounds: tuple[int, int, int, int] | None = None,    
+    bounds: tuple[int, int, int, int] | None = None, # type: ignore
 ):
     """
     Publication-style qualitative comparison figure (HR vs LR) for one or more days.

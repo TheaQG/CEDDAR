@@ -1,10 +1,10 @@
 import logging
-import zarr
+import zarr # type: ignore
 import numpy as np
 from typing import Optional
-from sbgm.data_modules import DANRA_Dataset_cutouts_ERA5_Zarr
-from sbgm.utils import build_data_path
-from sbgm.variable_utils import get_units
+from scor_dm.data_modules import DANRA_Dataset_cutouts_ERA5_Zarr
+from scor_dm.utils import build_data_path
+from scor_dm.variable_utils import get_units
 
 logger = logging.getLogger(__name__)
 

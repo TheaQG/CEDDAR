@@ -17,60 +17,284 @@ For training the model, you can use the scripts in the `scripts/model_runs` dire
 
 ## Directory Structure
 ```
-SCoR-DM/
+.
+├── baselines
+│   ├── __init__.py
+│   ├── adapter.py
+│   ├── baseline_eval.py
+│   ├── baseline_main.py
+│   ├── bilinear.py
+│   ├── build_dataset.py
+│   ├── evaluate_baselines
+│   │   ├── eval_dataresolver_baselines.py
+│   │   ├── evaluation_baselines.py
+│   │   └── launch_baseline_evaluation.py
+│   ├── plotting.py
+│   ├── quantile_mapping.py
+│   └── unet_sr
+│       ├── __init__.py
+│       ├── model.py
+│       └── train.py
 ├── bash_scripts
-│   ├── env_setup.sh
-│   └── run_with_setup.sh
+├── data_analysis_pipeline
+│   ├── __init__.py
+│   ├── cli
+│   │   ├── __init__.py
+│   │   ├── launch_comparison.py
+│   │   ├── launch_correlations.py
+│   │   ├── launch_small_batches_creation.py
+│   │   ├── launch_split_creation.py
+│   │   ├── launch_statistics.py
+│   │   └── main_data_app.py
+│   ├── comparison
+│   │   ├── __init__.py
+│   │   ├── compare_distributions.py
+│   │   ├── compare_fields.py
+│   │   ├── compare_timeseries.py
+│   │   ├── comparison_main.py
+│   │   ├── comparison_pipeline.py
+│   │   └── plot_utils.py
+│   ├── configs
+│   │   ├── __init__.py
+│   │   ├── comparison_config.yaml
+│   │   ├── correlation_config.yaml
+│   │   ├── default_data_config.yaml
+│   │   ├── small_batches_config.yaml
+│   │   ├── split_config.yaml
+│   │   └── stats_config.yaml
+│   ├── correlations
+│   │   ├── correlation_main.py
+│   │   ├── correlation_methods.py
+│   │   ├── correlation_pipeline.py
+│   │   ├── correlation_plotting.py
+│   │   └── data_correlations.py
+│   ├── preprocess
+│   │   ├── __init__.py
+│   │   ├── create_small_data_batches.py
+│   │   ├── daily_files_to_zarr.py
+│   │   ├── filter_data.py
+│   │   └── small_batches_main.py
+│   ├── splits
+│   │   ├── __init__.py
+│   │   ├── create_train_valid_test.py
+│   │   └── splits_main.py
+│   └── stats_analysis
+│       ├── __init__.py
+│       ├── data_loading.py
+│       ├── data_stats_pipeline.py
+│       ├── path_utils.py
+│       ├── plotting.py
+│       ├── statistics.py
+│       └── stats_main.py
 ├── data_examples
-│   ├── ERA5
-│   ├── DANRA
-│   └── figures
-│       ├── raw_data_examples
-│       ├── data_comparison
-│       ├── data_correlations
-│       ├── data_distributions
-│       └── data_stats
+│   ├── DANRA
+│   ├── ERA5
+│   └── figures
+├── era5_download_pipeline
+│   ├── __init__.py
+│   ├── cfg
+│   │   ├── era5_pipeline_testing.yaml
+│   │   ├── era5_pipeline.yaml
+│   │   ├── era5_pressure_pipeline_testing.yaml
+│   │   └── era5_pressure_pipeline.yaml
+│   ├── cli
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-311.pyc
+│   │   │   ├── __init__.cpython-39.pyc
+│   │   │   ├── run_local_pressure.cpython-311.pyc
+│   │   │   ├── run_local.cpython-311.pyc
+│   │   │   └── run_local.cpython-39.pyc
+│   │   ├── run_local_pressure.py
+│   │   ├── run_local.py
+│   │   └── run_lumi.py
+│   ├── era5_logs
+│   │   ├── era5_download.log
+│   │   └── era5_run_restartable.log
+│   ├── pipeline
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-311.pyc
+│   │   │   ├── __init__.cpython-39.pyc
+│   │   │   ├── download.cpython-311.pyc
+│   │   │   ├── download.cpython-39.pyc
+│   │   │   ├── remote_utils.cpython-311.pyc
+│   │   │   ├── remote_utils.cpython-39.pyc
+│   │   │   ├── stream.cpython-311.pyc
+│   │   │   ├── stream.cpython-39.pyc
+│   │   │   ├── transfer.cpython-311.pyc
+│   │   │   ├── transfer.cpython-39.pyc
+│   │   │   ├── utils.cpython-311.pyc
+│   │   │   └── utils.cpython-39.pyc
+│   │   ├── cdo_utils.py
+│   │   ├── download.py
+│   │   ├── remote_utils.py
+│   │   ├── stream.py
+│   │   ├── transfer.py
+│   │   └── utils.py
+│   ├── slurm
+│   │   ├── local_pressure_process.sh
+│   │   ├── local_process.sh
+│   │   ├── lumi_process.sh
+│   │   └── rename_zpl.sh
+│   └── utils
+│       ├── __init__.py
+│       ├── __pycache__
+│       │   └── logging_utils.cpython-311.pyc
+│       └── logging_utils.py
 ├── models_and_samples
-│   ├── evaluations
-│   ├── generated_samples
-│   └── trained_models
-├── samples
-├── scor_dm
-│   ├── cli
-│   │   ├── __init__.py
-│   │   ├── launch_generation.py
-│   │   ├── launch_sbgm.py
-│   │   └── main_app.py
-│   ├── config
-│   │   ├── __init__.py
-│   │   └── default_config.yaml
-│   ├── data_scripts
-│   │   ├── __init__.py
-│   │   ├── create_small_data_batches.py
-│   │   ├── create_train_valid_test_data.py
-│   │   ├── daily_files_to_zarr.py
-│   │   ├── data_comparison.py
-│   │   ├── data_correlations.py
-│   │   ├── data_filter.py
-│   │   └── data_modules.py
-│   ├── evaluation
-│   │   ├── __init__.py
-│   │   └── evaluation.py
-│   ├── __init__.py
-│   ├── data_modules.py
-│   ├── generation.py
-│   ├── main_sbgm.py
-│   ├── score_sampling.py
-│   ├── score_unet.py
-│   ├── special_transforms.py
-│   ├── training_main.py
-│   ├── training_utils.py
-│   ├── training.py
-│   ├── utils.py
-│   └── evaluation
-├── .gitignore
 ├── README.md
-└── requirements.txt
+├── requirements.txt
+└── scor-dm
+    ├── __init__.py
+    ├── __pycache__
+    │   ├── __init__.cpython-311.pyc
+    │   ├── data_modules.cpython-311.pyc
+    │   ├── generation.cpython-311.pyc
+    │   ├── score_sampling.cpython-311.pyc
+    │   ├── score_unet.cpython-311.pyc
+    │   ├── special_transforms.cpython-311.pyc
+    │   ├── training_main.cpython-311.pyc
+    │   ├── training_utils.cpython-311.pyc
+    │   ├── training.cpython-311.pyc
+    │   └── utils.cpython-311.pyc
+    ├── cli
+    │   ├── __init__.py
+    │   ├── __pycache__
+    │   │   ├── __init__.cpython-311.pyc
+    │   │   ├── launch_generation.cpython-311.pyc
+    │   │   ├── launch_sbgm.cpython-311.pyc
+    │   │   └── main_app.cpython-311.pyc
+    │   ├── launch_evaluation_sampler_grid.py
+    │   ├── launch_evaluation_sigma_star.py
+    │   ├── launch_evaluation.py
+    │   ├── launch_generation_sampler_grid.py
+    │   ├── launch_generation_sigma_star.py
+    │   ├── launch_generation.py
+    │   ├── launch_quicklook.py
+    │   ├── launch_sbgm.py
+    │   └── main_app.py
+    ├── config
+    │   ├── __init__.py
+    │   ├── ablation_config.yaml
+    │   ├── ablation_geo_config.yaml
+    │   ├── ablation_RainGate_config.yaml
+    │   ├── ablations
+    │   │   └── ablation_basic.yaml
+    │   ├── default_config.yaml
+    │   ├── evaluation_main.yaml
+    │   ├── full_run_all_data_config.yaml
+    │   ├── full_run_config_debug.yaml
+    │   ├── full_run_config_new.yaml
+    │   ├── full_run_config.yaml
+    │   ├── golden_config.yaml
+    │   ├── new_eval_setup_test.yaml
+    │   ├── paper1_baselines.yaml
+    │   ├── paper1_expA.yaml
+    │   ├── paper1_final_run_config.yaml
+    │   ├── paper1_main_Gen.yaml
+    │   ├── paper1_main.yaml
+    │   ├── paper1_mainGenEval.yaml
+    │   ├── paper1_mainRG.yaml
+    │   └── sweep_spaces
+    │       ├── ablation_dropout.yaml
+    │       └── sbgm_baseline.yaml
+    ├── data
+    │   ├── __init__.py
+    │   ├── create_train_valid_test.py
+    │   └── datasets_loading.py
+    ├── data_modules.py
+    ├── evaluate
+    │   ├── __init__.py
+    │   ├── data_resolver.py
+    │   ├── evaluate_main.py
+    │   ├── evaluate_multivariate
+    │   │   └── __init__.py
+    │   ├── evaluate_prcp
+    │   │   ├── __init__.py
+    │   │   ├── eval_dates
+    │   │   │   ├── __init__.py
+    │   │   │   ├── evaluate_dates.py
+    │   │   │   ├── metrics_dates.py
+    │   │   │   └── plot_dates.py
+    │   │   ├── eval_distributions
+    │   │   │   ├── __init__.py
+    │   │   │   ├── evaluate_distributions.py
+    │   │   │   ├── metrics_distributions.py
+    │   │   │   └── plot_distributions.py
+    │   │   ├── eval_extremes
+    │   │   │   ├── __init__.py
+    │   │   │   ├── evaluate_extremes.py
+    │   │   │   ├── metrics_extremes.py
+    │   │   │   └── plot_extremes.py
+    │   │   ├── eval_features
+    │   │   │   ├── __init__.py
+    │   │   │   ├── evaluate_features.py
+    │   │   │   ├── metrics_features.py
+    │   │   │   └── plot_features.py
+    │   │   ├── eval_probabilistic
+    │   │   │   ├── __init__.py
+    │   │   │   ├── evaluate_probabilistic.py
+    │   │   │   ├── metrics_probabilistic.py
+    │   │   │   └── plot_probabilistic.py
+    │   │   ├── eval_scale
+    │   │   │   ├── __init__.py
+    │   │   │   ├── evaluate_scale.py
+    │   │   │   ├── metrics_scale.py
+    │   │   │   └── plot_scale.py
+    │   │   ├── eval_sigma_star
+    │   │   │   ├── __init__.py
+    │   │   │   ├── evaluate_sigma_control.py
+    │   │   │   ├── metrics_sigma_control.py
+    │   │   │   └── plot_sigma_control.py
+    │   │   ├── eval_spatial
+    │   │   │   ├── __init__.py
+    │   │   │   ├── evaluate_spatial.py
+    │   │   │   ├── metrics_spatial.py
+    │   │   │   └── plot_spatial.py
+    │   │   ├── eval_temporal
+    │   │   │   ├── __init__.py
+    │   │   │   ├── evaluate_temporal.py
+    │   │   │   ├── metrics_temporal.py
+    │   │   │   └── plot_temporal.py
+    │   │   ├── overlay_utils.py
+    │   │   ├── plot_utils.py
+    │   │   └── sigma_control
+    │   ├── evaluate_prcp.zip
+    │   ├── evaluate_sampler_grid_main.py
+    │   ├── evaluate_temp
+    │   │   └── __init__.py
+    │   ├── evaluation.py
+    │   └── summarize_sampler_grid.py
+    ├── evaluate_sbgm
+    │   ├── __init__.py
+    │   ├── evaluation_main.py
+    │   ├── evaluation.py
+    │   ├── metrics_univariate.py
+    │   └── plot_utils.py
+    ├── generate
+    │   ├── generation_main.py
+    │   ├── generation_sampler_grid_main.py
+    │   ├── generation_sigma_grid_main.py
+    │   ├── generation.py
+    │   └── quicklook.py
+    ├── heads
+    │   ├── __init__.py
+    │   └── rain_gate.py
+    ├── logging_utils.py
+    ├── losses.py
+    ├── monitoring.py
+    ├── plotting_utils.py
+    ├── scale_utils.py
+    ├── score_sampling.py
+    ├── score_unet.py
+    ├── special_transforms.py
+    ├── training_main.py
+    ├── training_utils.py
+    ├── training.py
+    ├── utils.py
+    └── variable_utils.py
+
 ```
 
 # SBGM_DANRA

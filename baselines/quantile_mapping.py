@@ -18,7 +18,7 @@ import torch
 import logging
 
 from baselines.plotting import plotting_enabled, plotting_params, resolve_samples_dir, plot_triplet
-from sbgm.plotting_utils import get_cmap_for_variable
+from scor_dm.plotting_utils import get_cmap_for_variable
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class QuantileMapper:
         x = np.clip(x, 0, None)  # No negative values
         if x.size == 0:
             return np.zeros_like(q)
-        return np.quantile(x, q, method='linear')
+        return np.quantile(x, q, method='linear') # type: ignore
 
     def fit_month(self, month, lr_up_land, hr_land):
         """

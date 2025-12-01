@@ -5,14 +5,14 @@ from typing import List, Dict, Any
 import logging
 
 from baselines.evaluate_baselines.eval_dataresolver_baselines import BaselineDataResolver
-from sbgm.evaluate.evaluation import EvaluationConfig  # reuse your main config class
+from scor_dm.evaluate.evaluation import EvaluationConfig  # reuse your main config class
 
 # Reuse your existing eval blocks (same signatures as in EvaluationRunner)
-from sbgm.evaluate.evaluate_prcp.eval_distributions.evaluate_distributions import run_distributional
-from sbgm.evaluate.evaluate_prcp.eval_scale.evaluate_scale import run_scale
-from sbgm.evaluate.evaluate_prcp.eval_spatial.evaluate_spatial import run_spatial
-from sbgm.evaluate.evaluate_prcp.eval_extremes.evaluate_extremes import run_extremes
-from sbgm.evaluate.evaluate_prcp.eval_temporal.evaluate_temporal import run_temporal
+from scor_dm.evaluate.evaluate_prcp.eval_distributions.evaluate_distributions import run_distributional
+from scor_dm.evaluate.evaluate_prcp.eval_scale.evaluate_scale import run_scale
+from scor_dm.evaluate.evaluate_prcp.eval_spatial.evaluate_spatial import run_spatial
+from scor_dm.evaluate.evaluate_prcp.eval_extremes.evaluate_extremes import run_extremes
+from scor_dm.evaluate.evaluate_prcp.eval_temporal.evaluate_temporal import run_temporal
 
 
 logger = logging.getLogger(__name__)

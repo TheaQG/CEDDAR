@@ -1,5 +1,5 @@
 import os
-import zarr
+import zarr # type: ignore
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import pearsonr, spearmanr

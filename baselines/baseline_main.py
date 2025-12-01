@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 import logging
 import os
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf # type: ignore
 
 from baselines.adapter import BaselineAdapter
 from baselines.bilinear import run_bilinear

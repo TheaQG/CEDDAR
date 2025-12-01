@@ -7,7 +7,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sbgm.plotting_utils import get_cmap_for_variable
+from scor_dm.plotting_utils import get_cmap_for_variable
 
 def _ensure_dir(p: Path):
     p.mkdir(parents=True, exist_ok=True)

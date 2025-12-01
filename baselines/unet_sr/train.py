@@ -6,11 +6,11 @@ import logging
 from pathlib import Path
 from typing import Callable, Optional, Tuple
 import torch, torch.nn as nn, torch.optim as optim
-from torch.cuda.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler, autocast # type: ignore
 
 from baselines.unet_sr.model import TinyUNet
 from baselines.plotting import plotting_enabled, plotting_params, resolve_samples_dir, plot_triplet
-from torch.nn.utils import clip_grad_norm_
+from torch.nn.utils import clip_grad_norm_ # type: ignore
 def _masked_mean_safe(t: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """
     Compute mean over t where mask==True. If mask has no True, fall back to unmasked mean.
@@ -26,7 +26,7 @@ def _masked_mean_safe(t: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         return t.mean()
     return (t * mask).sum() / denom
 
-from sbgm.special_transforms import build_back_transforms_from_stats
+from scor_dm.special_transforms import build_back_transforms_from_stats
 
 logger = logging.getLogger(__name__)
 
@@ -424,7 +424,7 @@ def run_unet_sr(cfg, adapter_train, adapter_val, adapter_test, out_root: Path):
                 logger.warning("[UNetSR][train] Non-finite loss detected (loss=%s). Skipping step.", loss.item() if loss.numel() == 1 else str(loss))
                 continue
 
-            scaler.scale(loss).backward()
+            scaler.scale(loss).backward() # type: ignore
 
             # Optional: clip to prevent rare exploding gradients with AMP
             if any(p.requires_grad for p in model.parameters()):

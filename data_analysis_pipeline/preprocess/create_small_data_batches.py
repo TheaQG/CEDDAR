@@ -32,8 +32,8 @@ import shutil
 import random
 import logging
 from data_analysis_pipeline.preprocess.daily_files_to_zarr import convert_npz_to_zarr
-from sbgm.utils import build_data_path
-from sbgm.variable_utils import get_var_name_short
+from scor_dm.utils import build_data_path
+from scor_dm.variable_utils import get_var_name_short
 
 # Setup logging
 logger = logging.getLogger(__name__)

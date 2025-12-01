@@ -12,7 +12,7 @@ import numpy as np
 from numpy.fft import fft2, fftshift
 from collections import defaultdict
 from typing import Optional
-from sbgm.variable_utils import get_unit_for_variable, get_color_for_model
+from scor_dm.variable_utils import get_unit_for_variable, get_color_for_model
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ def radial_average(ps_2d: np.ndarray) -> np.ndarray:
 
     tbin = np.bincount(r.ravel(), ps_2d.ravel())
     nr = np.bincount(r.ravel())
-    radialprofile = tbin / np.maximum(nr, 1)  # Avoid division by zero
+    radialprofile = tbin / np.maximum(nr, 1)  # type: ignore Avoid division by zero
     
     return radialprofile
 

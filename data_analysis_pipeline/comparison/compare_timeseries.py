@@ -10,8 +10,8 @@ import matplotlib.pyplot as plt
 import datetime as _dt
 from data_analysis_pipeline.comparison.compare_fields import compute_field_stats
 
-from sbgm.variable_utils import get_color_for_model
-from sbgm.plotting_utils import apply_model_colors
+from scor_dm.variable_utils import get_color_for_model
+from scor_dm.plotting_utils import apply_model_colors
 
 # Setup logging
 logger = logging.getLogger(__name__)

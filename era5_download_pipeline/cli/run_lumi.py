@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 def year_complete(vshort:str, 
                   year: int,
                   cfg: dict,
-                  plev: int | None = None) -> bool:
+                  plev: int | None = None) -> bool: # type: ignore
     """
         Return True if all daily .npz files for <vshort, year> or <vshort, plev, year> already exist.
     """

@@ -1,6 +1,6 @@
 import os
 import shutil
-import zarr
+import zarr # type: ignore
 import logging
 import re
 from glob import glob

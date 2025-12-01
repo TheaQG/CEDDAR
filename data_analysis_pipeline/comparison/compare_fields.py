@@ -8,8 +8,8 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-from sbgm.variable_utils import get_cmap_for_variable, get_unit_for_variable
-from sbgm.plotting_utils import plot_spatial_panel, get_dk_lsm_outline, overlay_outline
+from scor_dm.variable_utils import get_cmap_for_variable, get_unit_for_variable
+from scor_dm.plotting_utils import plot_spatial_panel, get_dk_lsm_outline, overlay_outline
 
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
@@ -163,7 +163,7 @@ def compare_single_day_fields(
                     print_results=True,
                     bounds=None,
                     plot_only: bool = False,
-                    cache_dir: str | None = None):
+                    cache_dir: str | None = None): # type: ignore
     """
     Compare two 2D fields from the same date.
     Supports inputs as either raw arrays or {'cutout': ..., 'timestamp': ...} dicts.
