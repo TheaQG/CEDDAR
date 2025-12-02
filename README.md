@@ -6,9 +6,11 @@
 ---
 
 ## 1. Overview
+![alt text](introduction_long.png)
 ### **What is CEDDAR?**
   CEDDAR (Controllable Ensemble Diffusion Downscaling for Atmospheric Rainfall) is a diffusion-based statistical downscaling framework designed to enhance the spatial resolution of precipitation data - and in the future other climate variables(/full regional climate emulation). 
   It is built on the Elucidated Diffusion Model (EDM) setup and currently targets **precipitation** over Denmark, with ongoing work extending the framework to other variables and regions.
+  **KNOWN CURRENT LIMITATION**: The current precipitation-to-precipitation model exhibits a significant dry-bias in yearly totals, which is actively being investigated.
 
 ### **Problem setting**
 Global reanalysis products such as ERA5 [REFERENCE] provide large-scale atmospheric dynamic information but at spatial resolutions (~31 km at DK latitude) that are insufficient for local-scale climate impact modelling.
@@ -22,6 +24,7 @@ CEDDAR aims to bridge this resolution gap by learning a generative mapping from 
 - Scale-controllable sampling via $\sigma$* (sigma-star) parameter, allowing control over power spectrum characteristics of generated fields at inference time
 - Ensemble generation for uncertainty quantification, enabling multiple plausible HR realizations for a given LR input
 - Comprehensive evaluation metrics suite covering distributional characteristics, extreme event statistics, spatial metrics, power spectra and temporal behaviour
+![alt text](Dates_final.png)
 
 ## 2. Features
 
@@ -42,6 +45,7 @@ CEDDAR aims to bridge this resolution gap by learning a generative mapping from 
     - [x] Automated evaluation pipeline with visualizations
 
 ### **Data and (pre)processing pipelines**
+![alt text](preprocessing_pipeline.png)
     - [x] ERA5 and DANRA preprocessing scripts (CDO-based)
     - [x] Daily .nc/.npz -> .zarr conversion
     - [x] Train/valid/test split creation
@@ -492,7 +496,7 @@ For scientific reproducibility, we recommend `requirements.txt` for general (loc
 CEDDAR is active research code and has several known limitations:
 
 ### 10.1 Current Limitations
-- Current precipitation-to-precipitation has shown a significant dry-bias in yearly totals, which is being investigated
+- **Current precipitation-to-precipitation has shown a significant dry-bias in yearly totals, which is being investigated**
 - Temperature is also implemented, but not fully tested or evaluated yet
 - Multiple climatic condition variables is fully integrated, but not yet evaluated
 - UNet-SR baseline is under development
