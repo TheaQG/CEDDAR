@@ -5,9 +5,9 @@ import torch
 from pathlib import Path
 from omegaconf import OmegaConf
 
-from scor_dm.training_utils import get_model, get_final_gen_dataloader
+from ceddar.training_utils import get_model, get_final_gen_dataloader
 from generate.generation import GenerationRunner, GenerationConfig
-from scor_dm.utils import get_model_string
+from ceddar.utils import get_model_string
 
 logger = logging.getLogger(__name__)
 

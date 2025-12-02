@@ -7,7 +7,7 @@ from data_analysis_pipeline.cli.launch_statistics import run as run_statistics
 from data_analysis_pipeline.cli.launch_comparison import run as run_comparison
 from data_analysis_pipeline.cli.launch_small_batches_creation import run as run_small_batches
 from data_analysis_pipeline.cli.launch_correlations import run as run_correlation
-from scor_dm.utils import load_config
+from ceddar.utils import load_config
 
 
 print('>>> Entered main_data_app.py')

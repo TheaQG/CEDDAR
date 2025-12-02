@@ -7,11 +7,11 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-from scor_dm.training_utils import get_model
+from ceddar.training_utils import get_model
 from generate.generation_main import get_final_gen_dataloader
 from generate.generation import GenerationRunner, GenerationConfig
-from scor_dm.utils import get_model_string
-from scor_dm.variable_utils import get_cmap_for_variable
+from ceddar.utils import get_model_string
+from ceddar.variable_utils import get_cmap_for_variable
 
 logger = logging.getLogger(__name__)
 

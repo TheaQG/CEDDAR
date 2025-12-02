@@ -6,9 +6,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import logging
 
-from scor_dm.evaluate.evaluate_prcp.plot_utils import _ensure_dir, _savefig, _nice, _to_date_safe, _season_from_month
-from scor_dm.variable_utils import get_units, get_color_for_model, get_cmap_for_variable
-from scor_dm.evaluate.evaluate_prcp.overlay_utils import resolve_baseline_dirs
+from ceddar.evaluate.evaluate_prcp.plot_utils import _ensure_dir, _savefig, _nice, _to_date_safe, _season_from_month
+from ceddar.variable_utils import get_units, get_color_for_model, get_cmap_for_variable
+from ceddar.evaluate.evaluate_prcp.overlay_utils import resolve_baseline_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -850,7 +850,7 @@ def plot_fss_curves(scale_root: Path, eval_cfg: Any | None = None) -> None:
     bo = getattr(eval_cfg, "baselines_overlay", None) if eval_cfg is not None else None
     if bo and bo.get("enabled", False):
         try:
-            from scor_dm.evaluate.evaluate_prcp.overlay_utils import resolve_baseline_dirs
+            from ceddar.evaluate.evaluate_prcp.overlay_utils import resolve_baseline_dirs
             _baseline_dirs_fss = resolve_baseline_dirs(
                 sample_root=bo["sample_root"],
                 types=tuple(bo.get("types", ())),
@@ -1120,7 +1120,7 @@ def plot_iss_curves(scale_root: Path, eval_cfg: Any | None = None) -> None:
     bo = getattr(eval_cfg, "baselines_overlay", None) if eval_cfg is not None else None
     if bo and bo.get("enabled", False):
         try:
-            from scor_dm.evaluate.evaluate_prcp.overlay_utils import resolve_baseline_dirs
+            from ceddar.evaluate.evaluate_prcp.overlay_utils import resolve_baseline_dirs
             _baseline_dirs_iss = resolve_baseline_dirs(
                 sample_root=bo["sample_root"],
                 types=tuple(bo.get("types", ())),

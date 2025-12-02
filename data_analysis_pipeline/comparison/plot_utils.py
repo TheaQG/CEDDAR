@@ -4,8 +4,8 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from scor_dm.variable_utils import get_cmap_for_variable, get_unit_for_variable
-from scor_dm.plotting_utils import get_dk_lsm_outline, overlay_outline
+from ceddar.variable_utils import get_cmap_for_variable, get_unit_for_variable
+from ceddar.plotting_utils import get_dk_lsm_outline, overlay_outline
 
 logger = logging.getLogger(__name__)
 

@@ -10,12 +10,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Additional imports for color and data utilities
-from scor_dm.variable_utils import get_color_for_model, get_cmap_for_variable
-from scor_dm.evaluate.data_resolver import EvalDataResolver
+from ceddar.variable_utils import get_color_for_model, get_cmap_for_variable
+from ceddar.evaluate.data_resolver import EvalDataResolver
 
 # New imports for plotting utilities and DK outline
-from scor_dm.evaluate.evaluate_prcp.plot_utils import _ensure_dir, _nice, _savefig, get_dk_lsm_outline, overlay_outline
-from scor_dm.plotting_utils import _add_colorbar_and_boxplot
+from ceddar.evaluate.evaluate_prcp.plot_utils import _ensure_dir, _nice, _savefig, get_dk_lsm_outline, overlay_outline
+from ceddar.plotting_utils import _add_colorbar_and_boxplot
 
 SET_DPI = 300
 

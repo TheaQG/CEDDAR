@@ -3,8 +3,8 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
-from scor_dm.evaluate.evaluate_prcp.plot_utils import _ensure_dir, _nice, _savefig
-from scor_dm.variable_utils import get_color_for_model
+from ceddar.evaluate.evaluate_prcp.plot_utils import _ensure_dir, _nice, _savefig
+from ceddar.variable_utils import get_color_for_model
 
 SET_DPI = 300
 

@@ -18,7 +18,7 @@ import torch
 import logging
 
 from baselines.plotting import plotting_enabled, plotting_params, resolve_samples_dir, plot_triplet
-from scor_dm.plotting_utils import get_cmap_for_variable
+from ceddar.plotting_utils import get_cmap_for_variable
 
 logger = logging.getLogger(__name__)
 

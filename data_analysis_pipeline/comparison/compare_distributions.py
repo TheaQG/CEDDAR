@@ -12,7 +12,7 @@ import numpy as np
 from numpy.fft import fft2, fftshift
 from collections import defaultdict
 from typing import Optional
-from scor_dm.variable_utils import get_unit_for_variable, get_color_for_model
+from ceddar.variable_utils import get_unit_for_variable, get_color_for_model
 
 # Setup logging
 logger = logging.getLogger(__name__)

@@ -8,9 +8,9 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
 from evaluate.evaluate_prcp.plot_utils import _ensure_dir, _nice, _savefig, get_dk_lsm_outline, overlay_outline
-from scor_dm.variable_utils import get_cmap_for_variable
+from ceddar.variable_utils import get_cmap_for_variable
 
-from scor_dm.plotting_utils import _add_colorbar_and_boxplot
+from ceddar.plotting_utils import _add_colorbar_and_boxplot
 
 # --- probabilistic metrics
 from evaluate.evaluate_prcp.eval_probabilistic.metrics_probabilistic import crps_ensemble

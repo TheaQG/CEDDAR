@@ -20,8 +20,8 @@ import logging
 
 
 
-from scor_dm.utils import get_model_string, load_config
-from scor_dm.logging_utils import (
+from ceddar.utils import get_model_string, load_config
+from ceddar.logging_utils import (
     cfg_hash, make_run_name, ensure_run_dir,
     setup_logging, write_run_manifest, log_banner
 )
@@ -121,7 +121,7 @@ def main():
     logger.info("Cfg hash        : %s", h)
 
     # Imports kept here to avoid circular imports
-    from scor_dm.cli import (
+    from ceddar.cli import (
         launch_sbgm,
         launch_generation,
         launch_evaluation,

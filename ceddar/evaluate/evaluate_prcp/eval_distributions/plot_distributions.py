@@ -9,7 +9,7 @@ from datetime import datetime
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 from evaluate.evaluate_prcp.plot_utils import _ensure_dir, _nice, _savefig
-from scor_dm.variable_utils import get_color_for_model
+from ceddar.variable_utils import get_color_for_model
 
 # Baseline overlays
 from evaluate.evaluate_prcp.overlay_utils import resolve_baseline_dirs, load_csv_if_exists

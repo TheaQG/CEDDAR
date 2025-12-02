@@ -2,9 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import logging
-from scor_dm.variable_utils import get_unit_for_variable, get_cmap_for_variable, get_color_for_model, get_color_for_variable
-from scor_dm.special_transforms import transform_from_stats
-from scor_dm.plotting_utils import plot_spatial_panel, apply_model_colors
+from ceddar.variable_utils import get_unit_for_variable, get_cmap_for_variable, get_color_for_model, get_color_for_variable
+from ceddar.special_transforms import transform_from_stats
+from ceddar.plotting_utils import plot_spatial_panel, apply_model_colors
 from data_analysis_pipeline.stats_analysis.statistics import load_global_stats
 
 # Setup logging

@@ -26,7 +26,7 @@ def _masked_mean_safe(t: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         return t.mean()
     return (t * mask).sum() / denom
 
-from scor_dm.special_transforms import build_back_transforms_from_stats
+from ceddar.special_transforms import build_back_transforms_from_stats
 
 logger = logging.getLogger(__name__)
 

@@ -25,7 +25,7 @@ from data_analysis_pipeline.stats_analysis.data_loading import DataLoader
 from data_analysis_pipeline.correlations.correlation_methods import compute_temporal_correlation, compute_spatial_correlation, compute_temporal_corr_series_np
 from data_analysis_pipeline.correlations.correlation_plotting import (plot_correlation_map, plot_temporal_series, plot_spatial_corr_grid, plot_temporal_grid, plot_temporal_pair, plot_temporal_correlations_grid)
 from data_analysis_pipeline.stats_analysis.statistics import load_global_stats
-from scor_dm.special_transforms import transform_from_stats
+from ceddar.special_transforms import transform_from_stats
 # Setup logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

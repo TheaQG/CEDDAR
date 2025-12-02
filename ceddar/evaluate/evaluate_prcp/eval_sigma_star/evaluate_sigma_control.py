@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from evaluate.evaluate_prcp.eval_sigma_star.metrics_sigma_control import evaluate_sigma_control
 from evaluate.evaluate_prcp.eval_sigma_star.plot_sigma_control import plot_sigma_control, plot_sigma_control_examples_grid, plot_sigma_control_psd_curves
-from scor_dm.utils import get_model_string
+from ceddar.utils import get_model_string
 
 logger = logging.getLogger(__name__)
 

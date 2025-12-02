@@ -2,9 +2,9 @@ import logging
 import zarr # type: ignore
 import numpy as np
 from typing import Optional
-from scor_dm.data_modules import DANRA_Dataset_cutouts_ERA5_Zarr
-from scor_dm.utils import build_data_path
-from scor_dm.variable_utils import get_units
+from ceddar.data_modules import DANRA_Dataset_cutouts_ERA5_Zarr
+from ceddar.utils import build_data_path
+from ceddar.variable_utils import get_units
 
 logger = logging.getLogger(__name__)
 

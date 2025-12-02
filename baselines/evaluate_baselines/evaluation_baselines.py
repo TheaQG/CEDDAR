@@ -5,14 +5,14 @@ from typing import List, Dict, Any
 import logging
 
 from baselines.evaluate_baselines.eval_dataresolver_baselines import BaselineDataResolver
-from scor_dm.evaluate.evaluation import EvaluationConfig  # reuse your main config class
+from ceddar.evaluate.evaluation import EvaluationConfig  # reuse your main config class
 
 # Reuse your existing eval blocks (same signatures as in EvaluationRunner)
-from scor_dm.evaluate.evaluate_prcp.eval_distributions.evaluate_distributions import run_distributional
-from scor_dm.evaluate.evaluate_prcp.eval_scale.evaluate_scale import run_scale
-from scor_dm.evaluate.evaluate_prcp.eval_spatial.evaluate_spatial import run_spatial
-from scor_dm.evaluate.evaluate_prcp.eval_extremes.evaluate_extremes import run_extremes
-from scor_dm.evaluate.evaluate_prcp.eval_temporal.evaluate_temporal import run_temporal
+from ceddar.evaluate.evaluate_prcp.eval_distributions.evaluate_distributions import run_distributional
+from ceddar.evaluate.evaluate_prcp.eval_scale.evaluate_scale import run_scale
+from ceddar.evaluate.evaluate_prcp.eval_spatial.evaluate_spatial import run_spatial
+from ceddar.evaluate.evaluate_prcp.eval_extremes.evaluate_extremes import run_extremes
+from ceddar.evaluate.evaluate_prcp.eval_temporal.evaluate_temporal import run_temporal
 
 
 logger = logging.getLogger(__name__)

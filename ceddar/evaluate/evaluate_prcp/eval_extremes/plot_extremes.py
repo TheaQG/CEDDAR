@@ -9,7 +9,7 @@ from evaluate.evaluate_prcp.overlay_utils import resolve_baseline_dirs
 logger = logging.getLogger(__name__)
 
 from evaluate.evaluate_prcp.plot_utils import (_nice, _savefig, _ensure_dir)
-from scor_dm.variable_utils import get_color_for_model
+from ceddar.variable_utils import get_color_for_model
 
 SERIES_ORDER  = ["HR", "GEN_ENS", "GEN", "LR"]
 SERIES_LABELS = {"HR": "HR (DANRA)", "GEN": "PMM", "GEN_ENS": "Generated (ens)", "LR": "LR upsampled"}

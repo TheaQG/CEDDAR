@@ -19,10 +19,10 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from scor_dm.special_transforms import build_back_transforms_from_stats, lr_baseline_to_hr_zspace
-from scor_dm.utils import extract_samples, get_model_string
-from scor_dm.score_sampling import edm_sampler
-from scor_dm.monitoring import (
+from ceddar.special_transforms import build_back_transforms_from_stats, lr_baseline_to_hr_zspace
+from ceddar.utils import extract_samples, get_model_string
+from ceddar.score_sampling import edm_sampler
+from ceddar.monitoring import (
     report_precip_extremes,
 )
 from evaluate.metrics_univariate import (

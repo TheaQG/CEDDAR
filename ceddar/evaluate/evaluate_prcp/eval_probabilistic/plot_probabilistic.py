@@ -34,7 +34,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from evaluate.evaluate_prcp.plot_utils import (
     _ensure_dir, _savefig, _nice, _to_date_safe, _season_from_month, overlay_outline, get_dk_lsm_outline
 )
-from scor_dm.variable_utils import get_cmap_for_variable, get_color_for_model
+from ceddar.variable_utils import get_cmap_for_variable, get_color_for_model
 
 logger = logging.getLogger(__name__)
 

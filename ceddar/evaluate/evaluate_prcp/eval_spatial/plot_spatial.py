@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import matplotlib.pyplot as plt
 
-from scor_dm.variable_utils import get_cmap_for_variable
+from ceddar.variable_utils import get_cmap_for_variable
 from evaluate.evaluate_prcp.plot_utils import _nice, _savefig, _ensure_dir, get_dk_lsm_outline, overlay_outline
 logger = logging.getLogger(__name__)
 

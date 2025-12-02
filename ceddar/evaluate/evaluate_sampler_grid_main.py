@@ -7,7 +7,7 @@ import logging
 import numpy as np
 import torch
 
-from scor_dm.utils import get_model_string
+from ceddar.utils import get_model_string
 from evaluate.evaluation import EvaluationConfig, EvaluationRunner
 
 logger = logging.getLogger(__name__)
