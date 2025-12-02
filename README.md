@@ -240,20 +240,48 @@ data_examples/
 CEDDAR expects **Zarr-based datasets**, generated via the preprocessing pipeline:
 
 ```
-/path/to/data/
-    ERA5/
-        zarr/
-            prcp_ERA5.zarr/
-            t2m_ERA5.zarr/
-            ...
-    DANRA/
-        zarr/
-            prcp_DANRA.zarr/
-            ...
-    splits/
-        train_dates.txt
-        valid_dates.txt
-        test_dates.txt
+.
+└── data_examples/
+    ├── data_DANRA/
+    │   └── size_589x789/
+    │       └── prcp_589x789/
+    │           ├── all/
+    │           │   ├── tp_tot_19910101.npz
+    │           │   ├── ...
+    │           │   └── tp_tot_20201231.npz
+    │           └── zarr_files/
+    │               ├── train.zarr/
+    │               │   ├── tp_tot_19910101
+    │               │   ├── ...
+    │               │   └── tp_tot_20151231
+    │               ├── valid.zarr/
+    │               │   ├── tp_tot_20160101
+    │               │   ├── ...
+    │               │   └── tp_tot_20181231
+    │               └── test.zarr/
+    │                   ├── tp_tot_20190101
+    │                   ├── ...
+    │                   └── tp_tot_20201231
+    └── data_ERA5/
+        └── size_589x789/
+            └── prcp_589x789/
+                ├── all/
+                │   ├── tp_589x789_19910101.npz
+                │   ├── ...
+                │   └── tp_589x789_20201231.npz
+                └── zarr_files/
+                    ├── train.zarr/
+                    │   ├── tp_tot_19910101
+                    │   ├── ...
+                    │   └── tp_tot_20151231            
+                    ├── valid.zarr/
+                    │   ├── tp_tot_20160101
+                    │   ├── ...
+                    │   └── tp_tot_20181231            
+                    └── test.zarr/
+                        ├── tp_589x789_20190101
+                        ├── ...
+                        └── tp_589x789_20201231        
 ```
 
 The exact folder structure is controlled by YAML config files in:
@@ -409,4 +437,124 @@ Produces:
 
 Outputs follow the same directory convention as CEDDAR models.
 
----## 8. Citation
+## 8. Configuration files and setup
+CEDDAR is fully configuration-driven and all workfloes - training, generation, evaluation - are controlled through YAML config files located in:
+```
+ceddar/configs/
+data_analysis_pipeline/configs/
+era5_download_pipeline/cfg/
+```
+### 8.1 Structure of training/generation/evaluation configs
+A typical training/generation/evaluation config includes:
+- **model settings**: UNet depth, multipliers, attention, activation, conditioning variables
+- **diffusion settings**: EDM parameters (sigma_min, sigma_max, sigma_data, sampling schedule)
+- **data settings**: paths to LR/HR datasets, HR/LR variable selections, normalisation strategies and stats, residual vs absolute learning
+- **training settings**: batch size, learning rate, optimizer, number of steps, logging, mixed precision, epochs
+- **logging/checkpointing**: output directory, save frequency, experiment naming
+- **generation settings**: number of samples, sigma-star values, ensemble size, RainGate usage
+- **evaluation settings**: which metrics to compute, various thresholds, plotting options
+
+### 8.2 Overriding config options
+All parameters may be overridden from the Command Line Interface (CLI):
+```bash
+python -m ceddar.cli.main_app \
+    --config ceddar/configs/train_prcp_default.yaml \
+    --mode train \
+    data.batch_size=16 \
+    model.unet.attention=True \
+```
+
+## 9. Reproducibility
+Reproducibility is a core design objective for CEDDAR. 
+
+### 9.1 Practices for reproducibility
+To ensure consistent results across runs and environments, CEDDAR incorporates the following practices:
+- **Fixed random seeds**: All random number generators (PyTorch, NumPy, Python `random`) are seeded at the start of each run.
+- **Deterministic operations**: PyTorch is configured to use deterministic algorithms where possible.
+- **Environment logging**: The exact versions of all dependencies are logged at the start of each run.
+- **Checkpointing**: Model checkpoints are saved regularly during training, allowing for exact resumption of experiments.
+- **Config versioning**: All experiments are controlled through versioned YAML config files, ensuring that the exact settings used can be retrieved later.
+- **Containerization**: For HPC environments, CEDDAR is designed to run within Singularity/Apptainer containers, encapsulating the entire software environment.
+- **Self-contained experiments**: Each experiment creates a fully self-contained output directory with logs, checkpoints, samples, and evaluation results under ```models_and_samples/<experiment-name>/```. This contains:
+  - Full config file snapshot
+  - Model checkpoints
+  - Training logs and samples
+  - Generated samples
+  - Evaluation metrics and figures
+
+
+### 9.2 Environment snapshots
+For scientific reproducibility, we recommend `requirements.txt` for general (local) setups, and `requirements_lumi.txt` (or container recipe) for exact HPC/LUMI setups.
+
+### 9.3 Data-version reproducibility
+
+## 10. Limitations and Future Work
+CEDDAR is active research code and has several known limitations:
+
+### 10.1 Current Limitations
+- Current precipitation-to-precipitation has shown a significant dry-bias in yearly totals, which is being investigated
+- Temperature is also implemented, but not fully tested or evaluated yet
+- Multiple climatic condition variables is fully integrated, but not yet evaluated
+- UNet-SR baseline is under development
+- RainGate module is experimental and may require further tuning
+- Evaluation metrics may be further expanded to include additional diagnostics
+- $\sigma$* control is currently heuristic and may benefit from more principled approaches 
+
+### 10.2 Planned improvements
+- Multi-variable downscaling (precipitation + temperature + evaporation)
+- Larger spatial domain conditioning and other region outputs
+- Temporal context integration (lagged inputs or recurrent diffusion)
+- Scale-aware domain adaptation for different regions and future climates
+- Improved RainGate module and alternative post-processing methods
+- Additional baseline methods (GANs, normalizing flows)
+- More extensive hyperparameter sweeps and ablation studies
+- Streamlined container build for LUMI with automated ROCm+PyTorch verification and setup
+- User-friendly data download and preprocessing pipeline with GUI or web interface
+- Notebook tutorials for common workflows
+- Integration with climate impact models (hydrology) for end-to-end evaluation
+- Scale-aware downscaling of future climate scenarios (RCPs, SSPs) (e.g. CORDEX --> DANRA-like) using methods such as [Hess et al. 2025].
+
+
+## 11. Citation
+Please cite this repository as:
+
+```@misc{CEDDAR2025,
+  author = {Quistgaard, T. et al.},
+  title = {CEDDAR: Controllable Ensemble Diffusion Downscaling for Atmospheric Rainfall},
+  year = {2025},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  howpublished = {\url{https://github.com/TheaQG/CEDDAR}}
+}
+```
+
+A manuscript describing CEDDAR is in preparation and a preprint will be made available soon. A full peer-reviewed publication will be added once available.
+Until then, use the above citation or a placeholder reference like:
+
+```@article{CEDDAR2025,
+  title={CEDDAR: Controllable Ensemble Diffusion Downscaling for Atmospheric Rainfall},
+  author={Quistgaard, T. et al.},
+  journal={In preparation},
+  year={2025}
+}
+```
+
+## 12. Acknowledgements
+CEDDAR was developed as part of a PhD project at Aarhus University. The author gratefully acknowledges:
+- Funding from the **Danish Council for Independent Research** (DFF) under grant number xxxxxxx.
+- Computational resources on LUMI provided by both **Danish e-Infrastructure Cooperation** (DeIC) and the local **HPC center at Aarhus University**.
+- **DMI** for providing access to the DANRA reanalysis dataset, especially the help of Dr. Xiaohua Yang, Dr. Carlos Andrés Peralta Aros, and Søren Borg Thorsen.
+- **ECMWF** for providing access to ERA5 data through the Copernicus Data Store (CDS).
+- The open-source community for providing foundational libraries such as PyTorch, NumPy, and others that underpin this work.
+- Colleagues, collaborators and supervisors for their valuable feedback, discussions and support during the development of CEDDAR.
+
+## 13. License
+CEDDAR is released under the **MIT License**. See the `LICENSE` file for details.
+
+## 14. References
+- Hersbach et al., 2020: The ERA5 global reanalysis. Q.J.R. Meteorol. Soc., 146, 1999–2049. https://doi.org/10.1002/qj.3803
+- Yang et al., 2020: DANRA: A high-resolution dynamical downscaling reanalysis for Denmark. J. Geophys. Res. Atmos., 125, e2019JD032264. https://doi.org/10.1029/2019JD032264
+- Karras et al., 2022: Elucidating the Design Space of Diffusion-Based Generative Models. NeurIPS 2022. https://arxiv.org/abs/2206.00364
+- [CDS API Reference]: https://cds.climate.copernicus.eu/api-how-to
+- CDO Documentation: https://code.mpimet.mpg.de/projects/cdo/wiki
+- [Hess et al., 2025]: 
