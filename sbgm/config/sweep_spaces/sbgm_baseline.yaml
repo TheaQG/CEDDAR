@@ -1,0 +1,20 @@
+# Only keys that really needs to be searched
+
+learning_rate:
+  _type: log_uniform
+  low: 1e-5
+  high: 5e-4
+
+beta_start:
+  _type: log_uniform
+  low: 1e-4
+  high: 1e-2
+
+resnet_layers:
+  _type: categorical
+  choices:
+    - [2, 2, 2, 2]
+    - [3, 3, 3, 3]
+    - [3, 4, 6, 3]
+
+  

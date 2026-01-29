@@ -1,0 +1,21 @@
+# big / generated / remote-only
+models_and_samples/
+data_examples/
+data_analysis_pipeline/saved/
+
+# logs
+logs/
+era5_download_pipeline/era5_logs/
+era5_download_pipeline/slurm/era5_logs/
+sbgm/logs/
+
+# python caches
+__pycache__/
+*.pyc
+
+# optional: misc
+.DS_Store
+.ipynb_checkpoints/
+
+# exclude the exclude itself
+.rsync-excludes
