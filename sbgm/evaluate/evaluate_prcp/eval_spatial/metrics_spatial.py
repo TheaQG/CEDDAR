@@ -48,10 +48,13 @@ def _nanmean_stack(stack: List[torch.Tensor]) -> torch.Tensor:
     out[den == 0] = float('nan')
     return out
 
-def _nansum_stack(stack: List[torch.Tensor]) -> torch.Tensor:
-    if not stack:
-        raise ValueError("Empty stack in _nansum_stack.")
-    return torch.nansum(torch.stack(stack, dim=0), dim=0)
+def _nansum_stack(stack):
+    x = torch.stack(stack, dim=0)          # [T,H,W]
+    out = torch.nansum(x, dim=0)           # treats NaNs as 0
+    valid = torch.isfinite(x).any(dim=0)   # pixels with any real data
+    out = out.clone()
+    out[~valid] = float("nan")
+    return out
 
 def _wet_day_freq_stack(stack: List[torch.Tensor], wet_thr_mm: float) -> torch.Tensor:
     if not stack:

@@ -5,8 +5,11 @@ import logging
 import numpy as np
 import matplotlib.pyplot as plt
 
+from matplotlib.colors import Colormap
+
 from sbgm.variable_utils import get_cmap_for_variable
-from sbgm.evaluate.evaluate_prcp.plot_utils import _nice, _savefig, _ensure_dir, get_dk_lsm_outline, overlay_outline
+from sbgm.evaluate.evaluate_prcp.plot_utils import _nice, _savefig, _ensure_dir
+from sbgm.plotting_utils import get_dk_lsm_outline, overlay_outline
 logger = logging.getLogger(__name__)
 
 SET_DPI = 300
@@ -42,6 +45,7 @@ def _draw_single(
     *,
     dk_mask=None,
     add_stats: bool = False,
+    add_colorbar: bool = True,
 ):
     if data is None:
         ax.axis("off")
@@ -49,34 +53,71 @@ def _draw_single(
 
     arr = np.asarray(data)
 
+    # If we have a DK land mask matching the field, we:
+    #  - compute/plot with a flipped version for consistent map orientation
+    #  - set ocean pixels to NaN so they don't affect the color scaling
+    #  - draw a light ocean background + hatch to emphasize land-only focus
+    mask_raw = None
+    mask_plot = None
     if dk_mask is not None and dk_mask.shape == arr.shape:
-        arr_plot = np.flipud(arr)
+        mask_raw = dk_mask.astype(bool)
+        # Display orientation (matches imshow(origin="upper")): flip so north is up as in other figures
+        mask_plot = mask_raw
+        arr_plot = arr.astype(float, copy=False)
+        # ocean -> NaN (so colormap ignores it)
+        arr_plot[~mask_plot] = np.nan
+        # ocean background (orientation-safe): use imshow with the same origin as the data
+        # try:
+        #     ocean_plot = (~mask_plot).astype(float)
+        #     # show ocean as a light gray background; land stays transparent
+        #     ocean_plot[ocean_plot == 0] = np.nan
+        #     ax.imshow(ocean_plot, cmap=plt.get_cmap("Greys"), vmin=0.0, vmax=1.0, alpha=0.25) # type: ignore
+        # except Exception:
+        #     pass
     else:
         arr_plot = arr
 
-    im = ax.imshow(arr_plot, cmap=cmap, vmin=vmin, vmax=vmax, origin="upper")
+    # Ensure NaNs are transparent so the ocean background shows through
+    try:
+        if isinstance(cmap, Colormap):
+            cmap_use = cmap
+        else:
+            cmap_use = plt.get_cmap(cmap) # type: ignore
+        cmap_use = cmap_use.copy()
+        cmap_use.set_bad(alpha=0.0)
+    except Exception:
+        cmap_use = cmap
+
+    im = ax.imshow(arr_plot, cmap=cmap_use, vmin=vmin, vmax=vmax)
 
     # Keep this so all spatial plots have the same orientation as elsewhere
     # ax.invert_yaxis()
 
-    if dk_mask is not None:
-        overlay_outline(ax, dk_mask)
+    if mask_plot is not None:
+        # Use the same orientation as the displayed image (origin="upper")
+        overlay_outline(ax, np.flipud(mask_plot))
+    elif dk_mask is not None:
+        overlay_outline(ax, np.flipud(dk_mask))
 
     if add_stats:
-        flat = arr.ravel()  # stats on original data (orientation doesn’t matter)
+        if mask_plot is not None:
+            flat = arr_plot[mask_plot]
+        else:
+            flat = arr_plot.ravel()
         flat = flat[np.isfinite(flat)]
         if flat.size > 0:
             mu = float(np.nanmean(flat))
             sd = float(np.nanstd(flat))
             title = f"{title}  |  {mu:.2f} ± {sd:.2f}"
 
-    ax.set_title(title)
+    ax.set_title(title, fontsize=12)
     ax.set_xticks([])
     ax.set_yticks([])
 
-    cb = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.02)
-    if cbar_label:
-        cb.set_label(cbar_label)
+    if add_colorbar:
+        cb = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.02)
+        if cbar_label:
+            cb.set_label(cbar_label, fontsize=12)
 
     return im
 
@@ -131,22 +172,37 @@ def plot_spatial_maps(eval_root: str | Path) -> None:
                 idx_map["hr"] = len(arrs); arrs.append(npz_hr[var]); titles.append(f"HR | {var}")
             if npz_ensmean is not None and var in npz_ensmean:
                 idx_map["ens"] = len(arrs); arrs.append(npz_ensmean[var]); titles.append(f"Ensemble mean | {var}")
-            if npz_ensstd is not None and var in npz_ensstd:
-                idx_map["ensstd"] = len(arrs); arrs.append(npz_ensstd[var]); titles.append(f"Ensemble spread (std) | {var}")
+            # Ensemble spread (std) column removed from spatial multi-panel plots                
+            # if npz_ensstd is not None and var in npz_ensstd:
+            #     idx_map["ensstd"] = len(arrs); arrs.append(npz_ensstd[var]); titles.append(f"Ensemble spread (std) | {var}")
             if npz_lr is not None and var in npz_lr:
                 idx_map["lr"] = len(arrs); arrs.append(npz_lr[var]); titles.append(f"LR | {var}")
 
             if not arrs:
                 continue
 
-            # robust vmin/vmax across value arrays (1–99th), then force vmin >= 0
-            stack_vals = np.concatenate([a.reshape(-1) for a in arrs if a is not None])
-            stack_vals = stack_vals[np.isfinite(stack_vals)]
+            # robust vmin/vmax across value arrays (1–99th) computed over land-only pixels (avoid ocean zeros)
+            stack_chunks: List[np.ndarray] = []
+            for a in arrs:
+                if a is None:
+                    continue
+                aa = np.asarray(a)
+                if dk_mask is not None and dk_mask.shape == aa.shape:
+                    vals = aa[dk_mask.astype(bool)]
+                else:
+                    vals = aa.reshape(-1)
+                vals = vals[np.isfinite(vals)]
+                if vals.size > 0:
+                    stack_chunks.append(vals)
+
+            stack_vals = np.concatenate(stack_chunks) if stack_chunks else np.array([], dtype=float)
+
             if stack_vals.size > 0:
                 if vmin is None:
                     vmin = float(np.nanpercentile(stack_vals, 1.0))
                 if vmax is None:
                     vmax = float(np.nanpercentile(stack_vals, 99.0))
+                # Precipitation should not go negative; only clamp if tiny numerical noise
                 if np.isfinite(vmin) and vmin < 0.0:
                     vmin = 0.0
                 if np.isfinite(vmin) and np.isfinite(vmax) and vmin >= vmax:
@@ -185,15 +241,30 @@ def plot_spatial_maps(eval_root: str | Path) -> None:
             # Layout: row 0 = values, row 1 = ratios, row 2 = biases
             ncols = len(arrs)
             fig, axs = plt.subplots(3, ncols, figsize=(4.0*ncols, 10.5), squeeze=False)
+            # Reserve space on the right for the shared row-0 colorbar
+            fig.subplots_adjust(right=0.89, wspace=0.05, hspace=0.18)
 
             # Row 0: values (μ ± σ in titles)
+            first_im = None
             for j, a in enumerate(arrs):
-                # For EnsStd column, keep vmin=0 explicitly
-                is_spread = (j == idx_map.get("ensstd", -1))
-                _draw_single(
-                    axs[0, j], a, titles[j], cmap=cmap, vmin=(0.0 if is_spread else vmin), vmax=vmax,
-                    cbar_label=clabel, dk_mask=dk_mask, add_stats=True
+                im = _draw_single(
+                    axs[0, j], a, titles[j],
+                    cmap=cmap, vmin=vmin, vmax=vmax,
+                    cbar_label=clabel, dk_mask=dk_mask,
+                    add_stats=True,
+                    add_colorbar=False,   # shared cbar below
                 )
+                if first_im is None and im is not None:
+                    first_im = im
+
+            # Shared colorbar for row-0 value maps (bigger + easier to read)
+            # Place it in an explicit cax so it cannot overlap the last panel.
+            if first_im is not None:
+                # [left, bottom, width, height] in figure coordinates; top row occupies ~top third
+                cax = fig.add_axes([0.92, 0.69, 0.015, 0.22])
+                cb = fig.colorbar(first_im, cax=cax)
+                if clabel:
+                    cb.set_label(clabel, fontsize=12)
 
             # Initialize rows 1–2 as empty
             for j in range(ncols):
@@ -237,5 +308,5 @@ def plot_spatial_maps(eval_root: str | Path) -> None:
                 )
                 axs[2, idx_map["lr"]].axis("on")
 
-            fig.suptitle(f"{group}: {var}")
+            fig.suptitle(f"{group}: {var}", fontsize=16)
             _savefig(fig, figs / f"spatial_{group}_{var}.png", dpi=SET_DPI)

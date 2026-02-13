@@ -95,6 +95,14 @@ def plot_return_levels(gev_csv: Path, out_png: Path, bo: Optional[Dict[str, Any]
     meta = _load_meta(gev_csv.parent)
     agg_kind = str(meta.get("agg_kind", "mean"))
     bpy = meta.get("blocks_per_year", None)
+    # Try to load ensemble stats for GEV RLs
+    gev_ens_stats = None
+    stats_path = gev_csv.parent / "ext_rxk_gev_ens_stats.npz"
+    if stats_path.exists():
+        try:
+            gev_ens_stats = np.load(stats_path, allow_pickle=True)
+        except Exception as e:
+            logger.warning(f"[plot_return_levels] Could not load {stats_path}: {e}")
     if bpy is not None:
         fig.text(0.99, 0.01, f"Aggregation: {agg_kind}   •   Blocks/year = {float(bpy):.2f}",
                  ha="right", va="bottom", fontsize=9, color="0.3")
@@ -115,6 +123,16 @@ def plot_return_levels(gev_csv: Path, out_png: Path, bo: Optional[Dict[str, Any]
             ax.plot(rps, rl, marker="o", ms=3, lw=1.5, color=col,
                     label=f"{SERIES_LABELS[which]} (n={nb})", ls=ls)
             ax.fill_between(rps, lo, hi, alpha=0.18, color=col, linewidth=0)
+            # Optionally plot ensemble std as error bars for GEN_ENS
+            if which == "GEN_ENS" and gev_ens_stats is not None:
+                try:
+                    std_key = f"rl_std_rx{k}"
+                    if std_key in gev_ens_stats.files:
+                        rl_std = np.asarray(gev_ens_stats[std_key], dtype=float)
+                        if rl_std.shape == (len(rps),) and np.isfinite(rl_std).any():
+                            ax.errorbar(rps, rl, yerr=rl_std, fmt="none", ecolor=col, elinewidth=0.9, capsize=2, alpha=0.35)
+                except Exception:
+                    pass
         ax.set_xscale("log")
         ax.set_xlabel("Return period (years)")
         ax.set_ylabel("Return level (mm)")
@@ -176,6 +194,14 @@ def plot_pot(para_csv: Path, out_png: Path, bo: Optional[Dict[str, Any]] = None)
     pot_kind = str(meta.get("pot_thr_kind", ""))
     pot_val  = meta.get("pot_thr_val", None)
     pot_u_hr = meta.get("pot_u_hr", None)
+    # Try to load ensemble stats for POT RLs
+    pot_ens_stats = None
+    stats_path = para_csv.parent / "ext_pot_gpd_ens_stats.npz"
+    if stats_path.exists():
+        try:
+            pot_ens_stats = np.load(stats_path, allow_pickle=True)
+        except Exception as e:
+            logger.warning(f"[plot_pot] Could not load {stats_path}: {e}")
     # Compose a short descriptor
     if pot_kind == "hr_quantile" and pot_u_hr is not None:
         pot_desc = f"POT threshold: HR-quantile (u≈{float(pot_u_hr):.2f} mm/day)"
@@ -200,6 +226,14 @@ def plot_pot(para_csv: Path, out_png: Path, bo: Optional[Dict[str, Any]] = None)
         hi  = [float(x) for x in r[6+2*len(rps):6+3*len(rps)]]
         ax.plot(rps, rl, marker="o", ms=3, lw=1.5, color=col, label=SERIES_LABELS[which], ls=ls)
         ax.fill_between(rps, lo, hi, alpha=0.18, color=col, linewidth=0) # type: ignore
+        # Optionally plot ensemble std as error bars for GEN_ENS
+        if which == "GEN_ENS" and pot_ens_stats is not None:
+            try:
+                rl_std = np.asarray(pot_ens_stats.get("rl_std", None), dtype=float)
+                if rl_std.shape == (len(rps),) and np.isfinite(rl_std).any():
+                    ax.errorbar(rps, rl, yerr=rl_std, fmt="none", ecolor=col, elinewidth=0.9, capsize=2, alpha=0.35)
+            except Exception:
+                pass
     ax.set_xscale("log")
     ax.set_xlabel("Return period (years)")
     ax.set_ylabel("Return level (mm)")
@@ -295,12 +329,13 @@ def plot_tails(tails_csv: Path, out_png: Path, bo: Optional[Dict[str, Any]] = No
             logger.warning(f"[plot_tails] Could not load ensemble bands: {e}")
 
     _nice()
-    fig, axs = plt.subplots(2, 2, figsize=(10.8, 6.0))
-    ax_tails = axs[0, 0]
-    ax_wet = axs[1, 0]
-    ax_hit = axs[1, 1]
-    # hide top-right panel
-    axs[0, 1].axis("off")
+    # Layout: top row spans both columns; bottom row has two panels
+    fig = plt.figure(figsize=(10.8, 5.2))
+    gs = fig.add_gridspec(nrows=2, ncols=2, height_ratios=[1.15, 1.0], hspace=0.35, wspace=0.25)
+
+    ax_tails = fig.add_subplot(gs[0, :])
+    ax_wet = fig.add_subplot(gs[1, 0])
+    ax_hit = fig.add_subplot(gs[1, 1])
 
     # --- upper-left: percentile tails grouped bars ---
     ax = ax_tails

@@ -51,6 +51,8 @@ def run(cfg, make_plots=True):
             metrics_paths["summary"],
             figures_dir,
             combined=bool(getattr(getattr(cfg, "full_gen_eval", {}), "sigma_control_plot_combined", True)),
+            error_mode="sem",
+            also_write_std=True,            
         )
         plot_sigma_control_examples_grid(
             cfg,

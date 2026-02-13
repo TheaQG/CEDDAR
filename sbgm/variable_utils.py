@@ -79,7 +79,9 @@ def get_unit_for_variable(variable: str):
     """
     units = {
         "temp": r"$^\circ$C",
+        "t2m": r"$^\circ$C",
         "prcp": "mm",
+        "tp": "mm",
         "cape": "J/kg",
         "nwvf": "m/s",
         "ewvf": "m/s",

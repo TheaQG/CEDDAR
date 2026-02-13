@@ -72,7 +72,7 @@ def plot_autocorr(figdir: Path, group: str, ac_dict: Dict[str, np.ndarray]) -> N
     for label, ac in ac_dict.items():
         ax.plot(np.arange(1, len(ac) + 1), ac, marker="o", markersize=3.0, linewidth=1.2,
                 label=label, color=_COL.get(label, None))
-    ax.set_title(f"{group}: lag-k autocorrelation")
+    ax.set_title(f"{group}: lag autocorrelation")
     ax.set_xlabel("lag (days)"); ax.set_ylabel("autocorr")
     ax.set_ylim(-0.15, 1.0)
     leg = ax.legend(ncol=3, frameon=True)

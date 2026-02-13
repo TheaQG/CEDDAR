@@ -152,13 +152,14 @@ def plot_samples_grid(
             fig, axs = plt.subplots(
                 n_rows,
                 n_cols,
-                figsize=(10 + 5*(n_cols-2), 4 * n_rows),
+                figsize=(11 + 6*(n_cols-2), 4 * n_rows),
                 squeeze=False,
-                constrained_layout=True,
+                constrained_layout=False,
+                gridspec_kw={"wspace": 0.25, "hspace": 0.15},
             )
             fig.suptitle(
                 f"Qualitative comparison - {variable} ({hr_model} vs {lr_model})",
-                y=1.02,
+                y=1.06,
             )
 
             for r, d in enumerate(day_list):
@@ -230,7 +231,7 @@ def plot_samples_grid(
             if len(day_list) == 1:
                 fname += f"_{day_list[0].strftime('%Y%m%d')}"
             out = os.path.join(save_path, f"{fname}.png")
-            fig.savefig(out, dpi=300, bbox_inches="tight")
+            fig.savefig(out, dpi=300) #, bbox_inches="tight")
             logger.info(f"      Saved qualitative comparison to {out}")
             if show:
                 plt.show()

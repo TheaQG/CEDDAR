@@ -4,6 +4,7 @@ Plot sigma*-dependent evaluation metrics: correlation, PSD slope, and CRPS.
 
 import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.ticker
 from pathlib import Path
 import logging 
 
@@ -14,12 +15,12 @@ from sbgm.variable_utils import get_color_for_model, get_cmap_for_variable
 from sbgm.evaluate.data_resolver import EvalDataResolver
 
 # New imports for plotting utilities and DK outline
-from sbgm.evaluate.evaluate_prcp.plot_utils import _ensure_dir, _nice, _savefig, get_dk_lsm_outline, overlay_outline
-from sbgm.plotting_utils import _add_colorbar_and_boxplot
+from sbgm.evaluate.evaluate_prcp.plot_utils import _ensure_dir, _nice, _savefig
+from sbgm.plotting_utils import _add_colorbar_and_boxplot, get_dk_lsm_outline, overlay_outline
 
 SET_DPI = 300
 
-def plot_sigma_control(summary_csv, figures_dir, combined: bool = False):
+def plot_sigma_control(summary_csv, figures_dir, combined: bool = False, *, error_mode: str = "std", also_write_std: bool = False):
     """
     Render sigma*-dependent summary plots.
 
@@ -42,10 +43,6 @@ def plot_sigma_control(summary_csv, figures_dir, combined: bool = False):
         logger.warning("[sigma_control.plot] Empty summary CSV: %s", str(summary_csv))
         return {}
 
-    # Handle empty summary gracefully
-    if isinstance(data, np.ndarray) and data.size == 0:
-        return {}
-
     sigma = np.asarray(data['sigma_star'], dtype=float)
     r_lp_mean = np.asarray(data['r_lp_mean'], dtype=float)
     r_lp_std = np.asarray(data['r_lp_std'], dtype=float)
@@ -59,6 +56,72 @@ def plot_sigma_control(summary_csv, figures_dir, combined: bool = False):
     # Optional: high-k gain (may be absent in old runs)
     hk_gain_mean = np.asarray(data['hk_gain_mean'], dtype=float) if (data.dtype.names is not None and 'hk_gain_mean' in data.dtype.names) else None
     hk_gain_std  = np.asarray(data['hk_gain_std'], dtype=float)  if (data.dtype.names is not None and 'hk_gain_std' in data.dtype.names) else None
+
+    # -------------------------
+    # Optional: derive sample counts per sigma* to compute SEM
+    # -------------------------
+    def _sigma_counts_from_metrics_csv(summary_csv_path: Path, sigma_vals: np.ndarray) -> dict[float, int]:
+        """Try to infer N per sigma* from the sibling metrics_by_sigma.csv (same tables dir)."""
+        try:
+            metrics_csv = Path(summary_csv_path).with_name("metrics_by_sigma.csv")
+            if not metrics_csv.exists():
+                return {}
+            mdat = np.genfromtxt(metrics_csv, delimiter=",", names=True, dtype=None, encoding="utf-8")
+            if isinstance(mdat, np.ndarray) and mdat.size == 0:
+                return {}
+            msig = np.asarray(mdat["sigma_star"], dtype=float)
+            out: dict[float, int] = {}
+            for s in np.unique(msig[np.isfinite(msig)]):
+                out[float(s)] = int(np.sum(msig == s))
+            # ensure keys align to provided sigma grid (within tolerance)
+            aligned: dict[float, int] = {}
+            for s in sigma_vals:
+                if float(s) in out:
+                    aligned[float(s)] = out[float(s)]
+                    continue
+                for k, v in out.items():
+                    if abs(float(s) - float(k)) < 1e-6:
+                        aligned[float(s)] = int(v)
+                        break
+            return aligned
+        except Exception:
+            return {}
+
+    def _to_sem(std_arr: np.ndarray, n_per_sigma: np.ndarray) -> np.ndarray:
+        n = np.asarray(n_per_sigma, dtype=float)
+        n = np.where(np.isfinite(n) & (n > 0), n, np.nan)
+        return std_arr / np.sqrt(n)
+
+    # infer N per sigma* (falls back to NaN -> SEM will become NaN and we will fall back to STD)
+    _nmap = _sigma_counts_from_metrics_csv(Path(summary_csv), sigma)
+    n_per_sigma = np.array([_nmap.get(float(s), np.nan) for s in sigma], dtype=float)
+
+    # choose error bars
+    error_mode = (error_mode or "std").lower().strip()
+    if error_mode not in ("std", "sem"):
+        logger.warning("[sigma_control.plot] Unknown error_mode=%s; falling back to 'std'", str(error_mode))
+        error_mode = "std"
+
+    # Compute SEM arrays (may contain NaNs if N unknown)
+    r_lp_sem = _to_sem(r_lp_std, n_per_sigma)
+    slope_gen_sem = _to_sem(slope_gen_std, n_per_sigma)
+    slope_hr_sem = _to_sem(slope_hr_std, n_per_sigma)
+    crps_sem = _to_sem(crps_std, n_per_sigma)
+    hk_gain_sem = _to_sem(hk_gain_std, n_per_sigma) if hk_gain_std is not None else None
+
+    def _pick_err(std_arr: np.ndarray, sem_arr: np.ndarray) -> np.ndarray:
+        # If SEM is requested but cannot be computed (missing N), fall back to STD.
+        if error_mode == "sem":
+            if np.isfinite(sem_arr).any():
+                return sem_arr
+            logger.warning("[sigma_control.plot] SEM requested but N unavailable; using STD error bars")
+        return std_arr
+
+    r_lp_err = _pick_err(r_lp_std, r_lp_sem)
+    slope_gen_err = _pick_err(slope_gen_std, slope_gen_sem)
+    slope_hr_err = _pick_err(slope_hr_std, slope_hr_sem)
+    crps_err = _pick_err(crps_std, crps_sem)
+    hk_gain_err = _pick_err(hk_gain_std, hk_gain_sem) if hk_gain_std is not None and hk_gain_sem is not None else hk_gain_std
 
     # Colors and styling
     color_gen = get_color_for_model("pmm")
@@ -84,42 +147,74 @@ def plot_sigma_control(summary_csv, figures_dir, combined: bool = False):
         import matplotlib.pyplot as plt
         ncols = 4 if hk_gain_mean is not None else 3
         fig, axes = plt.subplots(1, ncols, figsize=(4.6*ncols, 4.5), sharex=False)
+        # Remove repeated x-axis labels on interior panels
+        for a in axes[:-1]:
+            a.set_xlabel("")
         # 1) Correlation
         ax = axes[0]
-        ax.errorbar(sigma, r_lp_mean, yerr=r_lp_std, color=color_gen, **marker_style)
+        ax.errorbar(sigma, r_lp_mean, yerr=r_lp_err, color=color_gen, **marker_style)
         ax.set_xlabel(r"$\sigma^*$")
         ax.set_ylabel("LR-GEN correlation\n(LP ≤ LR Nyquist)")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.margins(y=0.08)
         ax.set_xlim(*_xpad(sigma))
-        ax.set_ylim(0.4, min(1.0, max(0.02, float(np.nanmax(r_lp_mean + r_lp_std)) + 0.02)))
+        ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
+        ax.tick_params(axis="both", labelsize=11)
+        ax.set_ylim(0.6, 0.82)
+        ax.set_yticks([0.6, 0.65, 0.7, 0.75, 0.8])
         ax.set_title("Scale-aware correlation")
         # 2) PSD slope
         ax = axes[1]
-        ax.errorbar(sigma, slope_gen_mean, yerr=slope_gen_std, color=color_gen, label="Generated", **marker_style)
+        ax.errorbar(sigma, slope_gen_mean, yerr=slope_gen_err, color=color_gen, label="Generated", **marker_style)
         if slope_hr_mean.size > 0 and np.isfinite(slope_hr_mean).any():
             hr_ref = float(np.nanmean(slope_hr_mean))
             ax.axhline(hr_ref, color=color_hr, ls="--", lw=1.5, label="DANRA")
         ax.set_xlabel(r"$\sigma^*$")
         ax.set_ylabel("PSD slope (5-20 km)")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.margins(y=0.08)
         ax.set_xlim(*_xpad(sigma))
+        ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
+        ax.tick_params(axis="both", labelsize=11)
+        ax.set_ylim(-5.4, -4.1)
+        ax.set_yticks([-5.4, -5.0, -4.6, -4.2])
         ax.legend(frameon=False)
         ax.set_title("Mesoscale PSD slope")
         # 3) CRPS
         ax = axes[2]
-        ax.errorbar(sigma, crps_mean, yerr=crps_std, color=color_ens, **marker_style)
+        ax.errorbar(sigma, crps_mean, yerr=crps_err, color=color_ens, **marker_style)
         ax.set_xlabel(r"$\sigma^*$")
         ax.set_ylabel("CRPS")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.margins(y=0.08)
         ax.set_xlim(*_xpad(sigma))
+        ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
+        ax.tick_params(axis="both", labelsize=11)
+        ax.set_ylim(1.85, 2.20)
+        ax.set_yticks([1.9, 2.0, 2.1, 2.2])
         ax.set_title(r"Probabilistic skill vs $\sigma^*$")
         # 4) High-k gain panel if available
         if hk_gain_mean is not None:
             ax = axes[3]
-            ax.errorbar(sigma, hk_gain_mean, yerr=hk_gain_std, color=color_gen, **marker_style)
+            ax.set_yscale("log")
+            ax.set_ylim(1e-1, 3e7)
+            ax.set_yticks([1e-1, 1e1, 1e3, 1e5, 1e7])
+            ax.get_yaxis().set_major_formatter(matplotlib.ticker.LogFormatterMathtext())
+            ax.errorbar(sigma, hk_gain_mean, yerr=hk_gain_err, color=color_gen, **marker_style)
             ax.set_xlabel(r"$\sigma^*$")
             ax.set_ylabel(r"$G_\mathrm{high}$  (P_GEN / P_HR, k > k_\mathrm{Nyq}^{LR})")
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.margins(y=0.08)
             ax.set_xlim(*_xpad(sigma))
+            ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
+            ax.tick_params(axis="both", labelsize=11)
             ax.set_title("High‑k power gain")
         fig.tight_layout()
-        out_all = figures_dir / "sigma_control_overview.png"
+        out_all = figures_dir / f"sigma_control_overview_{error_mode}.png"
         _savefig(fig, out_all, dpi=300)
         figpaths["overview"] = str(out_all)
 
@@ -128,53 +223,96 @@ def plot_sigma_control(summary_csv, figures_dir, combined: bool = False):
     # 1) Correlation
     fig = plt.figure()
     ax = plt.gca()
-    ax.errorbar(sigma, r_lp_mean, yerr=r_lp_std, color=color_gen, **marker_style)
+    ax.errorbar(sigma, r_lp_mean, yerr=r_lp_err, color=color_gen, **marker_style)
     ax.set_xlabel(r"$\sigma^*$")
     ax.set_ylabel("LR-GEN correlation (LP ≤ LR Nyquist)")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.margins(y=0.08)
     ax.set_xlim(*_xpad(sigma))
-    ax.set_ylim(0.0, min(1.0, max(0.02, float(np.nanmax(r_lp_mean + r_lp_std)) + 0.02)))
+    ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
+    ax.tick_params(axis="both", labelsize=11)
+    ax.set_ylim(0.6, 0.82)
+    ax.set_yticks([0.6, 0.65, 0.7, 0.75, 0.8])
     ax.set_title(r"Scale-aware correlation vs $\sigma^*$")
-    figpaths["corr"] = str(figures_dir / "hr_lr_corr_vs_sigma.png")
-    _savefig(fig, Path(figpaths["corr"]), dpi=SET_DPI)
+    figpaths[f"corr_{error_mode}"] = str(figures_dir / f"hr_lr_corr_vs_sigma_{error_mode}.png")
+    _savefig(fig, Path(figpaths[f"corr_{error_mode}"]), dpi=SET_DPI)
 
     # 2) PSD slope
     fig = plt.figure()
     ax = plt.gca()
-    ax.errorbar(sigma, slope_gen_mean, yerr=slope_gen_std, color=color_gen, label="Generated", **marker_style)
+    ax.errorbar(sigma, slope_gen_mean, yerr=slope_gen_err, color=color_gen, label="Generated", **marker_style)
     if slope_hr_mean.size > 0 and np.isfinite(slope_hr_mean).any():
         hr_ref = float(np.nanmean(slope_hr_mean))
         ax.axhline(hr_ref, color=color_hr, ls="--", lw=1.5, label="DANRA")
     ax.set_xlabel(r"$\sigma^*$")
     ax.set_ylabel("PSD slope (5-20 km)")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.margins(y=0.08)
     ax.set_xlim(*_xpad(sigma))
+    ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
+    ax.tick_params(axis="both", labelsize=11)
+    ax.set_ylim(-5.4, -4.1)
+    ax.set_yticks([-5.4, -5.0, -4.6, -4.2])
     ax.set_title(r"PSD slope vs $\sigma^*$")
     ax.legend(frameon=False)
-    figpaths["slope"] = str(figures_dir / "psd_slope_vs_sigma.png")
-    _savefig(fig, Path(figpaths["slope"]), dpi=SET_DPI)
+    figpaths[f"slope_{error_mode}"] = str(figures_dir / f"psd_slope_vs_sigma_{error_mode}.png")
+    _savefig(fig, Path(figpaths[f"slope_{error_mode}"]), dpi=SET_DPI)
 
     # 3) CRPS
     fig = plt.figure()
     ax = plt.gca()
-    ax.errorbar(sigma, crps_mean, yerr=crps_std, color=color_ens, **marker_style)
+    ax.errorbar(sigma, crps_mean, yerr=crps_err, color=color_ens, **marker_style)
     ax.set_xlabel(r"$\sigma^*$")
     ax.set_ylabel("CRPS")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.margins(y=0.08)
     ax.set_xlim(*_xpad(sigma))
+    ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
+    ax.tick_params(axis="both", labelsize=11)
+    ax.set_ylim(1.85, 2.20)
+    ax.set_yticks([1.9, 2.0, 2.1, 2.2])
     ax.set_title(r"Probabilistic skill vs $\sigma^*$")
-    figpaths["crps"] = str(figures_dir / "crps_vs_sigma.png")
-    _savefig(fig, Path(figpaths["crps"]), dpi=SET_DPI)
+    figpaths[f"crps_{error_mode}"] = str(figures_dir / f"crps_vs_sigma_{error_mode}.png")
+    _savefig(fig, Path(figpaths[f"crps_{error_mode}"]), dpi=SET_DPI)
 
     # 4) High-k gain (if present)
     if hk_gain_mean is not None:
         fig = plt.figure()
         ax = plt.gca()
-        ax.errorbar(sigma, hk_gain_mean, yerr=hk_gain_std, color=color_gen, **marker_style)
+        ax.set_yscale("log")
+        ax.set_ylim(1e-1, 3e7)
+        ax.set_yticks([1e-1, 1e1, 1e3, 1e5, 1e7])
+        ax.get_yaxis().set_major_formatter(matplotlib.ticker.LogFormatterMathtext())
+        ax.errorbar(sigma, hk_gain_mean, yerr=hk_gain_err, color=color_gen, **marker_style)
         ax.set_xlabel(r"$\sigma^*$")
         ax.set_ylabel(r"$G_\mathrm{high}$  (P_GEN / P_HR, k > k_\mathrm{Nyq}^{LR})")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.margins(y=0.08)
         ax.set_xlim(*_xpad(sigma))
+        ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
+        ax.tick_params(axis="both", labelsize=11)
         ax.axhline(1.0, color="0.3", ls="--", lw=1.2)  # reference where GEN matches HR power
         ax.set_title(r"High‑k power gain vs $\sigma^*$")
-        figpaths["hk_gain"] = str(figures_dir / "high_k_gain_vs_sigma.png")
-        _savefig(fig, Path(figpaths["hk_gain"]), dpi=SET_DPI)
+        figpaths[f"hk_gain_{error_mode}"] = str(figures_dir / f"high_k_gain_vs_sigma_{error_mode}.png")
+        _savefig(fig, Path(figpaths[f"hk_gain_{error_mode}"]), dpi=SET_DPI)
+
+    # Optionally also write the STD version when producing SEM plots
+    if also_write_std and error_mode == "sem":
+        try:
+            std_paths = plot_sigma_control(
+                summary_csv,
+                figures_dir,
+                combined=combined,
+                error_mode="std",
+                also_write_std=False,
+            )
+            figpaths.update(std_paths)
+        except Exception as e:
+            logger.warning("[sigma_control.plot] also_write_std failed: %s", str(e))
 
     logger.info("[sigma_control.plot] Wrote figures: %s", figpaths)
     return figpaths
