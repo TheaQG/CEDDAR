@@ -65,3 +65,7 @@ slurm-*.out
 # crash dumps
 core
 core.*
+
+# crash dumps
+core
+core.*
