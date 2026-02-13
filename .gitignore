@@ -69,3 +69,21 @@ core.*
 # crash dumps
 core
 core.*
+
+# macOS
+.DS_Store
+
+# crash dumps
+core
+core.*
+
+# python
+__pycache__/
+*.pyc
+
+# editors
+.vscode/
+.idea/
+
+# local/HPC build artifacts
+LUMI_build/
