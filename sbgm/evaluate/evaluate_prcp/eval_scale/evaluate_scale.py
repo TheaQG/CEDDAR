@@ -255,7 +255,7 @@ def run_scale(
             dx_km=hr_dx_km,
             mask_2d=mask,
             window="hann",
-            detrend="none",
+            detrend="mean",
             normalize="none",
         )
         gen_psd = psd_from_2d(
@@ -263,7 +263,7 @@ def run_scale(
             dx_km=hr_dx_km,
             mask_2d=mask,
             window="hann",
-            detrend="none",
+            detrend="mean",
             normalize="none",
         )
 
@@ -274,7 +274,7 @@ def run_scale(
                 dx_km=lr_dx_km,
                 mask_2d=None,          # you *can* pass a coarsened mask here later
                 window="hann",
-                detrend="none",
+                detrend="mean",
                 normalize="none",
             )
         else:
@@ -287,7 +287,7 @@ def run_scale(
                 dx_km=hr_dx_km,
                 mask_2d=None,
                 window="hann",
-                detrend="none",
+                detrend="mean",
                 normalize="none",
             )
         else:
@@ -399,7 +399,9 @@ def run_scale(
 
             for s in iss_scales_km:
                 key = (float(thr), float(s))
-                iss_store.setdefault(key, []).append(float(iss_dict[f"{int(s)}km"]))
+                v = float(iss_dict[f"{int(s)}km"])
+                if np.isfinite(v):
+                    iss_store.setdefault(key, []).append(v)
 
         # ---------------- Ensemble FSS/ISS ----------------
         if gen_members is not None:
@@ -441,7 +443,10 @@ def run_scale(
                 iss_ens_lines.append(",".join(line_vals))
                 for s in iss_scales_km:
                     key = (float(thr), float(s))
-                    iss_ens_store.setdefault(key, []).append(float(np.mean(vals_per_scale[float(s)])))
+                    day_vals = np.asarray(vals_per_scale[float(s)], dtype=float)
+                    day_vals = day_vals[np.isfinite(day_vals)]
+                    if day_vals.size:
+                        iss_ens_store.setdefault(key, []).append(float(day_vals.mean()))
 
         # ===============================================================================
         # 3c. Optional: LR baseline FSS 
@@ -579,6 +584,71 @@ def run_scale(
         iss_ens_summ.append(",".join(row))
     (tables_dir / "scale_iss_ens_summary.csv").write_text("\n".join(iss_ens_summ))
     
+    # ---------------- Ensemble ISS uncertainty summary (mean/std/CI over days) ----------------
+    iss_ens_unc_path = tables_dir / "scale_iss_ens_summary_uncertainty.csv"
+
+    def _summ_stats(vals: list[float]) -> tuple[int, float, float, float, float, float]:
+        """
+        Returns (n, mean, std, se, ci_lo, ci_hi) with NaN-safe filtering.
+        """
+        arr = np.asarray(vals, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        n = int(arr.size)
+        if n == 0:
+            return 0, np.nan, np.nan, np.nan, np.nan, np.nan
+        mean = float(arr.mean())
+        if n > 1:
+            std = float(arr.std(ddof=1))
+            se = float(std / np.sqrt(n))
+            ci_lo = float(mean - 1.96 * se)
+            ci_hi = float(mean + 1.96 * se)
+        else:
+            std = 0.0
+            se = 0.0
+            ci_lo = mean
+            ci_hi = mean
+        return n, mean, std, se, ci_lo, ci_hi
+
+    # wide header: for each scale we emit mean/std/se/ci_lo/ci_hi/n
+    hdr = ["thr_mm"]
+    for s in iss_scales_km:
+        s_i = int(s)
+        hdr += [
+            f"iss_{s_i}km_mean",
+            f"iss_{s_i}km_std",
+            f"iss_{s_i}km_se",
+            f"iss_{s_i}km_ci_lo",
+            f"iss_{s_i}km_ci_hi",
+            f"iss_{s_i}km_n",
+        ]
+
+    lines = [",".join(hdr)]
+
+    for thr in iss_thresholds:
+        row = [f"{float(thr):.2f}"]
+        for s in iss_scales_km:
+            key = (float(thr), float(s))
+            vals = iss_ens_store.get(key, [])
+
+            n, mean, std, se, ci_lo, ci_hi = _summ_stats(vals)
+
+            # write blanks if no data, otherwise formatted numbers
+            if n == 0:
+                row += ["", "", "", "", "", ""]
+            else:
+                row += [
+                    f"{mean:.6f}",
+                    f"{std:.6f}",
+                    f"{se:.6f}",
+                    f"{ci_lo:.6f}",
+                    f"{ci_hi:.6f}",
+                    f"{n:d}",
+                ]
+        lines.append(",".join(row))
+
+    iss_ens_unc_path.write_text("\n".join(lines))
+    logger.info(f"[eval_scale] Wrote ISS ensemble uncertainty summary: {iss_ens_unc_path}")
+
     # FSS summary
     summ_lines = [",".join(["thr_mm"] + [f"fss_{int(s)}km" for s in fss_scales_km])]
     for thr in fss_thresholds:

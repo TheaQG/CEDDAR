@@ -233,6 +233,11 @@ class TrainingPipeline_general:
         # EMA parameters
         self.with_ema = cfg['training']['with_ema']
         self.ema_decay = float(cfg['training'].get('ema_decay', 0.9999)) # Default to 0.9999 if not specified
+        self.ema_warmup_steps = int(cfg.get("training", {}).get("ema_warmup_steps", 0))
+        self.global_step = 0
+        # EMA debug logging (theta vs theta_ema)
+        self.ema_debug_every = int(cfg.get("training", {}).get("ema_debug_every", 200))
+        self.ema_debug_n_params = int(cfg.get("training", {}).get("ema_debug_n_params", 5))
         if self.with_ema:
             self._init_ema()
 
@@ -599,7 +604,53 @@ class TrainingPipeline_general:
             # Only update if floating-point tensors:
             if k in msd and esd[k].dtype.is_floating_point:
                 esd[k].mul_(d).add_(msd[k], alpha=1 - d)
+    
+    def _log_ema_delta(self):
+        """Log ||theta - theta_ema|| / ||theta|| for a few parameters (sanity check)."""
+        if (not getattr(self, "with_ema", False)) or (not hasattr(self, "ema_model")):
+            return
 
+        try:
+            msd = self.model.state_dict()
+            esd = self.ema_model.state_dict()
+
+            rels = []
+            count = 0
+
+            for k, v in msd.items():
+                if not torch.is_tensor(v):
+                    continue
+                if not torch.is_floating_point(v):
+                    continue
+                if k not in esd:
+                    continue
+                ve = esd[k]
+                if (not torch.is_tensor(ve)) or (not torch.is_floating_point(ve)):
+                    continue
+
+                dv = (v - ve)
+                num = torch.linalg.norm(dv.float()).item()
+                den = torch.linalg.norm(v.float()).item()
+                rel = float(num / (den + 1e-12))
+
+                rels.append((rel, k))
+                count += 1
+                if count >= max(1, int(getattr(self, "ema_debug_n_params", 5))):
+                    break
+
+            if len(rels) == 0:
+                logger.info(f"[ema] step={getattr(self, 'global_step', -1)}: no floating params to compare (unexpected)")
+                return
+
+            mean_rel = float(sum(r for r, _ in rels) / len(rels))
+            max_rel, max_k = max(rels, key=lambda t: t[0])
+            logger.info(
+                f"[ema] step={getattr(self, 'global_step', -1)}: mean(||θ-θ_ema||/||θ||)={mean_rel:.3e}; "
+                f"max={max_rel:.3e} ({max_k})"
+            )
+
+        except Exception as e:
+            logger.warning(f"[ema] Could not compute theta vs theta_ema diagnostics: {e}")
     def load_checkpoint(self,
                         checkpoint_path,
                         load_ema=False,
@@ -640,6 +691,22 @@ class TrainingPipeline_general:
         except Exception as e:
             logger.warning(f"Could not load rain-gate head weights from checkpoint {checkpoint_path}. Error: {e}")
         
+        # --- Restore EMA model state if EMA is enabled ---
+        if getattr(self, "with_ema", False):
+            # Ensure ema_model exists
+            if not hasattr(self, "ema_model"):
+                self._init_ema()
+
+            if ema_sd is not None:
+                # Load EMA weights into the EMA shadow model
+                self.ema_model.load_state_dict(ema_sd)
+                self.ema_model.eval()
+                logger.info(f"→ Restored EMA shadow model weights from checkpoint {checkpoint_path}")
+            else:
+                # If no EMA weights in checkpoint, sync EMA to current model
+                self.ema_model.load_state_dict(self.model.state_dict())
+                self.ema_model.eval()
+                logger.info("→ No EMA weights found in checkpoint; synced EMA model to loaded model weights")
 
 
     def save_model(self,
@@ -961,9 +1028,20 @@ class TrainingPipeline_general:
             batch_loss.backward()
             # Update weights
             self.optimizer.step()
-            # Update EMA model if enabled
+            # --- EMA update (after optimizer step) ---
+            self.global_step += 1
             if self.with_ema:
-                self._update_ema()
+                if not hasattr(self, "ema_model"):
+                    self._init_ema()
+
+                if self.global_step >= self.ema_warmup_steps:
+                    self._update_ema()
+                else:
+                    # During warmup, keep EMA synced to model (prevents stale EMA)
+                    self.ema_model.load_state_dict(self.model.state_dict())
+            # --- EMA sanity check logging (theta vs theta_ema) ---
+            if self.with_ema and (self.ema_debug_every > 0) and (self.global_step % self.ema_debug_every == 0):
+                self._log_ema_delta()
 
             # Add batch loss to total loss
             loss_sum += batch_loss.item()

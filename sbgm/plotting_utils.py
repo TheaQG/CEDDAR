@@ -6,9 +6,14 @@ import logging
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as mcm
+import matplotlib.colors as mcolors
+import matplotlib as mpl
+from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from typing import Optional, Union, List, Dict, Tuple
+
+mpl.rcParams["hatch.linewidth"] = 0.3  # thinner hatches by default
 
 from sbgm.utils import _squeeze_geo_value
 from sbgm.variable_utils import (
@@ -23,6 +28,146 @@ from sbgm.variable_utils import (
 # Set up logging
 logger = logging.getLogger(__name__)
 
+
+# ==============================
+# Visualization helpers
+# ==============================
+
+class _ZeroFirstNormalize(Normalize):
+    """
+    Normalize where *exact zeros* get mapped to a dedicated first colormap color.
+
+    Mapping:
+      - x == 0 -> [0, zero_frac)
+      - x > 0  -> [zero_frac, 1]
+
+    Intended for precipitation-like variables where 0 is qualitatively special.
+    """
+    def __init__(self, vmin=None, vmax=None, *, zero_frac: float = 0.06, min_positive: float | None = None, clip: bool = False):
+        super().__init__(vmin=vmin, vmax=vmax, clip=clip)
+        self.zero_frac = float(zero_frac)
+        self.min_positive = None if min_positive is None else float(min_positive)
+
+    def __call__(self, value, clip=None):
+        v = np.asarray(value)
+        out = np.zeros_like(v, dtype=float)
+
+        nan_mask = ~np.isfinite(v)
+        zero_mask = (v == 0) & (~nan_mask)
+        pos_mask = (v > 0) & (~nan_mask)
+
+        vmin = self.vmin
+        vmax = self.vmax
+
+        if vmin is None or vmax is None:
+            if np.any(pos_mask):
+                vv = v[pos_mask]
+                if vmin is None:
+                    vmin = float(np.nanmin(vv))
+                if vmax is None:
+                    vmax = float(np.nanmax(vv))
+            else:
+                vmin = 0.0 if vmin is None else float(vmin)
+                vmax = 1.0 if vmax is None else float(vmax)
+
+        vmin_pos = float(vmin)
+        if self.min_positive is not None:
+            vmin_pos = max(vmin_pos, self.min_positive)
+
+        denom = (float(vmax) - vmin_pos)
+        denom = denom if denom != 0 else 1.0
+
+        out[zero_mask] = 0.0
+
+        if np.any(pos_mask):
+            scaled = (v[pos_mask] - vmin_pos) / denom
+            scaled = np.clip(scaled, 0.0, 1.0)
+            out[pos_mask] = self.zero_frac + (1.0 - self.zero_frac) * scaled
+
+        out[nan_mask] = np.nan
+        return out
+
+def _to_numpy_2d(x):
+    if x is None:
+        return None
+    import numpy as np
+    import torch
+    if torch.is_tensor(x):
+        x = x.detach().cpu().numpy()
+    x = np.asarray(x)
+    x = np.squeeze(x)
+    if x.ndim != 2:
+        x = x.reshape((-1, x.shape[-2], x.shape[-1]))[0]
+    return x
+
+def _is_precip_var(var: str) -> bool:
+    s = str(var).lower()
+    return s in ("prcp", "tp", "precip", "precipitation")
+
+
+def _get_cfg_vis(cfg: dict | None) -> dict:
+    if not isinstance(cfg, dict):
+        return {}
+    return cfg.get("visualization", {}) or {}
+
+
+def _overlay_landsea_outline(ax, lsm_mask, *, color="lightgrey", linewidth=0.7):
+    try:
+        m = _to_numpy_2d(lsm_mask)
+        if m is None:
+            return
+        ax.contour(m.astype(float, copy=False), levels=[0.5], colors=color, linewidths=linewidth)
+    except Exception:
+        return
+
+
+def _overlay_ocean_background(
+    ax,
+    ocean_mask: np.ndarray,
+    *,
+    style: str = "hatch",
+    facecolor: str = "#f3f3f3",
+    hatch: str = "//",
+    alpha: float = 0.15,
+):
+    """
+    Draw a distinct background on ocean pixels.
+
+    style:
+      - 'hatch': hatch pattern (recommended)
+      - 'solid': solid tinted ocean
+      - 'none' : nothing
+    """
+    style = str(style).lower()
+    if style in ("none", "off", "false", "0"):
+        return
+
+    m = _to_numpy_2d(ocean_mask)
+    if m is None:
+        return
+
+    try:
+        if style == "solid":
+            ax.contourf(m.astype(int), levels=[0.5, 1.5], colors=[facecolor], alpha=alpha)
+        else:
+            ax.contourf(m.astype(int), levels=[0.5, 1.5], colors=[facecolor], alpha=alpha)
+            cf = ax.contourf(m.astype(int), levels=[0.5, 1.5], colors="none", hatches=[hatch], alpha=0.0)
+            for c in cf.collections:
+                c.set_edgecolor("none")
+    except Exception:
+        return
+
+
+def _build_precip_zero_cmap(base_cmap, *, zero_color: str = "#ffffff", n: int = 256):
+    """Create a ListedColormap whose first color is a dedicated 'exact zero' color."""
+    try:
+        cm = mcm.get_cmap(base_cmap) if isinstance(base_cmap, str) else base_cmap
+    except Exception:
+        cm = base_cmap
+
+    colors = cm(np.linspace(0, 1, n)) # type: ignore
+    colors[0] = mcolors.to_rgba(zero_color) # type: ignore
+    return mcolors.ListedColormap(colors) # type: ignore
 
 # --- Robust conversion for imshow ---
 import numpy as _np
@@ -70,16 +215,53 @@ def _season_from_month(m: int) -> str:
         return "JJA"
     return "SON"
 
+def _extract_land_mask(sample: dict) -> np.ndarray | None:
+    """Return boolean land mask [H,W] if present in sample."""
+    for k in ("lsm_hr", "lsm", "land_sea_mask", "mask"):
+        if k in sample and sample[k] is not None:
+            m = _to_numpy_2d(sample[k])
+            if m is None:
+                continue
+            return (m >= 0.5)
+    return None
+
+def _masked_finite_values(arr2d: np.ndarray, land_mask: np.ndarray | None) -> np.ndarray:
+    """Flatten finite values, optionally land-masked."""
+    a = np.asarray(arr2d)
+    a = np.squeeze(a)
+    if a.ndim != 2:
+        a = a.reshape((-1, a.shape[-2], a.shape[-1]))[0]
+
+    if land_mask is not None and np.asarray(land_mask).shape == a.shape:
+        a = a[land_mask]
+    else:
+        a = a.ravel()
+
+    a = a[np.isfinite(a)]
+    return a
+
+def _shared_minmax(arrs: list[np.ndarray], land_mask: np.ndarray | None = None) -> tuple[float | None, float | None]:
+    vals = []
+    for a in arrs:
+        if a is None:
+            continue
+        v = _masked_finite_values(a, land_mask)
+        if v.size:
+            vals.append(v)
+    if not vals:
+        return None, None
+    vcat = np.concatenate(vals, axis=0)
+    return float(vcat.min()), float(vcat.max())
 
 
 # ------------------------------
 # DK outline via LSM (cached)
 # ------------------------------
-_DK_LSM_CACHE: Dict[Tuple[int, int, int, int], np.ndarray] = {}
+_DK_LSM_CACHE: dict[tuple[int, int, int, int], np.ndarray] | np.ndarray | None = None
 
 def _load_dk_lsm_outline(
     bounds: tuple[int, int, int, int] = (200, 328, 380, 508),
-    base: str = "/scratch/project_465001695/quistgaa/Data/Data_DiffMod",
+    base: str | None = None,
     rel_path: str = "data_lsm/truth_fullDomain/lsm_full.npz",
     key_candidates: tuple[str, ...] = ("lsm_hr", "lsm", "mask", "roi", "lsm_full", "data", "arr_0"),
 ) -> np.ndarray | None:
@@ -87,10 +269,14 @@ def _load_dk_lsm_outline(
     bounds is interpreted as (y0, y1, x0, x1) with y1/x1 exclusive; e.g., (200,328,380,508) → 128x128.
     """
     try:
+        # Resolve base path for data directory
+        if base is None:
+            base = os.environ.get("DATA_DIR", None)
+        if base is None:
+            logger.warning("[DK_LSM] DATA_DIR not set and no base path provided; cannot load LSM.")
+            return None
+
         logger.info("[DEBUG] Loading DK LSM outline from %s/%s", base, rel_path)
-        # base = os.environ.get(env_key, None)
-        # if not base:
-        #     return None
         p = Path(base) / rel_path
         if not p.exists():
             logger.warning("[DEBUG] DK LSM outline file not found: %s", str(p))
@@ -126,20 +312,29 @@ def _load_dk_lsm_outline(
 
 def get_dk_lsm_outline(
     bounds: tuple[int, int, int, int] = (200, 328, 380, 508),
+    base: str | None = None,
 ) -> np.ndarray | None:
     """
     Return cached DK outline mask (boolean [H,W]) for the requested `bounds`.
     Caches per-bounds so different crops return correctly sized masks.
     """
     global _DK_LSM_CACHE
+    # For backward compat, treat _DK_LSM_CACHE as a dict if needed
+    if isinstance(_DK_LSM_CACHE, dict):
+        cache = _DK_LSM_CACHE
+    else:
+        # Single cache for default bounds (legacy)
+        cache = {}
+        if _DK_LSM_CACHE is not None:
+            cache[(200, 328, 380, 508)] = _DK_LSM_CACHE
+        _DK_LSM_CACHE = cache
     try:
         key = (int(bounds[0]), int(bounds[1]), int(bounds[2]), int(bounds[3]))
     except Exception:
-        # Fallback to default if bounds malformed
         key = (200, 328, 380, 508)
     if key in _DK_LSM_CACHE:
         return _DK_LSM_CACHE[key]
-    m = _load_dk_lsm_outline(bounds=key)
+    m = _load_dk_lsm_outline(bounds=key, base=base)
     if m is not None:
         _DK_LSM_CACHE[key] = m
     return m
@@ -160,56 +355,84 @@ def imshow_variable(
     img2d: np.ndarray,
     *,
     variable: str,
-    bounds: tuple[int, int, int, int] = (200, 328, 380, 508),    
+    bounds: tuple[int, int, int, int] = (200, 328, 380, 508),
     vmin: float | None = None,
     vmax: float | None = None,
     cmap: str | None = None,
-    add_dk_outline: bool = True,
-    outline_color: str = "darkgrey",
-    outline_linewidth: float = 0.8,
-    under_color: str | None = "#c2c2c2",
-    under_threshold: float | None = 1e-6,
+    add_outline: bool = True,
+    outline_color: str = "lightgrey",
+    outline_linewidth: float = 0.7,
+    # Ocean handling
+    show_ocean: bool = True,
+    lsm_mask: np.ndarray | None = None,
+    ocean_background: str = "hatch",  # 'hatch'|'solid'|'none'
+    ocean_facecolor: str = "#f3f3f3",
+    ocean_hatch: str = "////",
+    ocean_alpha: float = 0.25,
+    ocean_overlay: bool = False, # draw ocean styling on top, but keep data visible
+    ocean_data_alpha: float | None = None, # if set, ocean pixels are dimmed (e.g. 0.4)
+    # Precip exact-zero appearance
+    precip_zero_color: str | None = "#ffffff",
+    precip_zero_frac: float = 0.06,
+    precip_min_positive: float | None = None,
+    # Back-compat: under-color for <vmin
+    under_color: str | None = None,
+    under_threshold: float | None = None,
+    # Optional cfg for defaults
+    cfg: dict | None = None,
 ):
     """
-    Centralized imshow for spatial maps that:
-      - picks the correct colormap for `variable` (via get_cmap_for_variable) unless `cmap` is provided
-      - inverts y-axis to be consistent with array conventions used elsewhere
-      - optionally overlays a cached DK land/sea outline
-      - values below `under_threshold` are drawn with `under_color` if provided
-      - typical use: precipitation “no-rain” background set to gray
-      
-    Returns the image handle from imshow.
+    Centralized imshow used across plotting.
+
+    Adds:
+      1) land/sea outline overlay on all maps (when LSM available)
+      2) distinct ocean background when show_ocean=False
+      3) precipitation-only exact-zero color
+
+    Returns: image handle from imshow.
     """
     if img2d is None:
         raise ValueError("imshow_variable: img2d is None")
+
+    vis = _get_cfg_vis(cfg)
+
+    outline_color = str(vis.get("outline_color", outline_color))
+    outline_linewidth = float(vis.get("outline_linewidth", outline_linewidth))
+
+    ocean_background = str(vis.get("ocean_background", ocean_background))
+    ocean_facecolor = str(vis.get("ocean_facecolor", ocean_facecolor))
+    ocean_hatch = str(vis.get("ocean_hatch", ocean_hatch))
+    ocean_alpha = float(vis.get("ocean_alpha", ocean_alpha))
+    # Optional hatch linewidth (Matplotlib controls this globally via rcParams)
+    hatch_lw = vis.get("ocean_hatch_linewidth", None) if isinstance(vis, dict) else None
+    if hatch_lw is not None:
+        try:
+            mpl.rcParams["hatch.linewidth"] = float(hatch_lw)
+        except Exception:
+            pass
+    precip_zero_color = vis.get("prcp_zero_color", precip_zero_color)
+    precip_zero_frac = float(vis.get("prcp_zero_frac", precip_zero_frac))
+    precip_min_positive = vis.get("prcp_min_positive", precip_min_positive)
+
     arr = np.asarray(img2d)
     if arr.ndim != 2:
-        # Squeeze simple singletons, otherwise pick first channel
         arr = np.squeeze(arr)
         if arr.ndim != 2:
             arr = arr.reshape((-1, arr.shape[-2], arr.shape[-1]))[0]
+
     cm_in = cmap or get_cmap_for_variable(variable)
     try:
-        # use matplotlib.cm.get_cmap (imported as mcm) to avoid relying on pyplot attribute
-        if isinstance(cm_in, str):
-            try:
-                cm_obj = mcm.get_cmap(cm_in)
-            except Exception:
-                cm_obj = cm_in
-        else:
-            cm_obj = cm_in
+        cm_obj = mcm.get_cmap(cm_in) if isinstance(cm_in, str) else cm_in
     except Exception:
         cm_obj = cm_in
 
-    # Optionally set an "under" color (values < vmin) for near-zero masks (e.g., no-rain as gray)
+    # Optional legacy set-under behavior
     if under_color is not None:
-        # Try the modern `with_extremes` API if available, otherwise fall back to `set_under`
         w_ext = getattr(cm_obj, "with_extremes", None)
         if callable(w_ext):
             try:
                 cm_obj = w_ext(under=under_color)
             except Exception:
-                # ignore and fall back to set_under if present
                 pass
         else:
             s_under = getattr(cm_obj, "set_under", None)
@@ -219,21 +442,86 @@ def imshow_variable(
                 except Exception:
                     pass
 
-    # If an under_threshold is specified and vmin not provided, use it
-    if under_threshold is not None and vmin is None:
+    # If we are hiding the ocean, prepare a mask and background
+    ocean_mask = None
+    if (not show_ocean) and (lsm_mask is not None):
+        m = np.asarray(lsm_mask)
+        if m.ndim != 2:
+            m = np.squeeze(m)
+        ocean_mask = (m < 0.5)
+        _overlay_ocean_background(
+            ax,
+            ocean_mask,
+            style=ocean_background,
+            facecolor=ocean_facecolor,
+            hatch=ocean_hatch,
+            alpha=ocean_alpha,
+        )
+
+    # Precipitation exact-zero handling
+    is_prcp = _is_precip_var(variable)
+    norm = None
+    if is_prcp and precip_zero_color is not None:
+        cm_obj = _build_precip_zero_cmap(cm_obj, zero_color=str(precip_zero_color))
+        norm = _ZeroFirstNormalize(vmin=vmin, vmax=vmax, zero_frac=precip_zero_frac, min_positive=precip_min_positive)
+
+    # Legacy under-threshold -> vmin
+    if under_threshold is not None and vmin is None and norm is None:
         vmin = float(under_threshold)
 
-    im = ax.imshow(arr, cmap=cm_obj, vmin=vmin, vmax=vmax, interpolation="nearest", origin="lower")
-    if add_dk_outline:
-        mask = get_dk_lsm_outline(bounds)
-        # flip upside down to match imshow orientation
-        mask = np.flipud(mask)  # type: ignore
-        overlay_outline(ax, mask, color=outline_color, linewidth=outline_linewidth)
-    # ax.invert_yaxis()
+    # Matplotlib does not allow passing both `norm` and `vmin/vmax` to imshow.
+    # If we built a Normalize (precip exact-zero), push vmin/vmax into the norm so
+    # caller-provided limits still control the scale (e.g. consistent HR vs LR).
+    vmin_arg = vmin
+    vmax_arg = vmax
+    if norm is not None:
+        if vmin is not None:
+            try:
+                norm.vmin = float(vmin)
+            except Exception:
+                pass
+        if vmax is not None:
+            try:
+                norm.vmax = float(vmax)
+            except Exception:
+                pass
+        vmin_arg = None
+        vmax_arg = None
+
+    # Plot: if ocean is hidden, make ocean NaNs transparent so background shows through
+    if ocean_mask is not None:
+        plot_arr = arr.copy()
+        plot_arr[ocean_mask] = np.nan
+        try:
+            cm_obj = cm_obj.copy() # type: ignore
+            cm_obj.set_bad(alpha=0.0)
+        except Exception:
+            pass
+        im = ax.imshow(plot_arr, cmap=cm_obj, vmin=vmin_arg, vmax=vmax_arg, norm=norm, interpolation="nearest", origin="lower")
+    else:
+        im = ax.imshow(arr, cmap=cm_obj, vmin=vmin_arg, vmax=vmax_arg, norm=norm, interpolation="nearest", origin="lower")
+
+    # Outline overlay
+    if add_outline:
+        mask_for_outline = None
+        if lsm_mask is not None:
+            mm = np.asarray(lsm_mask)
+            if mm.ndim != 2:
+                mm = np.squeeze(mm)
+            mask_for_outline = mm
+        else:
+            mask_for_outline = get_dk_lsm_outline(
+                bounds,
+                base=cfg.get("paths", {}).get("data_dir", None) if isinstance(cfg, dict) else None,
+            )
+            if mask_for_outline is not None:
+                mask_for_outline = np.flipud(mask_for_outline)
+
+        if mask_for_outline is not None:
+            _overlay_landsea_outline(ax, mask_for_outline, color=outline_color, linewidth=outline_linewidth)
+
     ax.set_xticks([])
     ax.set_yticks([])
-
-
     return im
 
 
@@ -323,7 +611,7 @@ def plot_spatial_panel(
         variable=variable,
         vmin=vmin,
         vmax=vmax,
-        add_dk_outline=add_dk_outline,
+        # add_dk_outline=add_dk_outline,
         outline_color=outline_color,
         outline_linewidth=outline_linewidth,
         under_color=under_color,
@@ -389,7 +677,7 @@ def _to_imshow_image(arr, prefer_channel: int = 0):
     view = squeezed.reshape((-1, squeezed.shape[-2], squeezed.shape[-1]))[0]
     return view, False
 
-def plot_sample(sample, cfg, figsize=(15, 4)):
+def plot_sample(sample, cfg, figsize=None):
     """
     Plot a single sample in a consistent layout.
     - Dual-LR tensors [2,H,W] are expanded into two separate axes (ch0, ch1).
@@ -411,11 +699,67 @@ def plot_sample(sample, cfg, figsize=(15, 4)):
 
     # visualization options
     cfg_vis = cfg.get('visualization', {}) if isinstance(cfg, dict) else {}
+
+    land_mask = _extract_land_mask(sample)
+
+    vis = cfg.get("visualization", {}) or {}
+    show_ocean = bool(vis.get("show_ocean", True))
+
+    # Only use land pixels for shared scaling if ocean is hidden (recommended)
+    scale_mask = land_mask if (not show_ocean) else None
+
+    # --- Shared scale for HR vs LR of the *target variable* (works for prcp/temp/peva/etc.) ---
+
+
+    # Determine the HR key and a matching LR key for the SAME physical variable.
+    hr_key = f"{var}_hr"
+
+    # LR variable name may differ (aliases). Try direct match first, then common aliases.
+    lr_var_candidates = [var]
+    alias_pairs = [('prcp', 'tp'), ('tp', 'prcp'), ('temp', 't2m'), ('t2m', 'temp')]
+    for a, b in alias_pairs:
+        if var == a:
+            lr_var_candidates.append(b)
+
+    lr_key_target = None
+    for cand in lr_var_candidates:
+        k = f"{cand}_lr"
+        if k in sample:
+            lr_key_target = k
+            break
+
+    # Scaled fields
+    _hr_scaled_src = sample.get(hr_key, None)
+    if _hr_scaled_src is None:
+        _hr_scaled_src = sample.get("y", None)
+    hr_scaled = _to_numpy_2d(_hr_scaled_src)
+
+    lr_scaled = _to_numpy_2d(sample.get(lr_key_target, None)) if lr_key_target is not None else None
+
+    # Original fields (if saved)
+    _hr_orig_src = sample.get(hr_key + "_original", None)
+    if _hr_orig_src is None:
+        _hr_orig_src = sample.get(hr_key + "_orig", None)
+    hr_orig = _to_numpy_2d(_hr_orig_src)
+
+    _lr_orig_src = None
+    if lr_key_target is not None:
+        _lr_orig_src = sample.get(lr_key_target + "_original", None)
+        if _lr_orig_src is None:
+            _lr_orig_src = sample.get(lr_key_target + "_orig", None)
+    lr_orig = _to_numpy_2d(_lr_orig_src)
+
+    # Shared min/max (scaled + original) over HR and the matching LR target, optionally land-masked
+    target_vmin_scaled, target_vmax_scaled = _shared_minmax([a for a in [hr_scaled, lr_scaled] if a is not None], scale_mask)
+    target_vmin_orig,   target_vmax_orig   = _shared_minmax([a for a in [hr_orig, lr_orig] if a is not None], scale_mask)
+
+    # Save the LR base-name we matched to, for per-panel detection later
+    target_lr_base = lr_key_target[:-3] if lr_key_target is not None else None
+
     overlay_lsm_contour = bool(cfg_vis.get('overlay_lsm_contour', False))
     dual_lr_lock_scale = bool(cfg_vis.get('dual_lr_lock_scale', True))  # NEW
 
     # Build items
-    hr_key = f"{var}_hr"
     lr_keys = sorted([k for k in sample.keys() if k.endswith('_lr')])
 
     # plot_items: (key, ch_idx) where ch_idx=None means single; 0/1 selects channel from [2,H,W]
@@ -458,7 +802,11 @@ def plot_sample(sample, cfg, figsize=(15, 4)):
             plot_items.append((ek, None))
 
     n = len(plot_items)
+    if figsize is None:
+        # Wider layout for many panels + colorbars + boxplots
+        figsize = (18, 4.2)    
     fig, axs = plt.subplots(1, n, figsize=figsize)
+    fig.subplots_adjust(wspace=0.55, hspace=0.35)    
     if n == 1:
         axs = np.array([axs])
     fig.suptitle(f"Sample from train dataset, {var} (HR: {hr_model}, LR: {lr_model})", fontsize=16)
@@ -477,6 +825,12 @@ def plot_sample(sample, cfg, figsize=(15, 4)):
                 float(np.nanmax([np.nanmax(img2d_cur), np.nanmax(other2d)])))
 
     for i, (key, ch_idx) in enumerate(plot_items):
+        is_lr_panel = key.endswith("_lr") or key.endswith("_lr_original")
+        # what to SHOW in the image
+        show_ocean_panel = True if is_lr_panel else show_ocean  # LR always shows full field
+        # what the boxplot should USE
+        boxplot_mask_land_only = True  # for both HR and LR (so they’re comparable)
+
         ax = axs[i]
         if key not in sample or sample[key] is None:
             ax.axis('off'); continue
@@ -488,7 +842,7 @@ def plot_sample(sample, cfg, figsize=(15, 4)):
         img = arr.squeeze().numpy()
 
         # mask ocean for HR images
-        if not show_ocean and (key.endswith("_hr") or key.endswith("_hr_original")) and ("lsm_hr" in sample):
+        if not show_ocean_panel and (key.endswith("_hr") or key.endswith("_hr_original")) and ("lsm_hr" in sample):
             m = sample["lsm_hr"]
             m = m.squeeze().detach().cpu().numpy() if torch.is_tensor(m) else np.asarray(m).squeeze()
             img = np.where(m < 1, np.nan, img)
@@ -503,17 +857,46 @@ def plot_sample(sample, cfg, figsize=(15, 4)):
             cmap = extra_cmap_dict.get(key, 'viridis')
 
         # limits
+        # 1) optional global force matching (per-key)
         if force_matching_scale and isinstance(global_min, dict) and isinstance(global_max, dict):
             vmin = global_min.get(key, np.nanmin(img))
             vmax = global_max.get(key, np.nanmax(img))
+
+        # 2) dual-LR channel locking (only relevant when key is dual and ch_idx is not None)
         elif (key.endswith('_lr') or key.endswith('_lr_original')) and (ch_idx is not None):
             joint = _joint_limits_for_pair(key, ch_idx, img)
             if joint is not None:
                 vmin, vmax = joint
             else:
                 vmin, vmax = np.nanmin(img), np.nanmax(img)
+        
+        # 3) shared HR-vs-LR precip limits (scaled + original)
         else:
-            vmin, vmax = np.nanmin(img), np.nanmax(img)
+            # Detect "this panel is the target variable".
+            # HR panels are always the target var; LR panels match when base==target_lr_base.
+            is_hr = key.endswith('_hr') or key.endswith('_hr_original')
+            if key.endswith('_lr'):
+                base = key[:-3]
+            elif key.endswith('_lr_original'):
+                base = key[:-12]
+            else:
+                base = None
+
+            is_target_panel = is_hr or (target_lr_base is not None and base == target_lr_base)
+
+            if is_target_panel:
+                if key.endswith('_hr_original') or key.endswith('_lr_original'):
+                    if (target_vmin_orig is not None) and (target_vmax_orig is not None):
+                        vmin, vmax = target_vmin_orig, target_vmax_orig
+                    else:
+                        vmin, vmax = np.nanmin(img), np.nanmax(img)
+                else:
+                    if (target_vmin_scaled is not None) and (target_vmax_scaled is not None):
+                        vmin, vmax = target_vmin_scaled, target_vmax_scaled
+                    else:
+                        vmin, vmax = np.nanmin(img), np.nanmax(img)
+            else:
+                vmin, vmax = np.nanmin(img), np.nanmax(img)
 
         # title
         if key.endswith('_hr'):
@@ -528,45 +911,90 @@ def plot_sample(sample, cfg, figsize=(15, 4)):
             unit = lr_units[lr_keys.index(base)] if base in lr_keys else '—'
             title = f"LR {lr_model} ({base})\noriginal [{unit}]{suffix}"
         elif extra_keys is not None and key in extra_keys:
-            title = "Topography" if key == "topo" else ("SDF" if key == "sdf" else ("Land/Sea Mask" if key == "lsm" else key))
+            title = "Topography\n\t" if key == "topo" else ("SDF" if key == "sdf" else ("Land/Sea Mask\n(LSM)" if key == "lsm" else key))
         else:
             title = key
 
         # draw
-        im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest', origin='lower')
+        lsm_for_plot = None
+        if "lsm_hr" in sample and sample["lsm_hr"] is not None:
+            lsm_for_plot = sample["lsm_hr"]
+        elif "lsm" in sample and sample["lsm"] is not None:
+            lsm_for_plot = sample["lsm"]
+
+        if lsm_for_plot is not None and torch.is_tensor(lsm_for_plot):
+            lsm_for_plot = lsm_for_plot.detach().cpu().numpy().squeeze()
+        elif lsm_for_plot is not None:
+            lsm_for_plot = np.asarray(lsm_for_plot).squeeze()
+
+        im = imshow_variable(
+            ax,
+            img,
+            variable=(var if (key.endswith("_hr") or key.endswith("_hr_original")) else key),
+            vmin=vmin,
+            vmax=vmax,
+            cmap=cmap,
+            add_outline=True,
+            show_ocean=bool(show_ocean_panel),
+            lsm_mask=lsm_for_plot,
+            cfg=cfg,
+        )
         ax.set_xticks([]); ax.set_yticks([]); ax.set_title(title, fontsize=10)
+
+        # If we are globally hiding ocean (show_ocean=False), we still want to SHOW the full LR field
+        # (conditioning), but visually deemphasize ocean while keeping boxplots land-only.
+        if (not show_ocean) and is_lr_panel and (lsm_for_plot is not None):
+            try:
+                from matplotlib.colors import ListedColormap
+                m = np.asarray(lsm_for_plot).squeeze()
+                if m.shape == np.asarray(img).shape:
+                    ocean = (m < 0.5)
+                    overlay = np.zeros_like(np.asarray(img), dtype=float)
+                    overlay[ocean] = 1.0
+
+                    ax.imshow(
+                        overlay,
+                        cmap=ListedColormap([(0, 0, 0, 0), (0.9, 0.9, 0.9, 1.0)]),
+                        interpolation="nearest",
+                        origin="lower",
+                        alpha=0.4,
+                        vmin=0.0,
+                        vmax=1.0,
+                    )
+            except Exception as e:
+                logger.debug(f"LR ocean overlay failed on {key}: {e}")
 
         # optional land/sea contour
         if overlay_lsm_contour and ((key.endswith('_hr') or key.endswith('_hr_original')) or
                                     (key.endswith('_lr') or key.endswith('_lr_original'))):
             if "lsm_hr" in sample and sample["lsm_hr"] is not None:
                 m = sample["lsm_hr"]
-                # m = m.squeeze().detach().cpu().numpy() if torch.is_tensor(m) else np.asarray(m).squeeze()
+                m = m.squeeze().detach().cpu().numpy() if torch.is_tensor(m) else np.asarray(m).squeeze()
                 try:
-                    # ax.contour(lsm_data, levels=[0.5], colors='white', linewidths=0.5)
-                    ax.contour(m.astype(float, copy=False), levels=[0.5], colors='darkgrey', linewidths=0.8)
+                    ax.contour(np.array(m, copy=False).astype(float, copy=False), levels=[0.5], colors="darkgrey", linewidths=0.8)
                 except Exception as e:
                     logger.warning(f"LSM contour failed on {key}: {e}")
 
-        # colorbar + boxplot (same layout you had)
-        divider = make_axes_locatable(ax)
-        if key.endswith(('_hr', '_lr', '_hr_original', '_lr_original')):
-            bax = divider.append_axes("right", size="10%", pad=0.1)
-            cax = divider.append_axes("right", size="5%", pad=0.1)
-            vals = img[np.isfinite(img)].ravel()
-            if vals.size > 0:
-                flierprops = dict(marker='o', markerfacecolor='none', markersize=2,
-                                  linestyle='None', markeredgecolor='darkgreen', alpha=0.4)
-                medianprops = dict(linestyle='-', linewidth=2, color='black')
-                meanprops = dict(marker='x', markerfacecolor='firebrick', markersize=5, markeredgecolor='firebrick')
-                bax.boxplot(vals, vert=True, widths=2, showmeans=True,
-                            meanprops=meanprops, flierprops=flierprops, medianprops=medianprops)
-            bax.set_xticks([]); bax.set_yticks([]); bax.set_frame_on(False)
-        else:
-            cax = divider.append_axes("right", size="5%", pad=0.1)
-        fig.colorbar(im, cax=cax, orientation='vertical')
+        # colorbar + optional per-panel boxplot (use shared helper)
+        add_boxplot_per_panel = bool(cfg_vis.get('add_boxplot_per_panel', True))
 
-    fig.tight_layout()
+        # mask for boxplot: prefer extracted land_mask, fall back to lsm_hr/lsm if needed
+        _mask = land_mask
+        if _mask is None and ("lsm_hr" in sample) and (sample["lsm_hr"] is not None):
+            _mask = sample["lsm_hr"]
+        elif _mask is None and ("lsm" in sample) and (sample["lsm"] is not None):
+            _mask = sample["lsm"]
+
+        _add_colorbar_and_boxplot(
+            fig,
+            ax,
+            im,
+            img,
+            boxplot=add_boxplot_per_panel and key.endswith(('_hr', '_lr', '_hr_original', '_lr_original')),
+            ylim=(vmin, vmax),
+            boxplot_mask=_mask,
+        )
+
     return fig, axs
 
 
@@ -583,7 +1011,7 @@ def _finite_flat(arr):
     mask = np.isfinite(arr)
     return arr[mask].ravel()
 
-def _add_colorbar_and_boxplot(fig, ax, im, img_data, *, boxplot=True, ylim=None):
+def _add_colorbar_and_boxplot(fig, ax, im, img_data, *, boxplot=True, ylim=None, boxplot_mask=None):
     """
         Attach a boxplot (left) and a colorbar (right) to an image axis using axes_divider.
         The boxplot is vertical, minimal styling and hides ticks/frames.
@@ -596,7 +1024,23 @@ def _add_colorbar_and_boxplot(fig, ax, im, img_data, *, boxplot=True, ylim=None)
     fig.colorbar(im, cax=cax, orientation='vertical')
 
     if boxplot and bax is not None:
-        vals = _finite_flat(img_data)
+        # If a mask is provided, compute the boxplot only over masked (typically land-only) pixels.
+        # Convention: mask >= 0.5 is land, < 0.5 is ocean.
+        _bp_src = img_data
+        if boxplot_mask is not None:
+            try:
+                m = boxplot_mask
+                if torch.is_tensor(m):
+                    m = m.detach().cpu().numpy()
+                m = np.asarray(m).squeeze()
+
+                src = np.asarray(_bp_src)
+                if m.shape == src.shape:
+                    _bp_src = np.where(m >= 0.5, _bp_src, np.nan)
+            except Exception:
+                pass
+
+        vals = _finite_flat(_bp_src)
         if vals.size:
             bax.boxplot(vals,
                         vert=True,
@@ -922,13 +1366,14 @@ def plot_samples_and_generated(
             img_data = _squeeze_geo_value(img_data, key)
             img_data = maybe_inverse_dual_lr(key, img_data, prefer_channel=plot_dual_lr_channel)
 
-            # For HR images mask out ocean using lsm_hr if needed. TODO: Allow user to specify mask key?
-            if not show_ocean and key in {gen_key, hr_key, f"{hr_key}_original"}:
-                if "lsm_hr" in sample and sample["lsm_hr"] is not None:
-                    mask = to_numpy(sample["lsm_hr"]).squeeze()
-                    img_data = np.where(mask < 1, np.nan, img_data)
-            # For matching LR image, also apply HR mask if needed. NOTE: Should full LR be shown, but only masked in boxplot?
-            if (not show_ocean) and (matching_lr_key is not None) and (key == matching_lr_key):
+            # Decide per-panel ocean display:
+            #   - HR + generated: respect cfg `show_ocean`
+            #   - LR conditions: ALWAYS show full field (conditioning uses the whole field)
+            is_lr_panel = bool(key.endswith("_lr") or key.endswith("_lr_original"))
+            show_ocean_panel = True if is_lr_panel else bool(show_ocean)
+
+            # For HR/gen images, optionally mask out ocean using lsm_hr
+            if (not show_ocean_panel) and key in {gen_key, hr_key, f"{hr_key}_original"}:
                 if "lsm_hr" in sample and sample["lsm_hr"] is not None:
                     mask = to_numpy(sample["lsm_hr"]).squeeze()
                     img_data = np.where(mask < 1, np.nan, img_data)
@@ -962,16 +1407,41 @@ def plot_samples_and_generated(
                 img_data = img_data.squeeze(0)
 
             img2d, _ = _to_imshow_image(img_data, prefer_channel=plot_dual_lr_channel)
-            im = ax.imshow(img2d, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
-            ax.invert_yaxis()
+            lsm_for_plot = None
+            if "lsm_hr" in sample and sample["lsm_hr"] is not None:
+                lsm_for_plot = sample["lsm_hr"]
+            elif "lsm" in sample and sample["lsm"] is not None:
+                lsm_for_plot = sample["lsm"]
+
+            if lsm_for_plot is not None and torch.is_tensor(lsm_for_plot):
+                lsm_for_plot = lsm_for_plot.detach().cpu().numpy().squeeze()
+            elif lsm_for_plot is not None:
+                lsm_for_plot = np.asarray(lsm_for_plot).squeeze()
+
+            im = imshow_variable(
+                ax,
+                img2d,
+                variable=(var if key in {gen_key, hr_key, f"{hr_key}_original"} else key),
+                vmin=vmin,
+                vmax=vmax,
+                cmap=cmap,
+                add_outline=True,
+                show_ocean=show_ocean_panel,
+                lsm_mask=lsm_for_plot,
+                cfg=cfg,
+            )
+
             ax.set_xticks([])
             ax.set_yticks([])
 
             # ========= If LR conditions, add LSM contour =========
             # Specifically NOT the HR lsm, if we change LR geographical domain
-            if key.endswith('_lr') and "lsm" in sample and sample["lsm"] is not None and bool(cfg_vis.get('overlay_lsm_contour', True)):
+            if key.endswith("_lr") and "lsm" in sample and sample["lsm"] is not None and bool(cfg_vis.get("overlay_lsm_contour", True)):
                 lsm_data = to_numpy(sample["lsm"]).squeeze()
-                ax.contour(lsm_data, levels=[0.5], colors='darkgrey', linewidths=0.5)
+                try:
+                    ax.contour(np.array(lsm_data, copy=False), levels=[0.5], colors="darkgrey", linewidths=0.5)
+                except Exception as e:
+                    logger.warning(f"LSM contour failed on {key}: {e}")
 
             # ========= column headers (title logic) =========
             if r == 0:
@@ -1003,7 +1473,20 @@ def plot_samples_and_generated(
             
             # ========= Add per-panel boxplot if requested next to colorbar =========
             if key.endswith(("generated", "_hr", "_lr", "_hr_original", "_lr_original")) and add_boxplot_per_panel:
-                _add_colorbar_and_boxplot(fig, ax, im, img2d, boxplot=True, ylim=(vmin, vmax))
+                # LR panels: show full field, but use LAND-ONLY pixels in the boxplot when cfg show_ocean=False
+                _bp_mask = None
+                if (not bool(show_ocean)) and (key.endswith("_lr") or key.endswith("_lr_original")) and ("lsm_hr" in sample) and (sample["lsm_hr"] is not None):
+                    _bp_mask = sample["lsm_hr"]
+
+                _add_colorbar_and_boxplot(
+                    fig,
+                    ax,
+                    im,
+                    img2d,
+                    boxplot=True,
+                    ylim=(vmin, vmax),
+                    boxplot_mask=_bp_mask,
+                )
             else:
                 # Still add a colorbar but no boxplot for non-variable maps / extras
                 divide = make_axes_locatable(ax)

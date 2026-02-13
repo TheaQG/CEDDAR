@@ -3,11 +3,9 @@
 #SBATCH --output=logs/slurm_eval_baselines_%x_%j.log
 #SBATCH --error=logs/slurm_eval_baselines_%x_%j.err
 #SBATCH --account=project_465002493
-#SBATCH --partition=standard-g
+#SBATCH --partition=standard
 #SBATCH --nodes=1
-#SBATCH --gpus-per-node=8
 #SBATCH --cpus-per-task=56
-#SBATCH --mem-per-gpu=60G
 #SBATCH --time=02:00:00
 
 
@@ -29,7 +27,7 @@ CONTAINER=/scratch/project_465002493/containers/images/my_torch_container_with_p
 SCRATCH="/scratch/${SLURM_JOB_ACCOUNT}"
 USER_DIR="$SCRATCH/$USER"
 ROOT_DIR="$USER_DIR/Code/SBGM_SD"
-CONFIG_DIR="$ROOT_DIR/sbgm/config"
+CONFIG_DIR="$ROOT_DIR/sbgm/config/full_runs_old"
 DATA_DIR="$USER_DIR/Data/Data_DiffMod"
 SAMPLE_DIR="$ROOT_DIR/models_and_samples/generated_samples"
 CKPT_DIR="$ROOT_DIR/models_and_samples/trained_models"

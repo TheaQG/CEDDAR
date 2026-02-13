@@ -155,6 +155,7 @@ def evaluation_main(cfg):
 
         # Dates evaluation config fields
         dates_list = fe.get("dates_list", []),
+        dates_max = int(fe.get("dates_max", 4)),
         dates_include_lr = bool(fe.get("dates_include_lr", True)),
         dates_include_members = bool(fe.get("dates_include_members", True)),
         dates_n_members = int(fe.get("dates_n_members", 3)),

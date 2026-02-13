@@ -263,7 +263,8 @@ def plot_scale_psd(scale_root: Path, eval_cfg: Any | None = None) -> None:
         lam_nyq = 1.0 / lr_nyquist
 
     _nice()
-    fig, ax = plt.subplots(figsize=(6.5, 5))
+    # a bit wider so the legend can sit outside without crushing the axes
+    fig, ax = plt.subplots(figsize=(7.1, 5.5))
 
     # HR
     ax.plot(
@@ -350,7 +351,7 @@ def plot_scale_psd(scale_root: Path, eval_cfg: Any | None = None) -> None:
 
         ax.axvline(
             x=lam_nyq, color="black", lw=0.6, linestyle="--",
-            label="LR Nyq", zorder=ZORDER_ANNOT,
+            zorder=ZORDER_ANNOT, #label="LR Nyq",
         )
 
         # Solid, trusted LR (native spacing) on top of its ghost
@@ -395,18 +396,44 @@ def plot_scale_psd(scale_root: Path, eval_cfg: Any | None = None) -> None:
     # --- mark low-k and high-k limits ---
     ax.axvline(1.0 / low_k_max, color="gray", linestyle="--",
                linewidth=0.8, alpha=0.7, zorder=ZORDER_ANNOT)
-    # move slightly to the left to avoid overlap with high-k line
-    x1 = 1.0 / low_k_max * 1.08
-    y1 = 1e2 # 0.5
-    ax.text(x1, y1, f"low-k λ={1.0/low_k_max:.0f} km",
-        rotation=90, color="gray", fontsize=6.5, ha="center", va="bottom",)
 
     ax.axvline(1.0 / high_k_min, color="gray", linestyle="--",
                linewidth=0.8, alpha=0.7, zorder=ZORDER_ANNOT)
-    x2 = 1.0 / high_k_min * 1.08
-    y2 = 1e2 # 0.5
-    ax.text(x2, y2, f"high-k λ={1.0/high_k_min:.0f} km",
-        rotation=90, color="gray", fontsize=6.5, ha="center", va="bottom",)
+
+    # --- mark low-k and high-k limits ---
+    lam_low = 1.0 / low_k_max
+    lam_high = 1.0 / high_k_min
+
+    ax.axvline(lam_low, color="gray", linestyle="--",
+            linewidth=0.8, alpha=0.7, zorder=ZORDER_ANNOT)
+
+    ax.axvline(lam_high, color="gray", linestyle="--",
+            linewidth=0.8, alpha=0.7, zorder=ZORDER_ANNOT)
+
+    # Place text with x in *data* coords and y in *axes* coords (stable under log scaling / ylim changes)
+    xform = ax.get_xaxis_transform()  # x=data, y=axes
+
+    ax.text(
+        lam_low * 1.029, 0.74,
+        f"low-k λ={lam_low:.0f} km",
+        transform=xform,
+        rotation=90, color="gray", fontsize=7,
+        ha="center", va="bottom",
+        bbox=dict(boxstyle="round,pad=0.12", fc="white", ec="none", alpha=0.55),
+        zorder=ZORDER_ANNOT,
+        clip_on=False,
+    )
+
+    ax.text(
+        lam_high * 1.029, 0.74,
+        f"high-k λ={lam_high:.0f} km",
+        transform=xform,
+        rotation=90, color="gray", fontsize=7,
+        ha="center", va="bottom",
+        bbox=dict(boxstyle="round,pad=0.12", fc="white", ec="none", alpha=0.55),
+        zorder=ZORDER_ANNOT,
+        clip_on=False,
+    )
 
 
     ax.set_xscale("log")
@@ -416,14 +443,27 @@ def plot_scale_psd(scale_root: Path, eval_cfg: Any | None = None) -> None:
     ax.set_ylabel("Spectral power")
     ax.set_title("Isotropic Power Spectral Density (PSD)")
     ax.grid(True, which="both", ls=":", alpha=0.5)
-    # Put legend outside to the right
-    fig.subplots_adjust(right=0.78)
-    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0),
-              fontsize=7, frameon=True, borderaxespad=0.0)
 
-    # Never go below 1e-8 on the y-axis
+    # Leave room for an external legend (keeps curves unobstructed)
+    fig.subplots_adjust(right=0.76, top=0.92)
+    leg = ax.legend(
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1.0),
+        borderaxespad=0.0,
+        frameon=True,
+        fontsize=9,
+    )
+    # Make legend a bit lighter
+    try:
+        leg.get_frame().set_alpha(0.9)
+    except Exception:
+        pass
+
+    # Set y-limits after plotting (and before placing data-anchored annotations)
     ymin, ymax = ax.get_ylim()
-    ax.set_ylim(bottom=5e-6, top=ymax)
+    # Focus on dynamically relevant scales; suppress visually irrelevant LR tail
+    # ax.set_ylim(bottom=max(5e-6, ymin), top=ymax)
+    ax.set_ylim(bottom=1e-3, top=ymax)
 
     # --- annotate band ratios (more precision) ---
     lines = [
@@ -463,8 +503,8 @@ def plot_scale_psd(scale_root: Path, eval_cfg: Any | None = None) -> None:
         transform=ax.transAxes,
         ha="left",
         va="bottom",
-        fontsize=6.7,
-        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.7),
+        fontsize=7.2,
+        bbox=dict(boxstyle="round,pad=0.22", fc="white", ec="none", alpha=0.82),
     )
 
     # ---- Baseline overlays (PSD) ----
@@ -516,9 +556,11 @@ def plot_scale_psd(scale_root: Path, eval_cfg: Any | None = None) -> None:
         ax.legend(handles, labels,
                 loc="upper right", bbox_to_anchor=(0.98, 0.98),
                 fontsize=8, frameon=True)
-        # never go below 1e-8 on y
-        ymin, ymax = ax.get_ylim()
-        ax.set_ylim(bottom=5e-6, top=max(ymax, 1e-7))        
+        # # never go below 1e-8 on y
+        # ymin, ymax = ax.get_ylim()
+        # ax.set_ylim(bottom=5e-6, top=max(ymax, 1e-7))        
+
+    fig.tight_layout(rect=(0.0, 0.0, 0.82, 1.0))
     _savefig(fig, figs / "scale_psd.png", dpi=SET_DPI)
 
 
@@ -535,13 +577,14 @@ def plot_psd_lowhigh_diag(scale_root: Path, eval_cfg: Any | None = None) -> None
     """
     Summarize PSD low/high band ratios across *all* days.
 
-    We read scale_psd_summary.csv (written by evaluate_scale.py) and build boxplots for:
+    Reads scale_psd_summary.csv and builds horizontal boxplots for:
       - GEN / HR (low-k)
-      - GEN / LR (low-k)  [only if present]
+      - GEN / LR (low-k)  [optional]
       - GEN / HR (high-k)
 
-    This is much more stable than plotting vs date index, because a single day with
-    ~zero HR high-k power can blow up the ratio.
+    Robustness:
+      * Skip ratios when denominator band power is too small (near-zero).
+      * Auto-switch to log x-scale when ratios span orders of magnitude.
     """
     tables = scale_root / "tables"
     figs = _ensure_dir(scale_root / "figures")
@@ -550,88 +593,99 @@ def plot_psd_lowhigh_diag(scale_root: Path, eval_cfg: Any | None = None) -> None
         logger.warning(f"[plot_psd_lowhigh_diag] Did not find {csv_path} - skipping.")
         return
 
-    # read rows (no pandas)
+    # Treat denominators below this as "too small -> ratio not meaningful"
+    denom_min = 1e-12
+    if eval_cfg is not None:
+        # optional hook if you want to expose it in config later
+        denom_min = float(getattr(eval_cfg, "psd_ratio_denom_min", denom_min))
+
     gen_low_hr: list[float] = []
     gen_low_lr: list[float] = []
     gen_high_hr: list[float] = []
 
+    def _to_float(s: str) -> float | None:
+        s = s.strip()
+        if s == "":
+            return None
+        try:
+            return float(s)
+        except Exception:
+            return None
+
     with open(csv_path, "r") as f:
-        header = f.readline().strip().split(",")
-        # expected (from evaluate_scale.py):
-        # date,hr_lowk,gen_lowk,gen_lowk_vs_hr,gen_lowk_vs_lr,hr_highk,gen_highk,gen_highk_vs_hr
+        _ = f.readline()  # header
         for line in f:
             parts = line.strip().split(",")
             if len(parts) < 8:
                 continue
 
-            def _to_float(s: str) -> float | None:
-                s = s.strip()
-                if s == "":
-                    return None
-                try:
-                    return float(s)
-                except Exception:
-                    return None
-
-            hr_lowk = _to_float(parts[1])
-            gen_lowk = _to_float(parts[2])
-            hr_highk = _to_float(parts[5])
-            gen_highk = _to_float(parts[6])
-            gl_lr_csv = _to_float(parts[4])  # optional
+            hr_lowk   = _to_float(parts[1])
+            gen_lowk  = _to_float(parts[2])
             gl_hr_csv = _to_float(parts[3])
+            gl_lr_csv = _to_float(parts[4])
+            hr_highk  = _to_float(parts[5])
+            gen_highk = _to_float(parts[6])
             gh_hr_csv = _to_float(parts[7])
 
-            # prefer recomputation from powers, fall back to CSV if needed
+            # Prefer recomputation ONLY if denom is safely > denom_min
             gl_hr = None
             if (hr_lowk is not None and gen_lowk is not None and
-                    np.isfinite(hr_lowk) and np.isfinite(gen_lowk) and hr_lowk > 0.0):
-                gl_hr = float(gen_lowk / max(hr_lowk, 1e-20))
+                np.isfinite(hr_lowk) and np.isfinite(gen_lowk) and
+                hr_lowk > denom_min and gen_lowk >= 0.0):
+                gl_hr = float(gen_lowk / hr_lowk)
             elif gl_hr_csv is not None and np.isfinite(gl_hr_csv):
                 gl_hr = float(gl_hr_csv)
 
-            gl_lr = gl_lr_csv if (gl_lr_csv is not None and np.isfinite(gl_lr_csv)) else None
+            gl_lr = None
+            if gl_lr_csv is not None and np.isfinite(gl_lr_csv) and gl_lr_csv > 0.0:
+                gl_lr = float(gl_lr_csv)
 
             gh_hr = None
             if (hr_highk is not None and gen_highk is not None and
-                    np.isfinite(hr_highk) and np.isfinite(gen_highk) and hr_highk > 0.0):
-                gh_hr = float(gen_highk / max(hr_highk, 1e-20))
+                np.isfinite(hr_highk) and np.isfinite(gen_highk) and
+                hr_highk > denom_min and gen_highk >= 0.0):
+                gh_hr = float(gen_highk / hr_highk)
             elif gh_hr_csv is not None and np.isfinite(gh_hr_csv):
                 gh_hr = float(gh_hr_csv)
 
-            if gl_hr is not None and np.isfinite(gl_hr):
-                gen_low_hr.append(float(gl_hr))
-            if gl_lr is not None and np.isfinite(gl_lr):
-                gen_low_lr.append(float(gl_lr))
-            if gh_hr is not None and np.isfinite(gh_hr):
-                gen_high_hr.append(float(gh_hr))
+            # keep only positive, finite ratios
+            if gl_hr is not None and np.isfinite(gl_hr) and gl_hr > 0:
+                gen_low_hr.append(gl_hr)
+            if gl_lr is not None and np.isfinite(gl_lr) and gl_lr > 0:
+                gen_low_lr.append(gl_lr)
+            if gh_hr is not None and np.isfinite(gh_hr) and gh_hr > 0:
+                gen_high_hr.append(gh_hr)
 
     if not gen_low_hr and not gen_low_lr and not gen_high_hr:
         logger.warning("[plot_psd_lowhigh_diag] No valid ratios found - skipping plot.")
         return
 
-    # build the boxplot data
-    labels = []
-    data = []
+    labels: list[str] = []
+    data: list[np.ndarray] = []
 
     if gen_low_hr:
         labels.append("GEN / HR (low-k)")
-        data.append(gen_low_hr)
+        data.append(np.asarray(gen_low_hr, dtype=float))
     if gen_low_lr:
         labels.append("GEN / LR (low-k)")
-        data.append(gen_low_lr)
+        data.append(np.asarray(gen_low_lr, dtype=float))
     if gen_high_hr:
         labels.append("GEN / HR (high-k)")
-        data.append(gen_high_hr)
+        data.append(np.asarray(gen_high_hr, dtype=float))
 
+    all_vals = np.concatenate([d[np.isfinite(d) & (d > 0)] for d in data])
+    if all_vals.size == 0:
+        logger.warning("[plot_psd_lowhigh_diag] No positive finite ratios - skipping.")
+        return
+
+    vmin = float(np.nanpercentile(all_vals, 1))
+    vmax = float(np.nanpercentile(all_vals, 99))
+    use_log = (vmax / max(vmin, 1e-12)) >= 50.0
 
     _nice()
-    fig, ax = plt.subplots(figsize=(6.5, 4.0))
+    fig, ax = plt.subplots(figsize=(7.8, 4.2))
+    fig.subplots_adjust(left=0.40, top=0.84)  # room for long y labels + subtitle
 
-    # clip ratios to [0, 5] only for display
-    def _clip(a): return np.clip(np.asarray(a, dtype=float), 0, 5)
-    data = [ _clip(a) for a in data ]
-
-    fig.subplots_adjust(left=0.28)  # avoid y-label cutoff on narrow canvases
     bp = ax.boxplot(
         data,
         vert=False,
@@ -639,57 +693,53 @@ def plot_psd_lowhigh_diag(scale_root: Path, eval_cfg: Any | None = None) -> None
         showfliers=True,
         patch_artist=True,
     )
+    for patch in bp.get("boxes", []):
+        if hasattr(patch, "set_facecolor"):
+            patch.set_facecolor("0.9") # type: ignore
 
-    # light fill like you used for PSD plot
-    for patch in bp["boxes"]:
-        p: Any = patch
-        try:
-            p.set_facecolor("0.9")
-        except Exception:
-            # Some backends/types may return Line2D objects without set_facecolor;
-            # try a more generic set_color fallback and ignore failures.
-            try:
-                p.set_color("0.9")
-            except Exception:
-                pass
+    # reference line at perfect ratio
+    ax.axvline(1.0, color="0.3", lw=0.8, ls="--", alpha=0.8)
 
-    # annotate means
+    # mean annotations
     for y, arr in enumerate(data, start=1):
-        arr_np = np.asarray(arr, dtype=float)
-        mean_val = float(arr_np.mean())
+        arr = arr[np.isfinite(arr) & (arr > 0)]
+        if arr.size == 0:
+            continue
+        mu = float(arr.mean())
         ax.text(
-            mean_val,
-            y,
-            f"  μ={mean_val:.2f}",
-            va="center",
-            ha="left",
-            fontsize=9,
+            0.985, y, f"μ={mu:.2f}",
+            transform=ax.get_yaxis_transform(),   # x in axes fraction, y in data coords
+            ha="right", va="center",
+            bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.7),
+            zorder=100,
         )
 
-    # --- set informative x-limits and note if clipped ---
-    xmax = max([max(a) for a in data]) if data else 2.0
-    if xmax > 5.0:
-        ax.set_xlim(0, 5.0)
-        ax.text(0.99, 0.02, "(values >5 clipped)", transform=ax.transAxes, ha="right", va="bottom", fontsize=7, alpha=0.5)
+    if use_log:
+        ax.set_xscale("log")
+        ax.set_xlim(max(1e-3, vmin * 0.8), vmax * 1.25)
     else:
-        ax.set_xlim(0, max(2.0, xmax * 1.05))
+        ax.set_xscale("linear")
+        ax.set_xlim(0.0, max(2.0, vmax * 1.15))
 
-    # --- subtitle with bands in k and λ ---
-    low_k_max = 1.0 / 200.0  # cycles/km → λ = 200 km
-    high_k_min = 1.0 / 20.0  # cycles/km → λ = 20 km
+    low_k_max = float(getattr(eval_cfg, "low_k_max", 1.0/200.0)) if eval_cfg is not None else 1.0/200.0
+    high_k_min = float(getattr(eval_cfg, "high_k_min", 1.0/20.0)) if eval_cfg is not None else 1.0/20.0
 
     ax.set_xlabel("Ratio")
-    ax.set_title("PSD band ratios (all days)")
-    ax.text(
-        0.01,
-        1.02,
-        f"low-k: k ≤ {low_k_max:.3e} (λ ≥ {1.0/low_k_max:.0f} km)\n"
+    ax.set_title("PSD band ratios (all days)", pad=14)
+    # fig.suptitle("PSD band ratios (all days)", fontsize=14, y=0.97)
+    fig.text(
+        0.2, 0.9,
+        f"low-k: k ≤ {low_k_max:.3e} (λ ≥ {1.0/low_k_max:.0f} km)   |   "
         f"high-k: k ≥ {high_k_min:.3e} (λ ≤ {1.0/high_k_min:.0f} km)",
-        transform=ax.transAxes,
-        fontsize=8,
-        va="bottom",
+        ha="left", va="bottom", fontsize=10,
     )
-    ax.grid(True, axis="x", ls=":", alpha=0.5)
+    fig.subplots_adjust(left=0.30, right=0.96, bottom=0.18, top=0.80)
+
+    all_vals = np.concatenate([np.asarray(a, float) for a in data])
+    all_vals = all_vals[np.isfinite(all_vals) & (all_vals > 0)]
+    if all_vals.size and (all_vals.max() / max(all_vals.min(), 1e-12)) > 100:
+        ax.set_xscale("log")
+    ax.grid(True, which="both", axis="x", ls=":", alpha=0.5)
 
     _savefig(fig, figs / "scale_psd_lowhigh.png", dpi=SET_DPI)
 
@@ -1001,16 +1051,34 @@ def plot_fss_curves(scale_root: Path, eval_cfg: Any | None = None) -> None:
 def plot_iss_curves(scale_root: Path, eval_cfg: Any | None = None) -> None:
     """
     ISS vs scale, same layout as FSS:
-      - 1 panel per threshold (GEN + LR if present)
+      - 1 panel per threshold (PMM + Gen(ens) if available + LR if present)
       - 1 final panel with all thresholds together
+
     Reads:
-      - <scale_root>/tables/scale_iss_summary.csv  (always)
-      - <scale_root>/tables/scale_iss_daily.csv    (to recover LR baselines)
-      - <scale_root>/tables/scale_iss_ens_summary.csv (optional ensemble-mean)      
+      - <scale_root>/tables/scale_iss_summary.csv        (always)
+      - <scale_root>/tables/scale_iss_daily.csv          (to recover LR baselines)
+      - <scale_root>/tables/scale_iss_ens_summary.csv    (optional ensemble-mean)
+
+    NOTE:
+      The daily CSV encodes LR baselines by suffixing the threshold, e.g. "1.00_LR".
+      We therefore normalize thresholds consistently (two decimals) across files.
     """
     tables = scale_root / "tables"
     figs = _ensure_dir(scale_root / "figures")
     summary_path = tables / "scale_iss_summary.csv"
+
+    def _norm_thr(s: str) -> str:
+        s = s.strip()
+        if s == "":
+            return ""
+        # allow tags like "1.00_LR"
+        if s.endswith("_LR"):
+            s = s[:-3]
+        try:
+            return f"{float(s):.2f}"
+        except Exception:
+            # last resort: return as-is
+            return s
 
     # --- read ensemble ISS summary (optional) ---
     ens_summary_path = tables / "scale_iss_ens_summary.csv"
@@ -1023,7 +1091,8 @@ def plot_iss_curves(scale_root: Path, eval_cfg: Any | None = None) -> None:
             rows2 = [l.split(",") for l in lines2[1:]]
             iss_cols2 = [(i, col) for i, col in enumerate(header2) if col.lower().startswith("iss_")]
             for r in rows2:
-                base_thr = r[0].strip()
+                base_thr_raw = r[0].strip()
+                base_thr = _norm_thr(base_thr_raw)
                 if base_thr == "":
                     continue
                 for idx, col in iss_cols2:
@@ -1059,7 +1128,8 @@ def plot_iss_curves(scale_root: Path, eval_cfg: Any | None = None) -> None:
     # by_thr["1.00"] = {"gen": [(5,0.7), ...], "lr": [(5,0.8), ...]}
     by_thr: dict[str, dict[str, list[tuple[float, float]]]] = {}
     for r in rows:
-        thr_id = r[0].strip()
+        thr_raw = r[0].strip()
+        thr_id = _norm_thr(thr_raw)
         if not thr_id:
             continue
         by_thr.setdefault(thr_id, {"gen": [], "lr": []})
@@ -1084,35 +1154,60 @@ def plot_iss_curves(scale_root: Path, eval_cfg: Any | None = None) -> None:
             d_iss_cols = [(i, col) for i, col in enumerate(d_header) if col.lower().startswith("iss_")]
             lr_acc: dict[str, dict[float, list[float]]] = {}
             for r in d_rows:
+                # daily file schema: date, thr_mm, iss_5km, ...
+                if len(r) < 2:
+                    continue
                 thr_raw = r[1].strip()  # e.g. "1.00" or "1.00_LR"
                 is_lr = thr_raw.endswith("_LR")
-                base_thr = thr_raw.replace("_LR", "")
-                if base_thr not in by_thr:
+                if not is_lr:
                     continue
+                base_thr = _norm_thr(thr_raw)
+                if base_thr not in by_thr:
+                    # Still allow it: create the threshold bucket if it wasn't in summary
+                    by_thr.setdefault(base_thr, {"gen": [], "lr": []})
                 for idx, col in d_iss_cols:
                     try:
                         scale_km = float(col.split("_")[1].replace("km", ""))
                     except Exception:
                         continue
-                    v = r[idx].strip()
+                    v = r[idx].strip() if idx < len(r) else ""
                     if v == "":
                         continue
-                    if is_lr:
+                    try:
                         lr_acc.setdefault(base_thr, {}).setdefault(scale_km, []).append(float(v))
+                    except Exception:
+                        continue
             # push averaged LR back into by_thr
             for thr, scales in lr_acc.items():
                 for scale_km, arr in scales.items():
+                    if len(arr) == 0:
+                        continue
                     mean_lr = float(np.mean(arr))
                     by_thr[thr]["lr"].append((scale_km, mean_lr))
+    else:
+        logger.debug("[plot_iss_curves] No scale_iss_daily.csv - LR baselines will not be shown.")
 
-    thrs_sorted = sorted(by_thr.keys(), key=lambda s: float(s))
+    # sort thresholds numerically (robust to formatting)
+    def _thr_key(s: str) -> float:
+        try:
+            return float(s)
+        except Exception:
+            return 9e9
+
+    thrs_sorted = sorted(by_thr.keys(), key=_thr_key)
     n_thr = len(thrs_sorted)
     n_panels = n_thr + 1  # overview
     ncols = 3
     nrows = int(np.ceil(n_panels / ncols))
 
     _nice()
-    fig, axs = plt.subplots(nrows, ncols, figsize=(6 * ncols * 0.6, 4 * nrows * 0.65), sharex=True, sharey=True)
+    fig, axs = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(6 * ncols * 0.6, 4 * nrows * 0.65),
+        sharex=True,
+        sharey=True,
+    )
     axs = np.atleast_2d(axs)
     colors = plt.rcParams["axes.prop_cycle"].by_key().get("color", ["C0", "C1", "C2", "C3", "C4", "C5"])
 
@@ -1140,29 +1235,44 @@ def plot_iss_curves(scale_root: Path, eval_cfg: Any | None = None) -> None:
     for i, thr in enumerate(thrs_sorted):
         row = i // ncols
         col = i % ncols
-        # leave the very last cell for the overview
         ax = axs[row, col]
 
         # ensemble mean curve (if present)
         ens_pairs = sorted(by_thr_ens.get(thr, []), key=lambda t: t[0])
-        x = [p[0] for p in ens_pairs]
-        y = [p[1] for p in ens_pairs]
         if ens_pairs:
-            ax.plot(x, y, marker=".", linewidth=1.4, color=COL_ENS, label="Gen (ens)")
+            ax.plot(
+                [p[0] for p in ens_pairs],
+                [p[1] for p in ens_pairs],
+                marker=".",
+                linewidth=1.4,
+                color=COL_ENS,
+                label="Gen (ens)",
+            )
 
-        # PMM / GEN curve
+        # PMM curve
         gen_pts = sorted(by_thr[thr]["gen"], key=lambda p: p[0])
-        x = [p[0] for p in gen_pts]
-        y = [p[1] for p in gen_pts]
-        colr = COL_PMM
-        ax.plot(x, y, marker=".", linewidth=1.4, color=colr, label=f"PMM")
+        if gen_pts:
+            ax.plot(
+                [p[0] for p in gen_pts],
+                [p[1] for p in gen_pts],
+                marker=".",
+                linewidth=1.4,
+                color=COL_PMM,
+                label="PMM",
+            )
 
+        # LR baseline curve (if present)
         lr_pts = sorted(by_thr[thr]["lr"], key=lambda p: p[0]) if by_thr[thr]["lr"] else []
         if lr_pts:
-            ax.plot([p[0] for p in lr_pts], [p[1] for p in lr_pts],
-                    linestyle="--", marker="x", linewidth=1.0, color=COL_LR,
-                    label=f"LR")
-
+            ax.plot(
+                [p[0] for p in lr_pts],
+                [p[1] for p in lr_pts],
+                linestyle="--",
+                marker="x",
+                linewidth=1.0,
+                color=COL_LR,
+                label="LR",
+            )
 
         # ---- Baseline overlays: per-threshold panel only ----
         if _baseline_dirs_iss:
@@ -1179,23 +1289,24 @@ def plot_iss_curves(scale_root: Path, eval_cfg: Any | None = None) -> None:
                     rows_b = [l.split(",") for l in lines_b[1:]]
                     iss_cols_b = [(idx, col) for idx, col in enumerate(header_b) if col.lower().startswith("iss_")]
                     pts = []
-                    for r in rows_b:
-                        thr_b = r[0].strip()
+                    for rr in rows_b:
+                        thr_b = _norm_thr(rr[0].strip())
                         if thr_b != thr:
                             continue
-                        for idx, col in iss_cols_b:
+                        for idx, colname in iss_cols_b:
                             try:
-                                scale_km = float(col.split("_")[1].replace("km", ""))
+                                scale_km = float(colname.split("_")[1].replace("km", ""))
                             except Exception:
                                 continue
-                            v = r[idx].strip()
+                            v = rr[idx].strip() if idx < len(rr) else ""
                             if v == "":
                                 continue
                             pts.append((scale_km, float(v)))
                     if not pts:
                         continue
                     pts = sorted(pts, key=lambda p: p[0])
-                    xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+                    xs = [p[0] for p in pts]
+                    ys = [p[1] for p in pts]
                     label = _baseline_labels.get(t, t)
                     style = dict(_baseline_styles.get(t, {}))
                     ax.plot(xs, ys, label=label, **style)
@@ -1203,15 +1314,12 @@ def plot_iss_curves(scale_root: Path, eval_cfg: Any | None = None) -> None:
                     logger.warning(f"[plot_iss_curves] Failed to overlay ISS baseline '{t}': {e}")
 
         ax.set_ylim(0.0, 1.05)
-        # Set title as per-threshold
         ax.set_title(f"ISS vs scale. Thr ≥ {float(thr):.0f} mm")
         
-        # Only plot xlabel on bottom row
         if row == nrows - 1:
             ax.set_xlabel("Neighborhood scale (km)")
-        # only plot ylabel on leftmost column
         if col == 0:
-            ax.set_ylabel(f"ISS vs scale.")
+            ax.set_ylabel("ISS vs scale.")
         ax.grid(True, ls=":", alpha=0.5)
         ax.legend(fontsize=9, loc="lower right")
 
@@ -1220,15 +1328,16 @@ def plot_iss_curves(scale_root: Path, eval_cfg: Any | None = None) -> None:
     ov_row = last_idx // ncols
     ov_col = last_idx % ncols
     ax_all = axs[ov_row, ov_col]
+
     for i, thr in enumerate(thrs_sorted):
         gen_pts = sorted(by_thr[thr]["gen"], key=lambda p: p[0])
         if not gen_pts:
             continue
-        x = [p[0] for p in gen_pts]
-        y = [p[1] for p in gen_pts]
+        xs = [p[0] for p in gen_pts]
+        ys = [p[1] for p in gen_pts]
         colr = colors[i % len(colors)]
-        ax_all.plot(x, y, marker=".", linewidth=1.2, color=colr)
-        ax_all.text(x[-1] * 1.01, y[-1], f"≥ {float(thr):.0f} mm", color=colr, fontsize=4, va="center")
+        ax_all.plot(xs, ys, marker=".", linewidth=1.2, color=colr)
+        ax_all.text(xs[-1] * 1.01, ys[-1], f"≥ {float(thr):.0f} mm", color=colr, fontsize=4, va="center")
 
         # lr_pts = sorted(by_thr[thr]["lr"], key=lambda p: p[0]) if by_thr[thr]["lr"] else []
         # if lr_pts:

@@ -77,19 +77,19 @@ echo "[INFO] Running ablation B1 + geographic conditions and SDF-weighted loss +
 srun singularity exec "$CONTAINER" bash -lc "
   set -euo pipefail
   export PYTHONPATH='${PYTHONPATH}'
-  python -m sbgm.cli.main_app --mode full_pipeline --config_path $CFG --make_plots
+  python -m sbgm.cli.main_app --mode generate --config_path $CFG --make_plots &&
+  python -m sbgm.cli.main_app --mode evaluate --config_path $CFG --make_plots
+  python -m sbgm.cli.main_app --mode sigma_star_generation --config_path $CFG --make_plots &&
+  python -m sbgm.cli.main_app --mode sigma_star_evaluation --config_path $CFG --make_plots  
 "
 
+  # python -m sbgm.cli.main_app --mode full_pipeline --config_path $CFG --make_plots
 #   python -m sbgm.cli.main_app --mode quicklook --config_path $CFG --make_plots &&
-#   python -m sbgm.cli.main_app --mode generate --config_path $CFG --make_plots &&
-#   python -m sbgm.cli.main_app --mode evaluate --config_path $CFG --make_plots
 
   # python -m sbgm.cli.main_app --mode full_pipeline --config_path $CFG --make_plots
   # python -m sbgm.cli.main_app --mode quicklook --config_path '$CFG' --make_plots &&
   # python -m sbgm.cli.main_app --mode generate --config_path $CFG --make_plots &&
   # python -m sbgm.cli.main_app --mode evaluate --config_path $CFG --make_plots
-  # python -m sbgm.cli.main_app --mode sigma_star_generation --config_path $CFG --make_plots &&
-  # python -m sbgm.cli.main_app --mode sigma_star_evaluation --config_path $CFG --make_plots  
 
 
 

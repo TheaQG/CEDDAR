@@ -88,6 +88,7 @@ class EvaluationConfig:
     temporal_ensemble_pool_mode: str = "member_mean"   # or "pool"
     # per-date evaluation config
     dates_list: Optional[List[str]] = None
+    dates_max: int = 4
     dates_include_lr: bool = True
     dates_include_members: bool = True
     dates_n_members: int = 3

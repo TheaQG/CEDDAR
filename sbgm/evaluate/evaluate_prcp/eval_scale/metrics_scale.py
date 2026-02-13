@@ -144,17 +144,29 @@ def compute_iss_at_scales(
         Xs = Xm / (Mm + eps)   # masked box-average exceedance “fractions”
         Ys = Ym / (Mm + eps)
 
-        # Global masked means for MSE_mod and base rates
-        msum   = m.sum().clamp_min(1.0)
+        # Global masked means for MSE_mod
+        msum = m.sum().clamp_min(1.0)
         mse_mod = (((Xs - Ys) ** 2) * m).sum() / msum
-        p_f     = (Xs * m).sum() / msum
-        p_o     = (Ys * m).sum() / msum
 
-        mse_rand = p_f + p_o - 2.0 * p_f * p_o          # ≥ 0
-        mse_rand = torch.clamp(mse_rand, min=0.02)      # guard very dry days
+        # Base rates for the *smoothed* exceedance fractions (scale-consistent with mse_mod)
+        p_f = (Xs * m).sum() / msum
+        p_o = (Ys * m).sum() / msum
 
-        iss = 1.0 - mse_mod / (mse_rand + eps)
-        out[f"{int(km)}km"] = float(torch.clamp(iss, 0.0, 1.0))
+        # Random MSE for independent Bernoulli fields
+        mse_rand = p_f + p_o - 2.0 * p_f * p_o  # >= 0
+
+        # Very dry/degenerate: undefined
+        min_mse_rand = 1e-6
+        if (not torch.isfinite(mse_rand)) or float(mse_rand) < min_mse_rand:
+            out[f"{int(km)}km"] = float("nan") 
+            continue 
+
+        iss = 1.0 - mse_mod / (mse_rand + eps) 
+
+        # Keep negatives (worse-than-random). Optional: cap only the top at 1.
+        iss = torch.minimum(iss, torch.tensor(1.0, device=iss.device, dtype=iss.dtype))
+
+        out[f"{int(km)}km"] = float(iss) 
 
     return out
 
@@ -460,11 +472,14 @@ def compare_psd_triplet(
         lr_nyq = None
 
     # ---------- integrate bands ----------
-    def _band_int(k, P, kmin, kmax):
-        m = (k >= kmin) & (k <= kmax)
+    def _band_int(k, P, kmin, kmax, eps=1e-20):
+        m = (k > max(float(kmin), 0.0)) & (k <= float(kmax)) & np.isfinite(P)
         if not np.any(m):
             return np.nan
-        return float(np.trapz(P[m], k[m]))
+        val = float(np.trapz(P[m], k[m]))
+        if not np.isfinite(val) or val <= eps:
+            return np.nan
+        return val
 
     # HR low/high
     hr_low = _band_int(k_hr, P_hr, 0.0, low_k_max)
@@ -485,6 +500,12 @@ def compare_psd_triplet(
         # how well does GEN match HR fine-scale?
         if hr_high > 0:
             out["gen_highk_vs_hr"] = gen_high / hr_high
+
+        # safer versions checking finiteness
+        if np.isfinite(hr_low) and hr_low > 1e-20 and np.isfinite(gen_low):
+            out["gen_lowk_vs_hr"] = float(gen_low / hr_low)
+        if np.isfinite(hr_high) and hr_high > 1e-20 and np.isfinite(gen_high):
+            out["gen_highk_vs_hr"] = float(gen_high / hr_high)
 
     # LR low/high
     if P_lr is not None:

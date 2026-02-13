@@ -13,7 +13,7 @@ from sbgm.evaluate.evaluate_prcp.eval_scale.evaluate_scale import run_scale
 from sbgm.evaluate.evaluate_prcp.eval_spatial.evaluate_spatial import run_spatial
 from sbgm.evaluate.evaluate_prcp.eval_extremes.evaluate_extremes import run_extremes
 from sbgm.evaluate.evaluate_prcp.eval_temporal.evaluate_temporal import run_temporal
-
+from sbgm.evaluate.evaluate_prcp.eval_dates.evaluate_dates import run_dates
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ DEFAULT_TASKS = [
     "prcp_extremes",
     "prcp_temporal",
     "prcp_climatology",
+    "prcp_dates",
 ]
 
 def _norm_tasks(tasks: List[str] | None) -> List[str]:
@@ -136,6 +137,15 @@ def _build_eval_cfg(root: Path, baseline_type: str, user_eval: Dict[str, Any], s
         # climatology / seasons
         seasons=tuple(g("seasons", ("ALL","DJF","MAM","JJA","SON"))),
 
+        # Dates evaluation config fields
+        dates_list = list(g("dates_list", [])),
+        dates_max = int(g("dates_max", 4)),
+        dates_include_lr = bool(g("dates_include_lr", True)),
+        dates_include_members = bool(g("dates_include_members", True)),
+        dates_n_members = int(g("dates_n_members", 3)),
+        dates_cmap = str(g("dates_cmap", "Blues")),
+        dates_percentile = float(g("dates_percentile", 99.5)),
+
         # plotting
         make_plots=bool(g("make_plots", True)),
     )
@@ -204,6 +214,23 @@ def run_baseline_evaluation(
             out_dir.mkdir(parents=True, exist_ok=True)
             run_temporal(resolver=resolver, eval_cfg=ev, out_root=out_dir,
                          group_by=ev.temporal_group_by, seasons=ev.seasons, make_plots=ev.make_plots)
+
+        elif t in ("prcp_dates","dates"):
+            out_dir = eval_root / "dates"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            run_dates(
+                    resolver=resolver,
+                    eval_cfg=ev,
+                    out_root=out_dir,
+                    dates=getattr(ev, "dates_list", None),
+                    include_lr=bool(getattr(ev, "dates_include_lr", True)),
+                    include_members=bool(getattr(ev, "dates_include_members", True)),
+                    n_members=int(getattr(ev, "dates_n_members", 3)),
+                    cmap=str(getattr(ev, "dates_cmap", "Blues")),
+                    percentile=float(getattr(ev, "dates_percentile", 99.5)),
+                    land_only=bool(getattr(ev, "eval_land_only", True)),
+                )
+
 
         else:
             logger.warning(f"[baseline] Unknown task '{task}' — skipping.")

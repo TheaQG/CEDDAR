@@ -134,7 +134,7 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                 txt = (
                     f"{comp.upper()} vs {ref.upper()}:\n"
                     f"  W1  = {w1:.3f}\n"
-                    f"  KS  = {kss:.3f} (p={ksp:.2f})\n"
+                    f"  KS  = {kss:.3f}\n" #(p={ksp:.2f})
                     f"  KL  = {kl:.3f}"
                 )
                 gen_parts.append(txt)
@@ -498,6 +498,45 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                 s = _season(ds)
                 if s in idxs:
                     idxs[s].append(i)
+
+            # === Helper: build seasonal PDF from baseline dist_daily.npz ===
+            def _seasonal_pdf_from_daily_npz(npz_obj, season_label: str):
+                """
+                Build a season-specific PDF from a baseline dist_daily.npz-like object.
+                Prefers counts_gen; falls back to counts_lr if counts_gen missing.
+                Returns (mids, pdf) or (None, None) if unavailable.
+                """
+                try:
+                    bins_b = npz_obj["bins"] if "bins" in npz_obj else None
+                    if bins_b is None:
+                        return None, None
+                    mids_b = 0.5 * (bins_b[:-1] + bins_b[1:])
+                    dates_b = npz_obj["dates"].astype(str) if "dates" in npz_obj else None
+                    if dates_b is None or dates_b.size == 0:
+                        return None, None
+
+                    # Select season indices based on baseline dates
+                    ids = []
+                    for ii, ds in enumerate(dates_b):
+                        if _season(str(ds)) == season_label:
+                            ids.append(ii)
+                    if not ids:
+                        return None, None
+                    ids = np.asarray(ids, dtype=int)
+
+                    counts_key = "counts_gen" if "counts_gen" in npz_obj else ("counts_lr" if "counts_lr" in npz_obj else None)
+                    if counts_key is None:
+                        return None, None
+
+                    C = npz_obj[counts_key][ids].sum(axis=0)
+                    s = float(np.sum(C))
+                    if s <= 0:
+                        return None, None
+                    pdf = C.astype(float) / s
+                    return mids_b, pdf
+                except Exception:
+                    return None, None
+
             # Seasonal facecolors
             season_face = {
                 "DJF": (0.35, 0.55, 0.85, 0.20),  # stronger light blue
@@ -544,6 +583,41 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                 if pdf_lr is not None:
                     axS.plot(mids_s, np.maximum(pdf_lr, eps), color=col_lr, lw=1.1, ls="--", label="LR")
 
+                # === Baseline overlays in seasonal plots (e.g., QM) ===
+                bo_season = getattr(eval_cfg, "baselines_overlay", None) if eval_cfg is not None else None
+                if bo_season:
+                    try:
+                        dirs_season = resolve_baseline_dirs(
+                            sample_root=bo_season["sample_root"],
+                            types=tuple(bo_season.get("types", ())),
+                            split=str(bo_season.get("split", "test")),
+                            eval_type="distributional",
+                        )
+                    except Exception as e:
+                        logger.warning(f"[plot_distributional] Seasonal baselines: failed to resolve baseline dirs: {e}")
+                        dirs_season = {}
+
+                    for t, ddir in dirs_season.items():
+                        try:
+                            daily_b = ddir / "dist_daily.npz"
+                            if not daily_b.exists():
+                                # If the baseline didn’t compute seasonal/daily histograms, skip (explicitly missing)
+                                continue
+                            npz_b = np.load(daily_b)
+                            mids_b, pdf_b = _seasonal_pdf_from_daily_npz(npz_b, lab)
+                            if mids_b is None or pdf_b is None:
+                                continue
+
+                            label_b = bo_season.get("labels", {}).get(t, t)
+                            style_b = dict(bo_season.get("styles", {}).get(t, {}))
+                            style_b.setdefault("zorder", ZORDER_BASELINE)
+                            # If the user forgot to specify linestyle/linewidth in styles, keep them readable
+                            style_b.setdefault("lw", 1.1)
+                            axS.plot(mids_b, np.maximum(pdf_b, eps), label=label_b, **style_b)
+                        except Exception as e:
+                            logger.info(f"[plot_distributional] Seasonal baseline overlay for {t} failed: {e}")
+                            continue
+
                 # Reference wet-day line
                 axS.axvline(wet_thr, ls=":", lw=0.6, color="0.4", alpha=0.6)
 
@@ -579,7 +653,7 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                         rotation=90,
                         va="top",
                         ha="right",
-                        fontsize=7,
+                        fontsize=8.5,
                         color="0.25",
                     )
                 if p99s is not None:
@@ -591,7 +665,7 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                         rotation=90,
                         va="top",
                         ha="right",
-                        fontsize=7,
+                        fontsize=8.5,
                         color="0.25",
                     )
                 if p999s is not None:
@@ -603,7 +677,7 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                         rotation=90,
                         va="top",
                         ha="right",
-                        fontsize=7,
+                        fontsize=8.5,
                         color="0.25",
                     )
                 if p9999s is not None:
@@ -615,7 +689,7 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                         rotation=90,
                         va="top",
                         ha="right",
-                        fontsize=7,
+                        fontsize=8.5,
                         color="0.25",
                     )
                 if p99999s is not None:
@@ -627,7 +701,7 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                         rotation=90,
                         va="top",
                         ha="right",
-                        fontsize=7,
+                        fontsize=8.5,
                         color="0.25",
                     )
             # Combined legend across panels (unique labels)
@@ -640,18 +714,22 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                         labels.append(ll)
 
             if handles:
-                # Place legend slightly below the subplots
+                # Place legend outside panels, to the right
                 figS.legend(
                     handles,
                     labels,
-                    loc="upper center",
-                    bbox_to_anchor=(0.5, -0.02),
-                    ncol=len(labels),
+                    loc="center left",
+                    bbox_to_anchor=(0.9, 0.5),
+                    ncol=1,
                     fontsize=10,
+                    frameon=True,
                 )
 
-            figS.tight_layout(rect=(0.03, 0.05, 0.97, 0.98))
-            _savefig(figS, figs / "dist_pooled_seasons.png", dpi=SET_DPI)
+            figS.tight_layout(rect=(0.03, 0.05, 0.88, 0.98))
+            # _savefig(figS, figs / "dist_pooled_seasons.png", dpi=SET_DPI)
+            # Save with tight bounding box so the external (right-side) legend is not clipped
+            figS.savefig(str(figs / "dist_pooled_seasons.png"), dpi=SET_DPI, bbox_inches="tight")
+            plt.close(figS)
     except Exception as e:
         logger.info(f"[plot_distributional] Seasonal figure skipped: {e}")
 

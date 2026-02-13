@@ -16,6 +16,7 @@ import random
 import torch
 import logging
 import math
+import os
 # import multiprocessing
 
 import numpy as np
@@ -722,8 +723,8 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
             common_dates = common_dates.intersection(set(self.lr_file_map[cond].keys()))
         self.common_dates = sorted(list(common_dates))
         if len(self.common_dates) < self.n_samples:
+            logger.warning(f"Not enough common dates ({len(self.common_dates)}) to sample {self.n_samples} samples. Reducing n_samples to {len(self.common_dates)}.")
             self.n_samples = len(self.common_dates)
-            logger.warning(f"Not enough common dates ({len(self.common_dates)}) to sample {self.n_samples} samples. Reducing n_samples to {self.n_samples}.")
 
         # if self.shuffle:
         #     self.common_dates = random.sample(self.common_dates, self.n_samples)
@@ -1429,41 +1430,45 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
         # Add item to cache
         self._addToCache(idx, sample_dict)
 
-        # Log shapes of first sample only
-        if not hasattr(self, "_logged_first_sample"):
-            self._logged_first_sample = True
+        # Log shapes/stats of first sample only (but ONLY from worker 0 / rank 0)
+        worker_info = torch.utils.data.get_worker_info()
+        worker_id = worker_info.id if worker_info is not None else 0
 
-            for cond in self.lr_conditions_ordered:
-                lr_t = sample_dict.get(f"{cond}_lr", None)
-                if lr_t is not None:
+        # If you ever run DDP / multi-proc, gate that too
+        rank = int(os.environ.get("RANK", os.environ.get("SLURM_PROCID", "0")))
+
+        if worker_id == 0 and rank == 0:
+            if not hasattr(self, "_logged_first_sample"):
+                self._logged_first_sample = True
+
+                for cond in self.lr_conditions_ordered:
+                    lr_t = sample_dict.get(f"{cond}_lr", None)
+                    if lr_t is not None:
+                        logger.info(
+                            f"[data][sample0] {cond}_lr shape={tuple(lr_t.shape)} "
+                            f"(expected channels={len(self.cond_channel_map['slices'][cond])})"
+                        )
+
+                if "img_cond" in sample_dict:
                     logger.info(
-                        f"[data][sample0] {cond}_lr shape={tuple(lr_t.shape)} "
-                        f"(expected channels={len(self.cond_channel_map['slices'][cond])})"
+                        f"[data][sample0] img_cond final shape={tuple(sample_dict['img_cond'].shape)} "
+                        f"(expected C={self.cond_channel_map['n_channels_total']})"
                     )
 
-            if "img_cond" in sample_dict:
-                logger.info(
-                    f"[data][sample0] img_cond final shape={tuple(sample_dict['img_cond'].shape)} "
-                    f"(expected C={self.cond_channel_map['n_channels_total']})"
-                )
-                
-            for cond in self.lr_conditions_ordered:
-                lr_t = sample_dict.get(f"{cond}_lr", None)
-                if lr_t is None:
-                    continue
+                for cond in self.lr_conditions_ordered:
+                    lr_t = sample_dict.get(f"{cond}_lr", None)
+                    if lr_t is None:
+                        continue
 
-                with torch.no_grad():
-                    stats = {
-                        "min": float(lr_t.min()),
-                        "max": float(lr_t.max()),
-                        "mean": float(lr_t.mean()),
-                        "std": float(lr_t.std()),
-                    }
+                    with torch.no_grad():
+                        stats = {
+                            "min": float(lr_t.min()),
+                            "max": float(lr_t.max()),
+                            "mean": float(lr_t.mean()),
+                            "std": float(lr_t.std()),
+                        }
 
-                logger.info(
-                    f"[data][sample0] {cond}_lr stats "
-                    f"(per-channel): {stats}"
-                )                
+                    logger.info(f"[data][sample0] {cond}_lr stats (per-channel): {stats}")              
 
         return sample_dict #sample
 

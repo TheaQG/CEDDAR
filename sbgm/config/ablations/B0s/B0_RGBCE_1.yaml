@@ -123,6 +123,19 @@ visualization:
   add_boxplot_per_panel: true # Whether to add boxplot per panel in visualization
   add_boxplot_summary: true # Whether to add summary boxplot in visualization
   plot_dual_lr_channel: 0 # What LR channel to plot when dual_lr is True (0 or 1)
+  
+  ocean_background: hatch # hatch | solid | none
+  ocean_facecolor: "#f3f3f3" # Color for ocean facecolor when ocean_background is 'solid'. "#f3f3f3" is light gray
+  ocean_hatch: "++" # Hatch pattern for ocean when ocean_background is 'hatch'. "////" | "\\\\\\" | "xxxx" | "...." | "++++"
+  ocean_alpha: 0.4
+  ocean_hatch_linewidth: 0.2 # Line width for ocean hatch (Matplotlib rcParams setting)
+
+  outline_color: "lightgrey" # Color for outline (e.g., Denmark outline)
+  outline_linewidth: 0.6 # Line width for outline
+
+  prcp_zero_color: "#ffffff" # Color for zero precipitation in plots (white)
+  prcp_zero_frac: 0.06 # Fraction of colorbar for zero precipitation
+  # prcp_min_positive: 0.001 # Minimum positive precipitation value for color scaling
   # summary_boxplot_keys: # <-- optional; overrides default [generated, hr, matching-lr]
   #   - generated
   #   - prcp_hr
@@ -157,9 +170,9 @@ training:
   with_ema: false # Whether to use Exponential Moving Average. If false, all EMA params below are ignored
   eval_use_ema: false # Whether to use EMA weights for evaluation (validation and generation)
   load_ema: false # Whether to load EMA weights
-  ema_decay: 0.999 # Decay rate for EMA. 0.999-0.9995 is a good range for per-step decay with batch size 16-32. Lower for smaller batches, higher for larger batches.
+  ema_decay: 0.998 # Decay rate for EMA. 0.999-0.9995 is a good range for per-step decay with batch size 16-32. Lower for smaller batches, higher for larger batches.
   weight_decay: 0.000001 # Weight decay for regularization
-  ema_warmup_steps: 2000 # Number of warmup steps for EMA
+  ema_warmup_steps: 1000 # Number of warmup steps for EMA
   epochs: 400 # Number of epochs for training
   loss_type: sdfweighted # Type of loss function to use NOTE: change the name in code
   sdf_weighted_loss: false # Whether to use SDF weighted loss
@@ -298,6 +311,8 @@ generation:
     # config_filename: config.yaml # Filename for the saved configuration
 
 
+
+
 full_gen_eval:
   split: val
   use_new_eval: true
@@ -363,8 +378,8 @@ full_gen_eval:
 
   # Benchmark overlay settings
   baselines_overlay:
-    enabled: false
-    types: [qm, unet_sr] # any subset. Order is plot order "bilinear", "qm", "unet_sr"
+    enabled: true
+    types: [qm] #, unet_sr] # any subset. Order is plot order "bilinear", "qm", "unet_sr"
     split: test # train | valid | test
     labels:
       bilinear: "LR bilinear"
@@ -399,8 +414,8 @@ full_gen_eval:
 
   psd_ignore_low_k_bins: 2
   psd_normalize: none # "none" | "per_field" | "match_ref"
-  low_k_max: 0.005 # 1/200 km^-1
-  high_k_max: 0.05 # 1/20 km^-1
+  low_k_max: 1.613e-02 # 1/62 km^-1
+  high_k_max: 5.000e-02 # 1/20 km^-1
 
   random_ref_kind: phase_randomized
   seasonal_summaries: true
@@ -426,7 +441,7 @@ full_gen_eval:
 
   # spatial
   spatial_corr_kinds: ["pearson", "spearman"] # 
-  spatial_deseasonalize: True
+  spatial_deseasonalize: true
   spatial_vmin: null
   spatial_vmax: null
   spatial_show_diff: true
@@ -438,7 +453,7 @@ full_gen_eval:
   # temporal
   temporal_include_lr: true
   temporal_wet_thr_mm: 1.0
-  temporal_max_lag: 30
+  temporal_max_lag: 8
   temporal_max_spell: 25
   temporal_group_by: year # | year | season | all
   temporal_ensemble_pool_mode: member_mean # member_mean | pool
@@ -453,7 +468,8 @@ full_gen_eval:
   sal_peakedness_mode: herfindahl
 
   # dates
-  dates_list: ["20190107", "20190203", "20190312"]
+  dates_list: null # ["20190107", "20190203", "20190312"]
+  dates_max: 4 # maximum number of dates to plot
   dates_include_lr: true
   dates_include_members: true
   dates_n_members: 3

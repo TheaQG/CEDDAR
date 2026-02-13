@@ -32,8 +32,9 @@ import logging
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from sbgm.evaluate.evaluate_prcp.plot_utils import (
-    _ensure_dir, _savefig, _nice, _to_date_safe, _season_from_month, overlay_outline, get_dk_lsm_outline
+    _ensure_dir, _savefig, _nice, _to_date_safe, _season_from_month
 )
+from sbgm.plotting_utils import overlay_outline, get_dk_lsm_outline
 from sbgm.variable_utils import get_cmap_for_variable, get_color_for_model
 
 logger = logging.getLogger(__name__)
@@ -674,6 +675,7 @@ def plot_crps_timeseries(
 
     crps_path = tables_dir / "prob_crps_daily.csv"
     if not crps_path.exists():
+        logger.info(f"CRPS timeseries file not found: {crps_path}")
         return
 
     lines = crps_path.read_text().strip().splitlines()

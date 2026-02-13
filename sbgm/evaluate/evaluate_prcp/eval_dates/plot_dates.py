@@ -7,7 +7,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
-from sbgm.evaluate.evaluate_prcp.plot_utils import _ensure_dir, _nice, _savefig, get_dk_lsm_outline, overlay_outline
+from sbgm.evaluate.evaluate_prcp.plot_utils import _ensure_dir, _nice, _savefig
+from sbgm.plotting_utils import get_dk_lsm_outline, overlay_outline
 from sbgm.variable_utils import get_cmap_for_variable
 
 from sbgm.plotting_utils import _add_colorbar_and_boxplot
@@ -153,7 +154,7 @@ def _collect_panels_for_date(
     except Exception:
         mask = None
 
-    def _safe(load_fn: Callable[[str], object] | None) -> np.ndarray | None:
+    def _safe(load_fn: Callable[[str], object] | None, *, apply_land_mask: bool = True) -> np.ndarray | None:
         if load_fn is None:
             return None
         try:
@@ -161,11 +162,15 @@ def _collect_panels_for_date(
         except Exception:
             return None
         x = _squeeze2d(x)
-        return _apply_mask(x, mask)
+        if apply_land_mask:
+            return _apply_mask(x, mask)
+        return x
 
-    lr  = _safe(getattr(resolver, "load_lr",  None)) if include_lr else None
-    hr  = _safe(getattr(resolver, "load_obs", None))
-    pmm = _safe(getattr(resolver, "load_pmm", None))
+    # LR should remain a full-field visual (like conditioning), even when land_only=True.
+    # We will de-emphasize ocean visually in the plotting step instead.
+    lr  = _safe(getattr(resolver, "load_lr",  None), apply_land_mask=False) if include_lr else None
+    hr  = _safe(getattr(resolver, "load_obs", None), apply_land_mask=True)
+    pmm = _safe(getattr(resolver, "load_pmm", None), apply_land_mask=True)
 
     panels: list[tuple[str, np.ndarray]] = []
 
@@ -250,6 +255,46 @@ def plot_dates_montages(
     if dk_outline is not None:
         dk_outline = np.flipud(dk_outline)
 
+    # --- ocean background styling (match dataset_tester look) ---
+    # dk_outline is a boolean land mask; ocean is ~land.
+    ocean_mask = (~dk_outline) if (dk_outline is not None) else None
+
+    def _set_bad_transparent(cmap_obj):
+        try:
+            if hasattr(cmap_obj, "copy"):
+                cmap_obj = cmap_obj.copy()
+            if hasattr(cmap_obj, "set_bad"):
+                cmap_obj.set_bad(alpha=0.0)
+        except Exception:
+            pass
+        return cmap_obj
+
+    # Use a transparent 'bad' color so NaNs (ocean when land_only=True) show the background.
+    hr_cmap = _set_bad_transparent(hr_cmap)
+
+    def _draw_hatched_ocean(ax):
+        if ocean_mask is None:
+            return
+        try:
+            m = ocean_mask.astype(int)
+            # light grey base
+            ax.contourf(m, levels=[0.5, 1.5], colors=["#f3f3f3"], alpha=1.0)
+            # hatch overlay
+            cf = ax.contourf(m, levels=[0.5, 1.5], colors="none", hatches=["++"], alpha=0.0)
+            for c in cf.collections:
+                c.set_edgecolor("none")
+        except Exception:
+            return
+
+    def _draw_lr_ocean_tint(ax, *, alpha: float = 0.35):
+        if ocean_mask is None:
+            return
+        try:
+            m = ocean_mask.astype(int)
+            ax.contourf(m, levels=[0.5, 1.5], colors=["#f3f3f3"], alpha=float(alpha))
+        except Exception:
+            return
+
     # Collect rows and learn max #members to size the grid
     rows: list[list[tuple[str, np.ndarray]]] = []
     max_members = 0
@@ -268,7 +313,7 @@ def plot_dates_montages(
     C = (1 if include_lr else 0) + 1 + max_members + 1  # LR | HR | Ens.. | PMM
 
     _nice()
-    fig, axs = plt.subplots(R, C, figsize=(3.2 * C, 3.2 * R))
+    fig, axs = plt.subplots(R, C, figsize=(3.6 * C, 3.6 * R))
     if R == 1: axs = axs[np.newaxis, :]
     if C == 1: axs = axs[:, np.newaxis]
 
@@ -324,17 +369,48 @@ def plot_dates_montages(
         def draw(ax, img, title, is_lr=False, metric_text: str | None = None):
             if img is None:
                 ax.axis("off"); return
-            im = ax.imshow(img, origin="lower", vmin=vmin, vmax=vmax, cmap=(lr_cmap if is_lr else hr_cmap))
+
+            # Backgrounds:
+            # - HR + generated panels: hatched ocean (and NaNs are transparent via set_bad)
+            # - LR panel: keep full field visible but de-emphasize ocean with a light tint
+            if is_lr:
+                _draw_lr_ocean_tint(ax, alpha=0.35)
+            else:
+                _draw_hatched_ocean(ax)
+
+            # Slight transparency for LR field to match the conditioning look
+            alpha_img = 0.85 if is_lr else 1.0
+
+            im = ax.imshow(
+                img,
+                origin="lower",
+                vmin=vmin,
+                vmax=vmax,
+                cmap=(lr_cmap if is_lr else hr_cmap),
+                alpha=alpha_img,
+                interpolation="nearest",
+            )
             overlay_outline(ax, dk_outline)
             ax.set_xticks([]); ax.set_yticks([])
+
             if r == 0:
-                ax.set_title(title, fontsize=12)
+                ax.set_title(title, fontsize=16)
+
             # metric annotation (top-left inside axes)
             if metric_text:
-                ax.text(0.02, 0.98, metric_text, transform=ax.transAxes, va="top", ha="left",
-                        fontsize=12, color="black",
-                        bbox=dict(facecolor="white", alpha=0.65, edgecolor="none", pad=1.2))
-            _add_colorbar_and_boxplot(fig, ax, im, img, boxplot=True, ylim=(vmin, vmax))
+                ax.text(
+                    0.02,
+                    0.98,
+                    metric_text,
+                    transform=ax.transAxes,
+                    va="top",
+                    ha="left",
+                    fontsize=16,
+                    color="black",
+                    bbox=dict(facecolor="white", alpha=0.70, edgecolor="none", pad=1.4),
+                )
+
+            _add_colorbar_and_boxplot(fig, ax, im, img, boxplot=True, ylim=(vmin, vmax), boxplot_mask=dk_outline)
 
         if include_lr:
             draw(axs[r, c], lr, "LR (ERA5)", is_lr=True); c += 1
@@ -355,10 +431,10 @@ def plot_dates_montages(
         draw(axs[r, c], pmm, "PMM (gen)", metric_text=pmm_txt)
 
         # date label on the left
-        axs[r, 0].set_ylabel(_fmt_date(str(d)), fontsize=12)
+        axs[r, 0].set_ylabel(_fmt_date(str(d)), fontsize=16)
 
-    fig.text(0.5, 0.01, "Precipitation [mm/day]", ha="center", fontsize=14)
-    fig.tight_layout(rect=(0, 0.03, 1, 0.98))
+    fig.text(0.5, 0.02, "Precipitation [mm/day]", ha="center", fontsize=20)
+    fig.tight_layout(rect=(0, 0.04, 1, 0.98))
     _savefig(fig, figs_dir / f"{fname_prefix}{R}dates_{int(n_members)}m.png", dpi=SET_DPI)
     plt.close(fig)
 

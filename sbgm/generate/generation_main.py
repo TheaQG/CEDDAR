@@ -51,7 +51,8 @@ def generation_main(cfg):
     # ----------------------- Seed & logging -----------------------
     seed = int(cfg.full_gen_eval.get('seed', 1234))
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
 
     # logger.info(f"[generation_main] Configuration:\n{OmegaConf.to_yaml(cfg)}")
@@ -64,11 +65,22 @@ def generation_main(cfg):
     model, ckpt_dir, ckpt_name = get_model(cfg)
     ckpt_path = os.path.join(ckpt_dir, ckpt_name)
     ckpt = torch.load(ckpt_path, map_location=device)
-    if "network_params" not in ckpt:
-        raise KeyError(f"Checkpoint missing 'network_params': {ckpt_path}")
-    model.load_state_dict(ckpt["network_params"])
+
+    # Decide whether to sample with EMA weights if present
+    use_ema = bool(getattr(cfg.training, "eval_use_ema", False))
+
+    # Prefer EMA weights when requested and available
+    if use_ema and ("ema_network_params" in ckpt):
+        sd_key = "ema_network_params"
+    else:
+        sd_key = "network_params"
+
+    if sd_key not in ckpt:
+        raise KeyError(f"Checkpoint missing '{sd_key}' (available keys: {list(ckpt.keys())}): {ckpt_path}")
+
+    model.load_state_dict(ckpt[sd_key])
     model.eval()
-    logger.info(f"[generation_main] Loaded checkpoint: {ckpt_path}")
+    logger.info(f"[generation_main] Loaded checkpoint ({sd_key}): {ckpt_path}")
 
     # ----------------------- Data (ensure deterministic loop over chosen split) -----------------------
     # Decide which temporal split to generate for: train / val / test

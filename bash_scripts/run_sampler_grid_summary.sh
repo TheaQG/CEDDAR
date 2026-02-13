@@ -51,7 +51,8 @@ export OPENBLAS_NUM_THREADS=${SLURM_CPUS_PER_TASK}
 # --- MODEL KEY: set this to the model you just evaluated with sampler_grid ---
 # Example:
 # MODEL_KEY="EDM_final_run__HR_prcp_DANRA__SIZE_128x128__LR_prcp_ERA5__LOSS_sdfweighted__HEADS_4__TIMESTEPS_56"
-MODEL_KEY="EDM_final_run__HR_prcp_DANRA__SIZE_128x128__LR_prcp_ERA5__LOSS_sdfweighted__HEADS_4__TIMESTEPS_56"
+# MODEL_KEY="EDM_final_run__HR_prcp_DANRA__SIZE_128x128__LR_prcp_ERA5__LOSS_sdfweighted__HEADS_4__TIMESTEPS_56"
+MODEL_KEY="B1_GSDF_RGBCE__HR_prcp_DANRA__SIZE_128x128__LR_prcp_ERA5__LOSS_sdfweighted__HEADS_4__TIMESTEPS_56"
 
 SAMPLER_GRID_ROOT_HOST="$SAMPLE_DIR/evaluation/${MODEL_KEY}/sampler_grid"
 
@@ -70,8 +71,9 @@ srun singularity exec "$CONTAINER" bash -lc "
   set -euo pipefail
   export PYTHONPATH='${PYTHONPATH}'
   echo '[INFO] Running sampler-grid summary inside container'
-  python -m sbgm.evaluate.summarize_sampler_grid \
-    --sampler_grid_root '$SAMPLER_GRID_ROOT_HOST'
+  python -m sbgm.evaluate.summarize_sampler_grid_simple \
+    --sampler_grid_root '$SAMPLER_GRID_ROOT_HOST' \
+    --year 2017
 "
 
 STATUS=$?

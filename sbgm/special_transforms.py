@@ -178,7 +178,7 @@ def get_transforms_from_stats(variable: str,
     if stats is None and stats_file_path:
         if not os.path.exists(stats_file_path):
             raise ValueError(f"Stats file not found: {stats_file_path}")
-        stats = load_global_stats(variable, model, domain_str, crop_region_str, scaling_split, stats_file_path)
+        stats = load_global_stats(variable, model, domain_str, crop_region_str, scaling_split, stats_file_path, verbose=True)
     if stats is None:
         raise ValueError(f"Failed to load stats from {stats_file_path}")
 

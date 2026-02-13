@@ -123,6 +123,19 @@ visualization:
   add_boxplot_per_panel: true # Whether to add boxplot per panel in visualization
   add_boxplot_summary: true # Whether to add summary boxplot in visualization
   plot_dual_lr_channel: 0 # What LR channel to plot when dual_lr is True (0 or 1)
+
+  ocean_background: hatch # hatch | solid | none
+  ocean_facecolor: "#f3f3f3" # Color for ocean facecolor when ocean_background is 'solid'. "#f3f3f3" is light gray
+  ocean_hatch: "++" # Hatch pattern for ocean when ocean_background is 'hatch'. "////" | "\\\\\\" | "xxxx" | "...." | "++++"
+  ocean_alpha: 0.4
+  ocean_hatch_linewidth: 0.2 # Line width for ocean hatch (Matplotlib rcParams setting)
+
+  outline_color: "lightgrey" # Color for outline (e.g., Denmark outline)
+  outline_linewidth: 0.6 # Line width for outline
+
+  prcp_zero_color: "#ffffff" # Color for zero precipitation in plots (white)
+  prcp_zero_frac: 0.06 # Fraction of colorbar for zero precipitation
+  # prcp_min_positive: 0.001 # Minimum positive precipitation value for color scaling
   # summary_boxplot_keys: # <-- optional; overrides default [generated, hr, matching-lr]
   #   - generated
   #   - prcp_hr
@@ -320,12 +333,11 @@ full_gen_eval:
     S_churn: [0.0, 0.5, 1.0, 2.0] #, 4.0]
     sigma_scale: [0.90, 0.95, 1.00, 1.05, 1.10] # [0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15]
 
-  
   sampler_eval_tasks: ["prcp_probabilistic",
                        "prcp_scale",
                        "prcp_distributional",
                        "prcp_extremes",
-                      #  "prcp_spatial",
+                       "prcp_spatial",
                       #  "prcp_temporal",
                       #  "prcp_features",
                       #  "prcp_dates"
@@ -439,7 +451,7 @@ full_gen_eval:
   # temporal
   temporal_include_lr: true
   temporal_wet_thr_mm: 1.0
-  temporal_max_lag: 30
+  temporal_max_lag: 8
   temporal_max_spell: 25
   temporal_group_by: year # | year | season | all
   temporal_ensemble_pool_mode: member_mean # member_mean | pool
@@ -454,7 +466,8 @@ full_gen_eval:
   sal_peakedness_mode: herfindahl
 
   # dates
-  dates_list: ["20190107", "20190203", "20190312"]
+  dates_list: null #["20190107", "20190203", "20190312"]
+  dates_max: 4 # Maximum number of dates to plot
   dates_include_lr: true
   dates_include_members: true
   dates_n_members: 3

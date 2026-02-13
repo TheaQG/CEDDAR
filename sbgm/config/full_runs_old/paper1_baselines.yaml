@@ -396,7 +396,7 @@ quicklook: # Quicklook generation settings
 
 
 baseline:
-  types: [unet_sr] # bilinear, qm, 
+  types: [qm, unet_sr, bilinear] # bilinear, qm, 
   splits: [test]
   unet_sr:
     in_channels: 3                   # lr_up, topo_hr, lsm_hr (auto-detected if present)
@@ -413,12 +413,12 @@ baseline:
 
 eval:
   tasks:
-    - prcp_distributions
-    - prcp_scale
-    - prcp_spatial
-    - prcp_extremes
-    - prcp_temporal
-    - prcp_climatology   # ensembles/sigma* are auto-skipped
+    # - prcp_distributions
+    - prcp_dates
+    # - prcp_scale
+    # - prcp_extremes
+    # - prcp_temporal
+    - prcp_spatial   # ensembles/sigma* are auto-skipped
 
   # general toggles
   make_plots: true

@@ -630,7 +630,7 @@ def compare_seasonal_distributions(
     with _rc_ctx:
         # === Plot 1: 1x2 panels, each model, seasonal histograms (STEP LINES) ===
         # Uses outlines only to avoid fill overlap - log-scale via axis for consistent behaviour
-        fig1, axs1 = plt.subplots(1, 2, figsize=(14, 6), constrained_layout=True, sharey=True)
+        fig1, axs1 = plt.subplots(1, 2, figsize=(16, 7), constrained_layout=True, sharey=True)
         colors = {'Winter': '#3366cc', 'Spring': '#2ca02c', 'Summer': '#ffbf00', 'Autumn': '#c44e52'}
 
         for season, color in colors.items():
@@ -649,11 +649,11 @@ def compare_seasonal_distributions(
             ax.set_ylabel('Log count' if log_hist else 'Density')
             ax.grid(True, which='both', ls='--', alpha=0.3)
         
-        fig1.suptitle(f"{variable} | Seasonal Histogram Comparison (by model)", y=1.02)
+        fig1.suptitle(f"{variable} | Seasonal Histogram Comparison (by model)", y=1.08)
 
         # === Plot 2: 2x2 panels, each season, both models (STYLE BY MODEL) ===
         # Same hue per season, distinguish models by linestyle/fill/hatch
-        fig2, axs2 = plt.subplots(2, 2, figsize=(14, 10), constrained_layout=True, sharey=True)
+        fig2, axs2 = plt.subplots(2, 2, figsize=(16, 11), constrained_layout=True, sharey=True)
         axs2 = axs2.flatten()
         season_palette_fill = {'Winter': '#6fa3ff', 'Spring': '#7cd67a', 'Summer': '#ffd24d', 'Autumn': '#f28e8e'}
         season_palette_line = {'Winter': '#1f4ba5', 'Spring': '#1d7f1d', 'Summer': '#e6ac00', 'Autumn': '#a93a3a'}
@@ -673,7 +673,7 @@ def compare_seasonal_distributions(
             axs2[i].set_ylabel('Log count' if log_hist else 'Density')
             axs2[i].grid(True, which='both', ls='--', alpha=0.3)
 
-        fig2.suptitle(f"{variable} | Seasonal Histogram Comparison (by season)", y=1.02)
+        fig2.suptitle(f"{variable} | Seasonal Histogram Comparison (by season)", y=1.08)
 
         if save_figures:
             if not os.path.exists(save_path):
