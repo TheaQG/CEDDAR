@@ -25,7 +25,7 @@ OVERLAY=/scratch/project_465002493/containers/overlays/hpo_overlay.img
 
 SCRATCH="/scratch/${SLURM_JOB_ACCOUNT}"
 USER_DIR=$SCRATCH/$USER
-HOST_CODE=$USER_DIR/Code/SBGM_SD
+HOST_CODE=$USER_DIR/Code/CEDDAR
 
 OPTUNA_DB_DIR=$SCRATCH/optuna_db
 STUDY_NAME=sbgm_optuna_v1

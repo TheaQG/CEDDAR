@@ -20,7 +20,7 @@ CONTAINER=/scratch/project_465002493/containers/images/my_torch_container_with_p
 
 SCRATCH="/scratch/${SLURM_JOB_ACCOUNT}"
 USER_DIR="$SCRATCH/$USER"
-ROOT_DIR="$USER_DIR/Code/SBGM_SD"
+ROOT_DIR="$USER_DIR/Code/CEDDAR"
 
 EVAL_ROOT="$ROOT_DIR/models_and_samples/generated_samples/evaluation"
 OUT_DIR="$ROOT_DIR/models_and_samples/generated_samples/evaluation/metrics_tables"

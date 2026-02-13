@@ -1,10 +1,11 @@
-# B1 + geographic conditions (REPLICATE WITH SEED 1011)
+# B0: baseline model configuration for ablation studies
 
+# Most basic configuration for ablation run comparisons
 # - Only one condition variable (condition_variables: ["prcp"])
 # - Dual LR channel OFF and LR scaling with LR statistics (dual_lr: False and LR_main_var_scale: LR)
 # - No residual prediction from LR baseline (edm.predict_residual: False; edm.baseline_space is unused)
-# - WITH seasonal conditions (sample_w_cond_season: True), using sin/cos embeddings (use_sin_cos_embedding: True)
-# - WITH geographic conditions (sample_w_geo: True)
+# - No seasonal conditions (sample_w_cond_season: False)
+# - No geographic conditions (sample_w_geo: False)
 # - No SDF weighted loss (sdf_weighted_loss: False)
 # - No EMA (with_ema: False)
 # - No classifier-free guidance (classifier_free_guidance.enabled: False)
@@ -12,8 +13,8 @@
 
 
 experiment:
-  name: B1_G_1
-  config_name: B1_G_1
+  name: B0
+  config_name: B0
   # Date of the experiment, taken from the environment variable or set to current date
   date: ${env:EXP_DATE} # Date for the experiment, 
 
@@ -88,7 +89,7 @@ transforms:
 
 stationary_conditions:
   geographic_conditions:
-    sample_w_geo: true # Whether to sample with geographic conditions
+    sample_w_geo: false # Whether to sample with geographic conditions
     sample_w_sdf: false # Whether to sample with SDF (Signed Distance Function)
     geo_variables: ['lsm', 'topo'] # Geographic variables to include, 'slope' can be added
     with_mask: false # Whether to include classifier-free guidance mask
@@ -101,11 +102,12 @@ stationary_conditions:
     topo_dx_m: 1000.0 # Grid spacing in meters (x)
     topo_dy_m: 1000.0 # Grid spacing in meters (y)
   seasonal_conditions:
-    sample_w_cond_season: true # Whether to sample with seasonal conditions
-    use_sin_cos_embedding: true # Whether to use sin/cos embedding for seasonal conditions
+    sample_w_cond_season: false # Whether to sample with seasonal conditions
+    use_sin_cos_embedding: false # Whether to use sin/cos embedding for seasonal conditions
     use_leap_years: true # Whether to account for leap years in seasonal conditions
     n_seasons: 4 # Number of seasons in the data
     
+
 
 visualization:
   transform_back_bf_plot: true # Whether to transform back before plotting
@@ -123,7 +125,7 @@ visualization:
   add_boxplot_per_panel: true # Whether to add boxplot per panel in visualization
   add_boxplot_summary: true # Whether to add summary boxplot in visualization
   plot_dual_lr_channel: 0 # What LR channel to plot when dual_lr is True (0 or 1)
-
+  
   ocean_background: hatch # hatch | solid | none
   ocean_facecolor: "#f3f3f3" # Color for ocean facecolor when ocean_background is 'solid'. "#f3f3f3" is light gray
   ocean_hatch: "++" # Hatch pattern for ocean when ocean_background is 'hatch'. "////" | "\\\\\\" | "xxxx" | "...." | "++++"
@@ -150,13 +152,13 @@ model:
 
 
 training:
-  seed: 1011 # Random seed for reproducibility
+  seed: 504 # Random seed for reproducibility
   device: cuda # Device to use for training (e.g., 'cuda' or 'cpu')
   use_mixed_precision: false # Whether to use mixed precision training
   use_grad_clip: false # Whether to use gradient clipping
   grad_clip_norm: 0.0 # Gradient clipping norm (sset to None to disable)
   verbose: true # Whether to print verbose output during training
-  batch_size: 16 # Batch size for training
+  batch_size: 146 # Batch size for training
   learning_rate: 0.0002 # Learning rate for training
   min_lr: 0.0000005 # Minimum learning rate
   lr_scheduler: ReduceLROnPlateau # Learning rate scheduler to use
@@ -170,9 +172,9 @@ training:
   with_ema: false # Whether to use Exponential Moving Average. If false, all EMA params below are ignored
   eval_use_ema: false # Whether to use EMA weights for evaluation (validation and generation)
   load_ema: false # Whether to load EMA weights
-  ema_decay: 0.998 # Decay rate for EMA. 0.999-0.9995 is a good range for per-step decay with batch size 16-32. Lower for smaller batches, higher for larger batches.
+  ema_decay: 0.999 # Decay rate for EMA. 0.999-0.9995 is a good range for per-step decay with batch size 16-32. Lower for smaller batches, higher for larger batches.
   weight_decay: 0.000001 # Weight decay for regularization
-  ema_warmup_steps: 1000 # Number of warmup steps for EMA
+  ema_warmup_steps: 2000 # Number of warmup steps for EMA
   epochs: 400 # Number of epochs for training
   loss_type: sdfweighted # Type of loss function to use NOTE: change the name in code
   sdf_weighted_loss: false # Whether to use SDF weighted loss
@@ -215,7 +217,7 @@ edm:
   S_noise: 1.0 # Noise parameter for EDM
   sampling_steps: 56 # Number of sampling steps for EDM (suggested: 35-50)
   predict_residual: false # Whether to predict residual from LR baseline
-  baseline_space: hr # Which z-space to use for lr_ups baseline: 'hr' | 'lr' | 'auto' (auto prefers *_hrspace if available)  
+  baseline_space: lr # Which z-space to use for lr_ups baseline: 'hr' | 'lr' | 'auto' (auto prefers *_hrspace if available)  
   drop_lr_ups_in_uncond: true # Whether to drop lr_ups in unconditional branch (True recommended, False for ablation)
 
 rain_gate:
@@ -311,6 +313,8 @@ generation:
     # config_filename: config.yaml # Filename for the saved configuration
 
 
+
+
 full_gen_eval:
   split: val
   use_new_eval: true
@@ -377,7 +381,7 @@ full_gen_eval:
   # Benchmark overlay settings
   baselines_overlay:
     enabled: true
-    types: [qm] #, unet_sr] # any subset. Order is plot order "bilinear", "qm", "unet_sr"
+    types: [bilinear, qm] #, unet_sr] # any subset. Order is plot order "bilinear", "qm", "unet_sr"
     split: test # train | valid | test
     labels:
       bilinear: "LR bilinear"

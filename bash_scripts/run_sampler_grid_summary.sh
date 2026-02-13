@@ -23,7 +23,7 @@ CONTAINER=/scratch/project_465002493/containers/images/my_torch_container_with_p
 # --- Paths (same pattern as your generation script) ---
 SCRATCH="/scratch/${SLURM_JOB_ACCOUNT}"
 USER_DIR="$SCRATCH/$USER"
-ROOT_DIR="$USER_DIR/Code/SBGM_SD"
+ROOT_DIR="$USER_DIR/Code/CEDDAR"
 CONFIG_DIR="$ROOT_DIR/sbgm/config"
 DATA_DIR="$USER_DIR/Data/Data_DiffMod"
 SAMPLE_DIR="$ROOT_DIR/models_and_samples/generated_samples"

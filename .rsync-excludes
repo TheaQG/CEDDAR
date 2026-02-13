@@ -9,13 +9,57 @@ era5_download_pipeline/era5_logs/
 era5_download_pipeline/slurm/era5_logs/
 sbgm/logs/
 
-# python caches
-__pycache__/
-*.pyc
-
 # optional: misc
 .DS_Store
 .ipynb_checkpoints/
 
 # exclude the exclude itself
 .rsync-excludes
+
+.git/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+*.out
+*.err
+*.png
+*.pdf
+*.ipynb_checkpoints
+lumi/
+
+# containers / overlays
+*.sif
+*.img
+*.sqsh
+*.squashfs
+*.ext3
+*.overlay
+overlay*/
+appl*/
+apptainer/
+
+# model checkpoints / large arrays / data
+*.ckpt
+*.pt
+*.pth
+*.npz
+*.nc
+*.zarr
+*.h5
+*.pkl
+*.joblib
+*.tar
+*.tar.gz
+*.zip
+
+.venv/
+.env/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+wandb/
+lightning_logs/

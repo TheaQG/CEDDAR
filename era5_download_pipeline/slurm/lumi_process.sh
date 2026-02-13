@@ -16,7 +16,7 @@ module load singularity-userfilesystems singularity-CPEbits
 
 CONTAINER=/scratch/project_465002493/containers/images/my_torch_container_with_plotting.sif
 OVERLAY=/scratch/project_465002493/containers/overlays/my_overlay.img
-HOST_CODE=/scratch/project_465002493/quistgaa/Code/SBGM_SD
+HOST_CODE=/scratch/project_465002493/quistgaa/Code/CEDDAR
 
 CFG_IN_WORKSPACE=/workspace/era5_download_pipeline/cfg/era5_pressure_pipeline.yaml
 TS=$(date +%Y%m%d_%H%M%S)

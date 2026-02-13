@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=B1_RGBCE
-#SBATCH --output=logs/slurm_B1_RGBCE_%x_%j.log
-#SBATCH --error=logs/slurm_B1_RGBCE_%x_%j.err
+#SBATCH --job-name=B0_small
+#SBATCH --output=logs/slurm_B0_small_%x_%j.log
+#SBATCH --error=logs/slurm_B0_small_%x_%j.err
 #SBATCH --account=project_465002493
 #SBATCH --partition=standard-g
 #SBATCH --nodes=1
@@ -12,7 +12,7 @@
 
 
 # ===================================================================
-# B1_RGBCE: BASELINE B1 + RAINGATE BCE (WITHOUT REWEIGHTING)
+# B0: BASELINE MODEL CONFIGURATION FOR ABLATION STUDIES
 # ===================================================================
 
 
@@ -34,8 +34,8 @@ CONTAINER=/scratch/project_465002493/containers/images/my_torch_container_with_p
 SCRATCH="/scratch/${SLURM_JOB_ACCOUNT}"
 USER_DIR="$SCRATCH/$USER"
 ROOT_DIR="$USER_DIR/Code/CEDDAR"
-CONFIG_DIR="$ROOT_DIR/sbgm/config/ablations/B1s"
-DATA_DIR="$USER_DIR/Data/Data_DiffMod"
+CONFIG_DIR="$ROOT_DIR/sbgm/config/ablations/B0s"
+DATA_DIR="$USER_DIR/Data/Data_DiffMod_small"
 SAMPLE_DIR="$ROOT_DIR/models_and_samples/generated_samples"
 CKPT_DIR="$ROOT_DIR/models_and_samples/trained_models"
 STATS_LOAD_DIR="$ROOT_DIR/data_analysis_pipeline/saved/statistics_run/stats"
@@ -70,9 +70,9 @@ mkdir -p "$MIOPEN_DB_DIR"
 export MIOPEN_USER_DB_PATH="$MIOPEN_DB_DIR/userdb.sql"
 export MIOPEN_SYSTEM_DB_PATH="$MIOPEN_DB_DIR/systemdb.sql"
 
-CFG="$CONFIG_DIR/B1_RGBCE.yaml"
+CFG="$CONFIG_DIR/B0_small.yaml"
 
-echo "[INFO] Running ablation B1 +  RainGate BCE without reweighting: training → generation → quicklook → evaluation (inside container)"
+echo "[INFO] Running ablation basic: training → generation → quicklook → evaluation (inside container)"
 
 srun singularity exec "$CONTAINER" bash -lc "
   set -euo pipefail
@@ -80,18 +80,20 @@ srun singularity exec "$CONTAINER" bash -lc "
   python -m sbgm.cli.main_app --mode full_pipeline --config_path $CFG --make_plots
 "
 
-  # python -m sbgm.cli.main_app --mode generate --config_path $CFG --make_plots &&
   # python -m sbgm.cli.main_app --mode evaluate --config_path $CFG --make_plots
-#   python -m sbgm.cli.main_app --mode quicklook --config_path $CFG --make_plots &&
-
-  # python -m sbgm.cli.main_app --mode full_pipeline --config_path $CFG --make_plots
-  # python -m sbgm.cli.main_app --mode quicklook --config_path '$CFG' --make_plots &&
   # python -m sbgm.cli.main_app --mode generate --config_path $CFG --make_plots &&
-  # python -m sbgm.cli.main_app --mode evaluate --config_path $CFG --make_plots
-  # python -m sbgm.cli.main_app --mode sigma_star_generation --config_path $CFG --make_plots &&
-  # python -m sbgm.cli.main_app --mode sigma_star_evaluation --config_path $CFG --make_plots  
+  # python -m sbgm.cli.main_app --mode generate --config_path $CONFIG_DIR/ablation_basic_geo_SDF.yaml --make_plots &&
+  # python -m sbgm.cli.main_app --mode sigma_star_generation --config_path $CONFIG_DIR/ablation_basic_geo_SDF.yaml --make_plots &&
+  # python -m sbgm.cli.main_app --mode sigma_star_evaluation --config_path $CONFIG_DIR/ablation_basic_geo_SDF.yaml --make_plots  
+  # python -m sbgm.cli.main_app --mode quicklook --config_path '$CONFIG_DIR/ablation_basic_geo_SDF.yaml' --make_plots &&
+  # python -m sbgm.cli.main_app --mode full_pipeline --config_path $CONFIG_DIR/ablation_basic_geo_SDF.yaml --make_plots
 
 
 
 
 
+
+# # === Launch the training ===
+# echo "[INFO] Launching the full training-generation-evaluation pipeline..."
+# srun singularity exec $CONTAINER \
+#     python -m sbgm.cli.main_app --mode full_pipeline --config_path $CONFIG_DIR/paper1_expA.yaml --make_plots

@@ -24,7 +24,7 @@ module load singularity-userfilesystems singularity-CPEbits
 CONTAINER=/scratch/project_465002493/containers/images/my_torch_container_with_plotting.sif
 OVERLAY=/scratch/project_465002493/containers/overlays/hpo_overlay.img
 MAMBA_PREFIX=/scratch/project_465002493/micromamba      # same as in build script
-HOST_CODE=/scratch/project_465002493/quistgaa/Code/SBGM_SD
+HOST_CODE=/scratch/project_465002493/quistgaa/Code/CEDDAR
 
 SCRATCH="/scratch/${SLURM_JOB_ACCOUNT}"
 OPTUNA_DB_DIR=$SCRATCH/optuna_db

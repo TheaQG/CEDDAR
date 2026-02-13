@@ -22,7 +22,7 @@ CONTAINER=/scratch/project_465002493/containers/images/my_torch_container_with_p
 # === Define paths ===
 SCRATCH="/scratch/${SLURM_JOB_ACCOUNT}"
 USER_DIR=$SCRATCH/$USER
-export ROOT_DIR="$USER_DIR/Code/SBGM_SD"
+export ROOT_DIR="$USER_DIR/Code/CEDDAR"
 export PYTHONPATH="$ROOT_DIR:$PYTHONPATH"
 
 # === Data and output directories === 
