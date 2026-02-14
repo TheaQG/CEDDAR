@@ -52,14 +52,3 @@ apptainer/
 *.tar
 *.tar.gz
 *.zip
-
-.venv/
-.env/
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
-build/
-dist/
-*.egg-info/
-wandb/
-lightning_logs/
