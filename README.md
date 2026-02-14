@@ -34,6 +34,8 @@ CEDDAR produces:
 
 The reduced reproducibility run (repro/02_reduced_run) generates figures similar to the examples above.
 
+Two pretrained models (B0 and B1_GSDF_RGBCE) are available along with a small test dataset (Data_DiffMod_small) for quick testing and reproducibility at https://doi.org/10.xxxx/zenodo.18643307.
+
 ---
 
 ## Quickstart (Reproducibility)
@@ -44,7 +46,7 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-Download `Data_DiffMod_small` from Zenodo (link to be added) and place it next to the repository:
+Download `Data_DiffMod_small` from Zenodo ([![DOI](https://zenodo.org/badge/DOI/10.xxxx/zenodo.18643307.svg)](https://doi.org/10.xxxx/zenodo.18643307)) and place it next to the repository:
 ```
 project_root/
     CEDDAR/
