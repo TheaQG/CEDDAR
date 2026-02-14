@@ -2,7 +2,7 @@
 #SBATCH --job-name=B0_S_1
 #SBATCH --output=logs/slurm_B0_S_1_%x_%j.log
 #SBATCH --error=logs/slurm_B0_S_1_%x_%j.err
-#SBATCH --account=project_465002493
+#SBATCH --account=<set-at-submit-time>
 #SBATCH --partition=standard-g
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=8
@@ -10,6 +10,23 @@
 #SBATCH --mem-per-gpu=60G
 #SBATCH --time=08:00:00
 
+
+
+set -eo pipefail
+
+# --- User/site configuration (override when submitting) ---
+# Example:
+#   sbatch --account=project_xxxxx \
+#     --export=ALL,ROOT_DIR=/scratch/project_xxxxx/$USER/Code/CEDDAR,DATA_DIR=/scratch/project_xxxxx/$USER/Data/Data_DiffMod_small \
+#     <script>.sh
+ACCOUNT="${SLURM_JOB_ACCOUNT:-${ACCOUNT:-project_xxxxx}}"
+USER_BASE="/scratch/${ACCOUNT}/${USER}"
+ROOT_DIR="${ROOT_DIR:-${USER_BASE}/Code/CEDDAR}"
+CEDDAR_RUNS="${CEDDAR_RUNS:-${USER_BASE}/runs/CEDDAR}"
+DATA_BASE="${DATA_BASE:-${USER_BASE}/Data}"
+DATA_DIR="${DATA_DIR:-${DATA_BASE}/Data_DiffMod_small}"
+CONTAINER="${CONTAINER:-${USER_BASE}/containers/ceddar.sif}"
+export ACCOUNT USER_BASE ROOT_DIR CEDDAR_RUNS DATA_BASE DATA_DIR CONTAINER
 
 # ===================================================================
 # B0_S_1: BASELINE MODEL WITH SEASONAL INFORMATION CONFIGURATION FOR ABLATION STUDIES (FIRST REPLICATE FOR SEED NOISE, SEED 1011)
@@ -28,7 +45,7 @@ module load singularity-userfilesystems singularity-CPEbits
 module load lumi-tools || true
 
 # --- Container ---
-CONTAINER=/scratch/project_465002493/containers/images/my_torch_container_with_plotting.sif
+CONTAINER=${USER_BASE}/images/my_torch_container_with_plotting.sif
 
 # --- Paths ---
 SCRATCH="/scratch/${SLURM_JOB_ACCOUNT}"

@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=CEDDAR_reduced
-#SBATCH --account=project_465002493
+#SBATCH --account=<set-at-submit-time>
 #SBATCH --output=logs/slurm_CEDDAR_reduced_%j.log
 #SBATCH --error=logs/slurm_CEDDAR_reduced_%j.err
 #SBATCH --partition=standard-g
@@ -9,6 +9,23 @@
 #SBATCH --cpus-per-task=7
 #SBATCH --mem-per-gpu=60G
 #SBATCH --time=00:59:00
+
+
+set -eo pipefail
+
+# --- User/site configuration (override when submitting) ---
+# Example:
+#   sbatch --account=project_xxxxx \
+#     --export=ALL,ROOT_DIR=/scratch/project_xxxxx/$USER/Code/CEDDAR,DATA_DIR=/scratch/project_xxxxx/$USER/Data/Data_DiffMod_small \
+#     <script>.sh
+ACCOUNT="${SLURM_JOB_ACCOUNT:-${ACCOUNT:-project_xxxxx}}"
+USER_BASE="/scratch/${ACCOUNT}/${USER}"
+ROOT_DIR="${ROOT_DIR:-${USER_BASE}/Code/CEDDAR}"
+CEDDAR_RUNS="${CEDDAR_RUNS:-${USER_BASE}/runs/CEDDAR}"
+DATA_BASE="${DATA_BASE:-${USER_BASE}/Data}"
+DATA_DIR="${DATA_DIR:-${DATA_BASE}/Data_DiffMod_small}"
+CONTAINER="${CONTAINER:-${USER_BASE}/containers/ceddar.sif}"
+export ACCOUNT USER_BASE ROOT_DIR CEDDAR_RUNS DATA_BASE DATA_DIR CONTAINER
 
 # Fail fast but set -u only after handling env defaults
 set -eo pipefail
@@ -25,7 +42,7 @@ module load lumi-tools || true
 
 # --- Container ---
 # User can override when submitting: CONTAINER=/path/to/image.sif sbatch repro/02_reduced_run/run_reduced_lumi.sh
-CONTAINER="${CONTAINER:-/scratch/project_465002493/containers/images/my_torch_container_with_plotting.sif}"
+CONTAINER="${CONTAINER:-${USER_BASE}/images/my_torch_container_with_plotting.sif}"
 
 # --- Paths (defaults; can be overridden at submit time) ---
 SCRATCH="/scratch/${SLURM_JOB_ACCOUNT}"

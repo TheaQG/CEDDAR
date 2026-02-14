@@ -2,12 +2,29 @@
 #SBATCH --job-name=eval_baselines
 #SBATCH --output=logs/slurm_eval_baselines_%x_%j.log
 #SBATCH --error=logs/slurm_eval_baselines_%x_%j.err
-#SBATCH --account=project_465002493
+#SBATCH --account=<set-at-submit-time>
 #SBATCH --partition=standard
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=56
 #SBATCH --time=02:00:00
 
+
+
+set -eo pipefail
+
+# --- User/site configuration (override when submitting) ---
+# Example:
+#   sbatch --account=project_xxxxx \
+#     --export=ALL,ROOT_DIR=/scratch/project_xxxxx/$USER/Code/CEDDAR,DATA_DIR=/scratch/project_xxxxx/$USER/Data/Data_DiffMod_small \
+#     <script>.sh
+ACCOUNT="${SLURM_JOB_ACCOUNT:-${ACCOUNT:-project_xxxxx}}"
+USER_BASE="/scratch/${ACCOUNT}/${USER}"
+ROOT_DIR="${ROOT_DIR:-${USER_BASE}/Code/CEDDAR}"
+CEDDAR_RUNS="${CEDDAR_RUNS:-${USER_BASE}/runs/CEDDAR}"
+DATA_BASE="${DATA_BASE:-${USER_BASE}/Data}"
+DATA_DIR="${DATA_DIR:-${DATA_BASE}/Data_DiffMod_small}"
+CONTAINER="${CONTAINER:-${USER_BASE}/containers/ceddar.sif}"
+export ACCOUNT USER_BASE ROOT_DIR CEDDAR_RUNS DATA_BASE DATA_DIR CONTAINER
 
 # Fail fast, but set -u only after we’ve safely handled env defaults
 set -eo pipefail
@@ -21,7 +38,7 @@ module load singularity-userfilesystems singularity-CPEbits
 module load lumi-tools || true
 
 # --- Container ---
-CONTAINER=/scratch/project_465002493/containers/images/my_torch_container_with_plotting.sif
+CONTAINER=${USER_BASE}/images/my_torch_container_with_plotting.sif
 
 # --- Paths ---
 SCRATCH="/scratch/${SLURM_JOB_ACCOUNT}"
@@ -66,4 +83,3 @@ srun singularity exec "$CONTAINER" bash -lc "
   export PYTHONPATH='${PYTHONPATH}'
   python -m sbgm.cli.main_app --config_path '$CONFIG_DIR/$CFG' --mode baseline_eval
 "
-

@@ -2,7 +2,7 @@
 #SBATCH --job-name=sampler_grid_eval
 #SBATCH --output=logs/slurm_sampler_grid_eval_%A_%a.out
 #SBATCH --error=logs/slurm_sampler_grid_eval_%A_%a.err
-#SBATCH --account=project_465002493
+#SBATCH --account=<set-at-submit-time>
 #SBATCH --partition=standard-g
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=1
@@ -11,6 +11,23 @@
 #SBATCH --time=04:00:00
 #SBATCH --array=0-59   # same number of combos as generation
 
+
+set -eo pipefail
+
+# --- User/site configuration (override when submitting) ---
+# Example:
+#   sbatch --account=project_xxxxx \
+#     --export=ALL,ROOT_DIR=/scratch/project_xxxxx/$USER/Code/CEDDAR,DATA_DIR=/scratch/project_xxxxx/$USER/Data/Data_DiffMod_small \
+#     <script>.sh
+ACCOUNT="${SLURM_JOB_ACCOUNT:-${ACCOUNT:-project_xxxxx}}"
+USER_BASE="/scratch/${ACCOUNT}/${USER}"
+ROOT_DIR="${ROOT_DIR:-${USER_BASE}/Code/CEDDAR}"
+CEDDAR_RUNS="${CEDDAR_RUNS:-${USER_BASE}/runs/CEDDAR}"
+DATA_BASE="${DATA_BASE:-${USER_BASE}/Data}"
+DATA_DIR="${DATA_DIR:-${DATA_BASE}/Data_DiffMod_small}"
+CONTAINER="${CONTAINER:-${USER_BASE}/containers/ceddar.sif}"
+export ACCOUNT USER_BASE ROOT_DIR CEDDAR_RUNS DATA_BASE DATA_DIR CONTAINER
+
 set -eo pipefail
 
 module --force purge || true
@@ -18,7 +35,7 @@ module use /appl/local/training/modules/AI-20240529/
 module load singularity-userfilesystems singularity-CPEbits
 module load lumi-tools || true
 
-CONTAINER=/scratch/project_465002493/containers/images/my_torch_container_with_plotting.sif
+CONTAINER=${USER_BASE}/images/my_torch_container_with_plotting.sif
 
 SCRATCH="/scratch/${SLURM_JOB_ACCOUNT}"
 USER_DIR="$SCRATCH/$USER"

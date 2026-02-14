@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=flatten_era5
-#SBATCH --account=project_465002493
+#SBATCH --account=<set-at-submit-time>
 #SBATCH --partition=standard
 #SBATCH --time=02:00:00
 #SBATCH --ntasks=1
@@ -10,7 +10,24 @@
 #SBATCH --error=era5_logs/flatten_%j.err
 
 
-BASE="/scratch/project_465002493/quistgaa/Data/Data_DiffMod/data_ERA5/size_589x789/new_ERA5"
+
+set -eo pipefail
+
+# --- User/site configuration (override when submitting) ---
+# Example:
+#   sbatch --account=project_xxxxx \
+#     --export=ALL,ROOT_DIR=/scratch/project_xxxxx/$USER/Code/CEDDAR,DATA_DIR=/scratch/project_xxxxx/$USER/Data/Data_DiffMod_small \
+#     <script>.sh
+ACCOUNT="${SLURM_JOB_ACCOUNT:-${ACCOUNT:-project_xxxxx}}"
+USER_BASE="/scratch/${ACCOUNT}/${USER}"
+ROOT_DIR="${ROOT_DIR:-${USER_BASE}/Code/CEDDAR}"
+CEDDAR_RUNS="${CEDDAR_RUNS:-${USER_BASE}/runs/CEDDAR}"
+DATA_BASE="${DATA_BASE:-${USER_BASE}/Data}"
+DATA_DIR="${DATA_DIR:-${DATA_BASE}/Data_DiffMod_small}"
+CONTAINER="${CONTAINER:-${USER_BASE}/containers/ceddar.sif}"
+export ACCOUNT USER_BASE ROOT_DIR CEDDAR_RUNS DATA_BASE DATA_DIR CONTAINER
+
+BASE="${USER_BASE}/Data/Data_DiffMod/data_ERA5/size_589x789/new_ERA5"
 OVERWRITE="${OVERWRITE:-0}" # To overwrite existing files, set to 1
 
 shopt -s nullglob # Enable nullglob (glob patterns that match no files will expand to a null string)

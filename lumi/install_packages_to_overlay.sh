@@ -1,12 +1,29 @@
 #!/bin/bash
 #SBATCH --job-name=install_pkgs
-#SBATCH --account=project_xxxxxxxxx
+#SBATCH --account=<set-at-submit-time>
 #SBATCH --partition=standard
 #SBATCH --time=00:30:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --output=install_pkgs_%j.out
 #SBATCH --error=install_pkgs_%j.err
+
+
+set -eo pipefail
+
+# --- User/site configuration (override when submitting) ---
+# Example:
+#   sbatch --account=project_xxxxx \
+#     --export=ALL,ROOT_DIR=/scratch/project_xxxxx/$USER/Code/CEDDAR,DATA_DIR=/scratch/project_xxxxx/$USER/Data/Data_DiffMod_small \
+#     <script>.sh
+ACCOUNT="${SLURM_JOB_ACCOUNT:-${ACCOUNT:-project_xxxxx}}"
+USER_BASE="/scratch/${ACCOUNT}/${USER}"
+ROOT_DIR="${ROOT_DIR:-${USER_BASE}/Code/CEDDAR}"
+CEDDAR_RUNS="${CEDDAR_RUNS:-${USER_BASE}/runs/CEDDAR}"
+DATA_BASE="${DATA_BASE:-${USER_BASE}/Data}"
+DATA_DIR="${DATA_DIR:-${DATA_BASE}/Data_DiffMod_small}"
+CONTAINER="${CONTAINER:-${USER_BASE}/containers/ceddar.sif}"
+export ACCOUNT USER_BASE ROOT_DIR CEDDAR_RUNS DATA_BASE DATA_DIR CONTAINER
 
 # === Load Singularity Environment ===
 module purge

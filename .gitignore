@@ -20,6 +20,15 @@ env/
 core.*
 core
 
+# Private bash scripts (for LUMI runs)
+bash_ablation_private/
+bash_scripts_private/
+lumi_private/
+repro_private/
+era5_download_pipeline/slurm_private/
+data_analysis_pipeline_private/
+era5_download_pipeline_private
+
 # NEED TO UPDATE BELOW THIS LINE BASED ON PROJECT NEEDS
 # # Build / packaging
 # build/
