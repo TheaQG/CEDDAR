@@ -44,7 +44,7 @@ EVAL_DIR="$SAMPLE_DIR/evaluation"
 LOG_DIR="$CEDDAR_RUNS/repro/02_reduced_run/outputs/logs"
 
 # --- Stats JSONs committed in repo ---
-export STATS_LOAD_DIR="$PROJECT_ROOT/repro/assets/stats/statistics_run/stats"
+STATS_LOAD_DIR="$ROOT_DIR/repro/assets/stats/statistics_run/stats"
 
 # Enable -u after safely handling defaults
 set -u
