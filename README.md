@@ -34,7 +34,7 @@ CEDDAR produces:
 
 The reduced reproducibility run (repro/02_reduced_run) generates figures similar to the examples above.
 
-Two pretrained models (B0 and B1_GSDF_RGBCE) are available along with a small test dataset (Data_DiffMod_small) for quick testing and reproducibility at https://doi.org/10.xxxx/zenodo.18643307.
+Two pretrained models (B0 and B1_GSDF_RGBCE) are available along with a small test dataset (Data_DiffMod_small) for quick testing and reproducibility at https://zenodo.org/records/18643307.
 
 ---
 
