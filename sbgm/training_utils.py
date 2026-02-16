@@ -118,6 +118,46 @@ def get_dataloader(cfg, verbose=True):
     else:
         lr_data_size_use = lr_data_size
 
+    # ------------------------------------------------------------
+    # Paper 2: spatial context override (large-domain LR context)
+    # ------------------------------------------------------------
+    paper2_cfg = cfg.get('paper2', {}) or {}
+    spatial_cfg = paper2_cfg.get('spatial_context', {}) or {}
+    spatial_mode = spatial_cfg.get('mode', None)
+
+    # Default: use LR cutout domains from `lowres.cutout_domains`.
+    # In Paper2 large_domain mode: allow LR crops to be sampled from the full LR domain,
+    # and allow the LR crop size to differ from HR (e.g. 589x789).
+    lr_cutout_domains_eff = None
+
+    if spatial_mode == 'large_domain':
+        lr_ctx_size = spatial_cfg.get('lr_context_size', None)
+        if lr_ctx_size is None:
+            raise ValueError(
+                "paper2.spatial_context.mode is 'large_domain' but paper2.spatial_context.lr_context_size is not set"
+            )
+        lr_data_size_use = tuple(lr_ctx_size)
+
+        # Full LR domain dims are stored as [H, W] in this repo configs.
+        fd_lr = cfg.get('lowres', {}).get('full_domain_dims', None)
+        if fd_lr is None:
+            fd_lr = cfg.get('highres', {}).get('full_domain_dims', None)
+        if fd_lr is None:
+            raise ValueError(
+                "paper2.spatial_context.mode is 'large_domain' but full_domain_dims is missing in lowres/fullres config"
+            )
+        fd_lr = tuple(fd_lr)
+        lr_cutout_domains_eff = (0, int(fd_lr[1]), 0, int(fd_lr[0]))  # [x1,x2,y1,y2] spanning full domain
+
+        if verbose:
+            logger.info(
+                f"\n[paper2][spatial_context] mode=large_domain -> LR context size={lr_data_size_use}, "
+                f"LR cutout domain={lr_cutout_domains_eff}"
+            )
+    else:
+        # colocated / legacy behavior
+        lr_cutout_domains_eff = tuple(cfg['lowres']['cutout_domains']) if cfg['lowres']['cutout_domains'] is not None else (170, 350, 340, 520)
+
     # Check if resize factor is set and print sizes (if verbose)
     if cfg['lowres']['resize_factor'] > 1:
         hr_data_size_use = (hr_data_size[0] // cfg['lowres']['resize_factor'], hr_data_size[1] // cfg['lowres']['resize_factor'])
@@ -156,27 +196,69 @@ def get_dataloader(cfg, verbose=True):
     full_domain_dims_str_lr = f"{full_domain_dims[0]}x{full_domain_dims[1]}" if full_domain_dims is not None else "full_domain"
     crop_region_hr = cfg['highres']['cutout_domains'] if cfg['highres']['cutout_domains'] is not None else "full_region"
     crop_region_hr_str = '_'.join(map(str, crop_region_hr)) #if isinstance(crop_region_hr, (list, tuple)) else crop_region_hr
-    crop_region_lr = cfg['lowres']['cutout_domains'] if cfg['lowres']['cutout_domains'] is not None else "full_region"
-    crop_region_lr_str = '_'.join(map(str, crop_region_lr)) #if isinstance(crop_region_lr, (list, tuple)) else crop_region_lr
+    crop_region_lr = lr_cutout_domains_eff if lr_cutout_domains_eff is not None else (cfg['lowres']['cutout_domains'] if cfg['lowres']['cutout_domains'] is not None else "full_region")
+    crop_region_lr_str = '_'.join(map(str, crop_region_lr))
 
     # NOTE: Maybe remove? Should be handled in dataset class
-    back_transforms = build_back_transforms_from_stats(
-                        hr_var              = cfg['highres']['variable'],
-                        hr_model            = cfg['highres']['model'],
-                        domain_str_hr       = full_domain_dims_str_hr,
-                        crop_region_str_hr  = crop_region_hr_str,
-                        hr_scaling_method   = cfg['highres']['scaling_method'],
-                        hr_buffer_frac      = cfg['highres']['buffer_frac'] if 'buffer_frac' in cfg['highres'] else 0.0,
-                        lr_vars             = cfg['lowres']['condition_variables'],
-                        lr_model            = cfg['lowres']['model'],
-                        domain_str_lr       = full_domain_dims_str_lr,
-                        crop_region_str_lr  = crop_region_lr_str,
-                        lr_scaling_methods  = cfg['lowres']['scaling_methods'],
-                        lr_buffer_frac      = cfg['lowres']['buffer_frac'] if 'buffer_frac' in cfg['lowres'] else 0.0,
-                        split               = cfg['transforms']['scaling_split'] if 'scaling_split' in cfg['transforms'] else 'train',
-                        stats_dir_root      = cfg['paths']['stats_load_dir'],
-                        eps                 = cfg['transforms'].get('prcp_eps', 0.01)
-                        )
+    # Back-transforms are only needed for visualization/back-conversion.
+    # During early Paper2 development (e.g. large-domain context), full-domain LR stats
+    # may not exist yet. In that case we fall back to the legacy LR crop stats (if available)
+    # so dataset/context tests can run.
+    back_transforms = None
+    try:
+        back_transforms = build_back_transforms_from_stats(
+                            hr_var              = cfg['highres']['variable'],
+                            hr_model            = cfg['highres']['model'],
+                            domain_str_hr       = full_domain_dims_str_hr,
+                            crop_region_str_hr  = crop_region_hr_str,
+                            hr_scaling_method   = cfg['highres']['scaling_method'],
+                            hr_buffer_frac      = cfg['highres']['buffer_frac'] if 'buffer_frac' in cfg['highres'] else 0.0,
+                            lr_vars             = cfg['lowres']['condition_variables'],
+                            lr_model            = cfg['lowres']['model'],
+                            domain_str_lr       = full_domain_dims_str_lr,
+                            crop_region_str_lr  = crop_region_lr_str,
+                            lr_scaling_methods  = cfg['lowres']['scaling_methods'],
+                            lr_buffer_frac      = cfg['lowres']['buffer_frac'] if 'buffer_frac' in cfg['lowres'] else 0.0,
+                            split               = cfg['transforms']['scaling_split'] if 'scaling_split' in cfg['transforms'] else 'train',
+                            stats_dir_root      = cfg['paths']['stats_load_dir'],
+                            eps                 = cfg['transforms'].get('prcp_eps', 0.01)
+                            )
+    except Exception as e:
+        # Common during Paper2 large-domain context tests: LR crop stats for full domain not computed yet.
+        logger.warning(
+            "[stats] Back-transform stats not found for crop_region_lr_str='%s'. Will try legacy LR cutout_domains stats. (err=%s)",
+            crop_region_lr_str,
+            str(e),
+        )
+        try:
+            legacy_lr_crop = cfg['lowres']['cutout_domains'] if cfg['lowres'].get('cutout_domains', None) is not None else None
+            if legacy_lr_crop is not None:
+                legacy_lr_crop_str = '_'.join(map(str, legacy_lr_crop))
+                back_transforms = build_back_transforms_from_stats(
+                                    hr_var              = cfg['highres']['variable'],
+                                    hr_model            = cfg['highres']['model'],
+                                    domain_str_hr       = full_domain_dims_str_hr,
+                                    crop_region_str_hr  = crop_region_hr_str,
+                                    hr_scaling_method   = cfg['highres']['scaling_method'],
+                                    hr_buffer_frac      = cfg['highres']['buffer_frac'] if 'buffer_frac' in cfg['highres'] else 0.0,
+                                    lr_vars             = cfg['lowres']['condition_variables'],
+                                    lr_model            = cfg['lowres']['model'],
+                                    domain_str_lr       = full_domain_dims_str_lr,
+                                    crop_region_str_lr  = legacy_lr_crop_str,
+                                    lr_scaling_methods  = cfg['lowres']['scaling_methods'],
+                                    lr_buffer_frac      = cfg['lowres']['buffer_frac'] if 'buffer_frac' in cfg['lowres'] else 0.0,
+                                    split               = cfg['transforms']['scaling_split'] if 'scaling_split' in cfg['transforms'] else 'train',
+                                    stats_dir_root      = cfg['paths']['stats_load_dir'],
+                                    eps                 = cfg['transforms'].get('prcp_eps', 0.01)
+                                    )
+                logger.warning(
+                    "[stats] Using legacy LR crop stats for crop_region_lr_str='%s' (from lowres.cutout_domains) as a fallback.",
+                    legacy_lr_crop_str,
+                )
+            else:
+                logger.warning("[stats] No legacy lowres.cutout_domains available; continuing without back_transforms.")
+        except Exception as e2:
+            logger.warning("[stats] Failed legacy LR stats fallback as well; continuing without back_transforms. (err=%s)", str(e2))
 
     if cfg['stationary_conditions']['geographic_conditions']['sample_w_sdf']:
         logger.info('SDF weighted loss enabled. Setting lsm and topo to true.\n')
@@ -215,7 +297,7 @@ def get_dataloader(cfg, verbose=True):
 
     # Setup cutouts. If cutout domains None, use default (170, 350, 340, 520) (DK area with room for shuffle)
     cutout_domains = tuple(cfg['highres']['cutout_domains']) if cfg['highres']['cutout_domains'] is not None else (170, 350, 340, 520)
-    lr_cutout_domains = tuple(cfg['lowres']['cutout_domains']) if cfg['lowres']['cutout_domains'] is not None else (170, 350, 340, 520)
+    lr_cutout_domains = lr_cutout_domains_eff
 
     # --- Stationary cutout geometry for TRAIN/VAL ---
     # Match YAML: highres.stationary_cutout / lowres.stationary_cutout use "enabled" + "bounds"
@@ -234,6 +316,34 @@ def get_dataloader(cfg, verbose=True):
     stationary_cutout_gen_lr = bool(eval_stationary_cfg.get('lr_enabled', stationary_cutout_lr))
     hr_bounds_gen = eval_stationary_cfg.get('hr_bounds', None)
     lr_bounds_gen = eval_stationary_cfg.get('lr_bounds', None)
+
+    # Paper2 large-domain context: evaluation/generation LR "stationary_cutout" bounds in the YAML
+    # are typically specified for the *co-located* 128x128 crop (HR/LR), but in large_domain mode
+    # `lr_data_size_use` can be much larger (e.g. 589x789). In that case, enforcing fixed LR bounds
+    # will fail the dataset validation. For now, disable fixed LR cutout for gen/eval in large_domain
+    # mode unless the bounds explicitly match the requested LR crop size.
+    if spatial_mode == 'large_domain':
+        if lr_bounds_gen is not None:
+            try:
+                # bounds are stored as [y0, y1, x0, x1] in configs
+                _b_h = int(lr_bounds_gen[1]) - int(lr_bounds_gen[0])
+                _b_w = int(lr_bounds_gen[3]) - int(lr_bounds_gen[2])
+                _lr_h, _lr_w = int(lr_data_size_use[0]), int(lr_data_size_use[1])
+                if (_b_h, _b_w) != (_lr_h, _lr_w):
+                    logger.info(
+                        "[paper2][spatial_context] large_domain: disabling gen/eval fixed LR cutout because lr_bounds_gen=%s (HxW=%sx%s) != lr_data_size_use=%s",
+                        lr_bounds_gen, _b_h, _b_w, lr_data_size_use,
+                    )
+                    stationary_cutout_gen_lr = False
+                    lr_bounds_gen = None
+            except Exception:
+                # safest fallback: don't enforce fixed LR bounds in large_domain mode
+                logger.info(
+                    "[paper2][spatial_context] large_domain: disabling gen/eval fixed LR cutout due to unreadable lr_bounds_gen=%s",
+                    lr_bounds_gen,
+                )
+                stationary_cutout_gen_lr = False
+                lr_bounds_gen = None
 
     # 2) If not set there, fall back to full_gen_eval.stationary_cutout (for new full evaluation driver)
     fg_cfg = cfg.get('full_gen_eval', {}) or {}

@@ -24,10 +24,42 @@ from sbgm.variable_utils import (
     get_color_for_model_cycle,
 )
 
-
 # Set up logging
 logger = logging.getLogger(__name__)
 
+
+# ------------------------------
+# Full-domain LSM cache (for LR context overlays)
+# ------------------------------
+_FULL_LSM_CACHE: dict[tuple[int, int, str], np.ndarray] = {}
+
+def _load_full_lsm(cfg: dict) -> np.ndarray | None:
+    """
+    Load the raw full-domain LSM (H,W) from cfg['paths']['lsm_path'] or DATA_DIR fallback.
+    Returns array in the same orientation as your plotted fields (already flipud in data loading).
+    """
+    try:
+        p = None
+        if isinstance(cfg, dict):
+            p = cfg.get("paths", {}).get("lsm_path", None)
+        if p is None:
+            base = os.environ.get("DATA_DIR", None)
+            if base is None:
+                return None
+            p = os.path.join(base, "data_lsm/truth_fullDomain/lsm_full.npz")
+
+        if not os.path.exists(p):
+            return None
+
+        d = np.load(p, allow_pickle=True)
+        key = "data" if "data" in getattr(d, "files", []) else d.files[0]
+        arr = np.asarray(d[key])
+        arr = np.squeeze(arr)
+        # Match your data loading convention (you do np.flipud when reading lsm_full_domain)
+        arr = np.flipud(arr).copy()
+        return arr
+    except Exception:
+        return None
 
 # ==============================
 # Visualization helpers
@@ -448,15 +480,22 @@ def imshow_variable(
         m = np.asarray(lsm_mask)
         if m.ndim != 2:
             m = np.squeeze(m)
-        ocean_mask = (m < 0.5)
-        _overlay_ocean_background(
-            ax,
-            ocean_mask,
-            style=ocean_background,
-            facecolor=ocean_facecolor,
-            hatch=ocean_hatch,
-            alpha=ocean_alpha,
-        )
+        # Only use the provided mask if it matches the plotted field.
+        # In Paper2 large-domain context, LR panels can be 589x789 while lsm_hr is 128x128.
+        # In that case, silently skip ocean masking/background instead of crashing.
+        if m.shape == arr.shape:
+            ocean_mask = (m < 0.5)
+            _overlay_ocean_background(
+                ax,
+                ocean_mask,
+                style=ocean_background,
+                facecolor=ocean_facecolor,
+                hatch=ocean_hatch,
+                alpha=ocean_alpha,
+            )
+        else:
+            ocean_mask = None
+
 
     # Precipitation exact-zero handling
     is_prcp = _is_precip_var(variable)
@@ -501,25 +540,107 @@ def imshow_variable(
     else:
         im = ax.imshow(arr, cmap=cm_obj, vmin=vmin_arg, vmax=vmax_arg, norm=norm, interpolation="nearest", origin="lower")
 
-    # Outline overlay
+    # --- If provided lsm_mask doesn't match the plotted array, don't use it
+    if lsm_mask is not None:
+        mm = np.asarray(lsm_mask)
+        mm = np.squeeze(mm)
+        if mm.ndim == 2 and mm.shape != arr.shape:
+            lsm_mask = None  # prevent tiny-mask-in-corner artifacts
+
+    # --- Paper2 large_domain: if we're plotting LR context (e.g. 589x789), use full-domain LSM
+    if lsm_mask is None and isinstance(cfg, dict):
+        paper2 = cfg.get("paper2", {}) or {}
+        scfg = paper2.get("spatial_context", {}) or {}
+        if str(scfg.get("mode", "")).lower() == "large_domain":
+            lr_ctx = scfg.get("lr_context_size", None)
+            if lr_ctx is not None:
+                lr_ctx = tuple(lr_ctx)  # [H,W]
+                if tuple(arr.shape) == lr_ctx:
+                    cache_key = (arr.shape[0], arr.shape[1], str(cfg.get("paths", {}).get("lsm_path", "")))
+                    if cache_key in _FULL_LSM_CACHE:
+                        lsm_mask = _FULL_LSM_CACHE[cache_key]
+                    else:
+                        full_lsm = _load_full_lsm(cfg)
+                        if full_lsm is not None and tuple(full_lsm.shape) == tuple(arr.shape):
+                            _FULL_LSM_CACHE[cache_key] = full_lsm
+                            lsm_mask = full_lsm
+
+    # ------------------------------------------------------------
+    # Outline / land-sea context handling
+    # ------------------------------------------------------------
+
+    # 1) If provided lsm_mask doesn't match the plotted field shape, discard it
+    #    (prevents tiny Denmark-in-corner artifacts when LR is 589x789 but lsm_hr is 128x128)
+    if lsm_mask is not None:
+        mm = np.asarray(lsm_mask)
+        mm = np.squeeze(mm)
+        if mm.ndim == 2 and mm.shape != arr.shape:
+            lsm_mask = None
+
+    # 2) Detect Paper2 large_domain LR-context panel shape
+    lr_ctx_shape = None
+    if isinstance(cfg, dict):
+        paper2 = cfg.get("paper2", {}) or {}
+        scfg = paper2.get("spatial_context", {}) or {}
+        if str(scfg.get("mode", "")).lower() == "large_domain":
+            lr_ctx = scfg.get("lr_context_size", None)
+            if lr_ctx is not None:
+                lr_ctx_shape = tuple(lr_ctx)
+
+    # Check if this panel matches the LR-context shape (e.g. 589x789) where we want to use the full-domain LSM for
+    is_lr_context_panel = (lr_ctx_shape is not None and tuple(arr.shape) == tuple(lr_ctx_shape))
+
+    # 3) If this is an LR-context panel and we have no matching lsm_mask, load full-domain LSM for outlines/masking
+    if lsm_mask is None and is_lr_context_panel and isinstance(cfg, dict):
+        print("[DEBUG] imshow_variable: LR context panel (variable=%s, shape=%s) with no LSM provided; attempting to load full-domain LSM for outlines/masking.", variable, arr.shape)
+        try:
+            cache_key = (arr.shape[0], arr.shape[1], str(cfg.get("paths", {}).get("lsm_path", "")))
+            if cache_key in _FULL_LSM_CACHE:
+                lsm_mask = _FULL_LSM_CACHE[cache_key]
+            else:
+                full_lsm = _load_full_lsm(cfg)  # must return (H,W) matching full domain, already flipped consistently
+                if full_lsm is not None and tuple(full_lsm.shape) == tuple(arr.shape):
+                    _FULL_LSM_CACHE[cache_key] = full_lsm
+                    lsm_mask = full_lsm
+        except Exception:
+            pass
+
+    # 4) Outline selection rules:
+    #    - LR context panels: outline comes from full-domain LSM (lsm_mask)
+    #    - Non-LR-context panels: outline comes from DK outline for `bounds` (or matching lsm_mask if present)
+    # If variable is topo or lsm, skip outline since it's redundant with the data
+    if variable in ("topo", "lsm", "land_sea_mask", "mask"):
+        add_outline = False
+
     if add_outline:
         mask_for_outline = None
-        if lsm_mask is not None:
+
+        # LR context: prefer full-domain LSM (must match)
+        if is_lr_context_panel and lsm_mask is not None:
             mm = np.asarray(lsm_mask)
-            if mm.ndim != 2:
-                mm = np.squeeze(mm)
-            mask_for_outline = mm
-        else:
-            mask_for_outline = get_dk_lsm_outline(
-                bounds,
-                base=cfg.get("paths", {}).get("data_dir", None) if isinstance(cfg, dict) else None,
-            )
-            if mask_for_outline is not None:
-                mask_for_outline = np.flipud(mask_for_outline)
+            mm = np.squeeze(mm)
+            if mm.ndim == 2 and mm.shape == arr.shape:
+                mask_for_outline = mm
+
+        # Non-LR-context: prefer DK outline (must match arr)
+        if mask_for_outline is None:
+            dk = get_dk_lsm_outline(bounds=bounds)
+            if dk is not None:
+                dk = np.asarray(dk)
+                dk = np.squeeze(dk)
+                if dk.ndim == 2 and dk.shape == arr.shape:
+                    mask_for_outline = dk
+
+        # Final fallback: any matching lsm_mask
+        if mask_for_outline is None and lsm_mask is not None and (not is_lr_context_panel):
+            mm = np.asarray(lsm_mask)
+            mm = np.squeeze(mm)
+            if mm.ndim == 2 and mm.shape == arr.shape:
+                mask_for_outline = mm
 
         if mask_for_outline is not None:
             _overlay_landsea_outline(ax, mask_for_outline, color=outline_color, linewidth=outline_linewidth)
-
+    ax.set_aspect("equal", adjustable="box")
     ax.set_xticks([])
     ax.set_yticks([])
     return im
@@ -926,7 +1047,9 @@ def plot_sample(sample, cfg, figsize=None):
             lsm_for_plot = lsm_for_plot.detach().cpu().numpy().squeeze()
         elif lsm_for_plot is not None:
             lsm_for_plot = np.asarray(lsm_for_plot).squeeze()
-
+        add_outline = True
+        if var in ["lsm", "topo", "sdf"]:
+            add_outline = False  # these variables are their own context; outline would be redundant/noisy
         im = imshow_variable(
             ax,
             img,
@@ -934,7 +1057,7 @@ def plot_sample(sample, cfg, figsize=None):
             vmin=vmin,
             vmax=vmax,
             cmap=cmap,
-            add_outline=True,
+            add_outline=add_outline,
             show_ocean=bool(show_ocean_panel),
             lsm_mask=lsm_for_plot,
             cfg=cfg,
@@ -964,16 +1087,15 @@ def plot_sample(sample, cfg, figsize=None):
             except Exception as e:
                 logger.debug(f"LR ocean overlay failed on {key}: {e}")
 
-        # optional land/sea contour
-        if overlay_lsm_contour and ((key.endswith('_hr') or key.endswith('_hr_original')) or
-                                    (key.endswith('_lr') or key.endswith('_lr_original'))):
-            if "lsm_hr" in sample and sample["lsm_hr"] is not None:
-                m = sample["lsm_hr"]
-                m = m.squeeze().detach().cpu().numpy() if torch.is_tensor(m) else np.asarray(m).squeeze()
-                try:
-                    ax.contour(np.array(m, copy=False).astype(float, copy=False), levels=[0.5], colors="darkgrey", linewidths=0.8)
-                except Exception as e:
-                    logger.warning(f"LSM contour failed on {key}: {e}")
+        # # optional land/sea contour
+        # if overlay_lsm_contour and ((key.endswith('_hr') or key.endswith('_hr_original'))) and (lsm_for_plot is not None):
+        #     if "lsm_hr" in sample and sample["lsm_hr"] is not None:
+        #         m = sample["lsm_hr"]
+        #         m = m.squeeze().detach().cpu().numpy() if torch.is_tensor(m) else np.asarray(m).squeeze()
+        #         try:
+        #             ax.contour(np.array(m, copy=False).astype(float, copy=False), levels=[0.5], colors="darkgrey", linewidths=0.8)
+        #         except Exception as e:
+        #             logger.warning(f"LSM contour failed on {key}: {e}")
 
         # colorbar + optional per-panel boxplot (use shared helper)
         add_boxplot_per_panel = bool(cfg_vis.get('add_boxplot_per_panel', True))

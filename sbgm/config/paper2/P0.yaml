@@ -33,7 +33,7 @@ paths:
 
 paper2:
   spatial_context:
-    mode: colocated # colocated | large_domain
+    mode: large_domain # colocated | large_domain
     lr_context_size: [589, 789] # The size of the raw LR context field loaded before context encoding (e.g. 589x789 for full domain, or smaller if pre-cropping to a sub-domain). 
     encoder:
       enabled: true
@@ -62,8 +62,8 @@ highres:
 lowres:
   model: ERA5 # Model type for low-resolution data
   full_domain_dims: [589, 789]
-  condition_variables: ["prcp"] # ["temp", "prcp"] # Variables for conditioning
-  scaling_methods: ["log_zscore"] #["zscore", "log_zscore"] # Scaling methods for low-res data
+  condition_variables: ["prcp", "temp"] # ["temp", "prcp"] # Variables for conditioning
+  scaling_methods: ["log_zscore", "zscore"] #["zscore", "log_zscore"] # Scaling methods for low-res data
   dual_lr: false # Whether to use dual (one scaled w. global (HR+LR) statistics, one with LR stats) low-res (prcp or temp) data. When true, LR parsed in two channels, one scaled w. LR stats, one w. HR+LR stats
   lr_main_var_scale: "LR" # Which statistics to use for scaling the main low-res variable (prcp or temp) when dual_lr is False ("LR": lr only, "HR": hr only, "HR_LR": both)
   lr_main_var_scale_method: "log_zscore" # Which scaling method to use for the main low-res variable (prcp or temp) when dual_lr is False
@@ -94,7 +94,7 @@ data_handling:
   pin_memory: true # Whether to pin memory for faster data transfer
 
 transforms:
-  scaling: true # Whether to apply scaling
+  scaling: false # Whether to apply scaling
   scaling_split: train # Which data split to use for computing scaling statistics (train, valid, test or all)
   force_matching_scale: false # Whether to force matching scale
   sample_w_cutouts: true # Whether to sample with cutouts

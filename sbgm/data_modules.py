@@ -2,6 +2,9 @@
     Script for generating a pytorch dataset for the DANRA data.
     The dataset can be used for training and testing the SBGM_SD model.
 
+    NOTE:
+        - All crop bounds are interprested as [ x1, x2, y1, y2 ] and slicing is done as [y1:y2, x1:x2] to be consistent with the (H, W) shape convention of the data.
+
     TODO:
         - Add static sampling (no crop + shift) option (fixed cutout)
         - Add multiple cutout domains (Northern Germany, Poland, Netherlands etc.)
@@ -668,9 +671,10 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                 self.fixed_cutout_hr = False
                 logger.warning('Fixed cutout for HR is set to True, but fixed_hr_bounds is not provided or invalid. Setting fixed_cutout_hr to False.')
             else:
-                # Check that the bounds are valid
-                if (self.fixed_hr_bounds[1] - self.fixed_hr_bounds[0] != self.hr_data_size[1]) or (self.fixed_hr_bounds[3] - self.fixed_hr_bounds[2] != self.hr_data_size[0]):
-                    raise ValueError('Fixed HR cutout bounds are not valid. They must match the HR data size.')
+                # Check that the bounds are valid, bounds: [y0, y1, x0, x1], size: (H, W)
+                if (self.fixed_hr_bounds[1] - self.fixed_hr_bounds[0] != self.hr_data_size[0]) or \
+                (self.fixed_hr_bounds[3] - self.fixed_hr_bounds[2] != self.hr_data_size[1]):
+                    raise ValueError("Fixed HR cutout bounds are not valid. They must match the HR data size (H,W).")
                 else:
                     logger.info(f'Using fixed cutout for HR with bounds: {self.fixed_hr_bounds}')
         else:
@@ -684,9 +688,9 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                 self.fixed_cutout_lr = False
                 logger.warning('Fixed cutout for LR is set to True, but fixed_lr_bounds is not provided or invalid. Setting fixed_cutout_lr to False.')
             else:
-                # Check that the bounds are valid
-                if (self.fixed_lr_bounds[1] - self.fixed_lr_bounds[0] != self.target_lr_size[1]) or (self.fixed_lr_bounds[3] - self.fixed_lr_bounds[2] != self.target_lr_size[0]):
-                    raise ValueError('Fixed LR cutout bounds are not valid. They must match the target LR data size.')
+                # Check that the bounds are valid, bounds: [y0, y1, x0, x1], size: (H, W)
+                if (self.fixed_lr_bounds[1] - self.fixed_lr_bounds[0] != self.target_lr_size[0]) or (self.fixed_lr_bounds[3] - self.fixed_lr_bounds[2] != self.target_lr_size[1]):
+                    raise ValueError('Fixed LR cutout bounds are not valid. They must match the target LR data size (H,W).')
                 else:
                     logger.info(f'Using fixed cutout for LR with bounds: {self.fixed_lr_bounds}')
         else:
@@ -788,12 +792,72 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
             domain_str_lr = f"{cfg['lowres']['full_domain_dims'][0]}x{cfg['lowres']['full_domain_dims'][1]}" if cfg is not None else f"{self.target_lr_size[0]}x{self.target_lr_size[1]}"
             crop_region_hr = cfg['highres']['cutout_domains'] if (cfg is not None and self.cutouts and self.hr_cutout_domains is not None) else "full"
             crop_region_hr_str = '_'.join(map(str, crop_region_hr)) # if (cfg is not None and self.cutouts and self.hr_cutout_domains is not None) else "full"
-            crop_region_lr = cfg['lowres']['cutout_domains'] if (cfg is not None and self.cutouts and self.lr_cutout_domains is not None) else "full"
+            crop_region_lr = self.lr_cutout_domains if (cfg is not None and self.cutouts and self.lr_cutout_domains is not None) else "full"
             crop_region_lr_str = '_'.join(map(str, crop_region_lr)) # if (cfg is not None and self.cutouts and self.lr_cutout_domains is not None) else "full"
             scaling_split = self.scaling_split
             stats_load_dir = cfg['paths']['stats_load_dir'] if cfg is not None else './stats'
             self.hr_buffer_frac = cfg['highres'].get('buffer_frac', 0.00) if cfg is not None and 'highres' in cfg else 0.00
             self.lr_buffer_frac = cfg['lowres'].get('buffer_frac', 0.00) if cfg is not None and 'lowres' in cfg else 0.00
+
+            # ------------------------------------------------------------
+            # Paper2 dev support: large-domain LR context may not yet have
+            # stats computed for the full-domain crop (e.g. 0_789_0_589).
+            # In that case, optionally fall back to legacy LR crop stats
+            # (typically lowres.cutout_domains) so dataset context tests can run.
+            # NOTE: This is NOT scientifically correct normalization for large-domain
+            # training; compute full-domain stats before running real experiments.
+            # ------------------------------------------------------------
+            paper2_cfg = (cfg or {}).get('paper2', {}) or {}
+            spatial_cfg = paper2_cfg.get('spatial_context', {}) or {}
+            spatial_mode = spatial_cfg.get('mode', None)
+            allow_legacy_stats_fallback = (spatial_mode == 'large_domain')
+
+            legacy_lr_crop = None
+            legacy_lr_crop_str = None
+            try:
+                legacy_lr_crop = (cfg or {}).get('lowres', {}).get('cutout_domains', None)
+                if legacy_lr_crop is not None:
+                    legacy_lr_crop_str = '_'.join(map(str, legacy_lr_crop))
+            except Exception:
+                legacy_lr_crop = None
+                legacy_lr_crop_str = None
+
+            def _get_tf_from_stats_safe(*, variable: str, model: str, domain_str: str, crop_region_str: str,
+                                       scaling_split: str, transform_type: str, buffer_frac: float,
+                                       stats_file_path: str, eps: float,
+                                       fallback_crop_region_str: str | None = None):
+                """Wrapper around get_transforms_from_stats with optional legacy crop fallback."""
+                try:
+                    return get_transforms_from_stats(
+                        variable=variable,
+                        model=model,
+                        domain_str=domain_str,
+                        crop_region_str=crop_region_str,
+                        scaling_split=scaling_split,
+                        transform_type=transform_type,
+                        buffer_frac=buffer_frac,
+                        stats_file_path=stats_file_path,
+                        eps=eps,
+                    )
+                except Exception as e1:
+                    if allow_legacy_stats_fallback and fallback_crop_region_str is not None and fallback_crop_region_str != crop_region_str:
+                        logger.warning(
+                            "[stats] Missing stats for %s/%s crop=%s domain=%s. Falling back to legacy crop=%s (Paper2 large_domain dev only). err=%s",
+                            model, variable, crop_region_str, domain_str, fallback_crop_region_str, str(e1)
+                        )
+                        return get_transforms_from_stats(
+                            variable=variable,
+                            model=model,
+                            domain_str=domain_str,
+                            crop_region_str=fallback_crop_region_str,
+                            scaling_split=scaling_split,
+                            transform_type=transform_type,
+                            buffer_frac=buffer_frac,
+                            stats_file_path=stats_file_path,
+                            eps=eps,
+                        )
+                    raise
+
 
             for cond_var, trans_type in zip(self.lr_conditions, self.lr_scaling_methods):
                 logger.info(f"LR condition: {cond_var}, scaling method: {trans_type}")
@@ -828,7 +892,7 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
 
                     try:
                         t_main = transforms.Compose(prefix + [
-                            get_transforms_from_stats(
+                            _get_tf_from_stats_safe(
                                 variable=cond_var,
                                 model=stats_model_A,
                                 domain_str=ds_A,
@@ -838,6 +902,7 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                                 buffer_frac=buffer_A,
                                 stats_file_path=stats_load_dir,
                                 eps=eps_val,
+                                fallback_crop_region_str=legacy_lr_crop_str if stats_model_A == self.lr_model else None,                                
                             )
                         ])
                         logger.info(f"Dual-LR channel A (main) for '{cond_var}' scaled using '{scale_mode}' stats from model '{stats_model_A}'.")
@@ -845,7 +910,7 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                         if scale_mode in ("HR_LR", "LR_HR", "COMBINED", "BOTH"):
                             logger.warning(f"Dual-LR: combined stats '{stats_model_A}' not found for '{cond_var}'. Falling back to HR stats. Error: {e}")
                             t_main = transforms.Compose(prefix + [
-                                get_transforms_from_stats(
+                                _get_tf_from_stats_safe(
                                     variable=cond_var,
                                     model=self.hr_model,
                                     domain_str=domain_str_hr,
@@ -855,12 +920,13 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                                     buffer_frac=self.hr_buffer_frac,
                                     stats_file_path=stats_load_dir,
                                     eps=eps_val,
+                                    fallback_crop_region_str=None,
                                 )
                             ])
                         else:
                             logger.warning(f"Dual-LR: requested stats '{stats_model_A}' not found for '{cond_var}'. Falling back to LR stats. Error: {e}")
                             t_main = transforms.Compose(prefix + [
-                                get_transforms_from_stats(
+                                _get_tf_from_stats_safe(
                                     variable=cond_var,
                                     model=self.lr_model,
                                     domain_str=domain_str_lr,
@@ -870,12 +936,13 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                                     buffer_frac=self.lr_buffer_frac,
                                     stats_file_path=stats_load_dir,
                                     eps=eps_val,
+                                    fallback_crop_region_str=legacy_lr_crop_str,
                                 )
                             ])
 
                     # Channel B: LR-only stats
                     t_lr_only = transforms.Compose(prefix + [
-                        get_transforms_from_stats(
+                        _get_tf_from_stats_safe(
                             variable=cond_var,
                             model=self.lr_model,
                             domain_str=domain_str_lr,
@@ -885,6 +952,7 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                             buffer_frac=self.lr_buffer_frac,
                             stats_file_path=stats_load_dir,
                             eps=eps_val,
+                            fallback_crop_region_str=legacy_lr_crop_str,
                         )
                     ])
 
@@ -904,7 +972,7 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                         ds, cr = domain_str_lr, crop_region_lr_str # NOTE: Need to consider with different domain sizes
                     try:
                         transform_list = prefix + [
-                            get_transforms_from_stats(
+                            _get_tf_from_stats_safe(
                                 variable=cond_var,
                                 model=stats_model,
                                 domain_str=ds,
@@ -914,6 +982,7 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                                 buffer_frac=self.lr_buffer_frac,
                                 stats_file_path=stats_load_dir,
                                 eps=eps_val,
+                                fallback_crop_region_str=legacy_lr_crop_str if stats_model == self.lr_model else None,
                             )
                         ]
                         logger.info(f"Main LR condition '{cond_var}' scaled using '{scale_mode}' stats from model '{stats_model}'.")
@@ -922,7 +991,7 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                         if scale_mode == 'HR_LR':
                             logger.warning(f"Combined stats '{stats_model}' not found for main condition '{cond_var}'. Falling back to HR stats. Error: {e}")
                             transform_list = prefix + [
-                                get_transforms_from_stats(
+                                _get_tf_from_stats_safe(
                                     variable=cond_var,
                                     model=self.hr_model,
                                     domain_str=domain_str_hr,
@@ -932,12 +1001,13 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                                     buffer_frac=self.hr_buffer_frac,
                                     stats_file_path=stats_load_dir,
                                     eps=eps_val,
+                                    fallback_crop_region_str=None,
                                 )
                             ]
                         else:
                             logger.warning(f"Requested stats '{stats_model}' not found for main condition '{cond_var}'. Falling back to LR stats. Error: {e}")
                             transform_list = prefix + [
-                                get_transforms_from_stats(
+                                _get_tf_from_stats_safe(
                                     variable=cond_var,
                                     model=self.lr_model,
                                     domain_str=domain_str_lr,
@@ -947,13 +1017,14 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                                     buffer_frac=self.lr_buffer_frac,
                                     stats_file_path=stats_load_dir,
                                     eps=eps_val,
+                                    fallback_crop_region_str=legacy_lr_crop_str
                                 )
                             ]
                     self.lr_transforms_dict[cond_var] = transforms.Compose(transform_list)
                 else:
                     # Not main condition - standard single-channel LR-only stats
                     transform_list = prefix + [
-                        get_transforms_from_stats(
+                        _get_tf_from_stats_safe(
                             variable=cond_var,
                             model=self.lr_model,
                             domain_str=domain_str_lr,
@@ -963,6 +1034,7 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                             buffer_frac=self.lr_buffer_frac,
                             stats_file_path=stats_load_dir,
                             eps=eps_val,
+                            fallback_crop_region_str=legacy_lr_crop_str
                         )
                     ]
                     self.lr_transforms_dict[cond_var] = transforms.Compose(transform_list)
@@ -988,7 +1060,7 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                 SafeToTensor(),
                 ResizeTensor(self.hr_size_reduced)
             ]
-            hr_transform_list.append(get_transforms_from_stats(
+            hr_transform_list.append(_get_tf_from_stats_safe(
                 variable=self.hr_variable,
                 model=self.hr_model,
                 domain_str=domain_str_hr,
@@ -998,6 +1070,7 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                 buffer_frac=self.hr_buffer_frac,
                 stats_file_path=stats_load_dir,
                 eps=self.glob_prcp_epsilon if self.hr_variable in ['prcp', 'tp'] else 0.0,
+                fallback_crop_region_str=None
             ))
             self.hr_transform = transforms.Compose(hr_transform_list)
         
@@ -1072,18 +1145,21 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
     @staticmethod
     def _map_point_to_size(point, src_size, dst_size):
         """
-            Map a crop point [x1, x2, y1, y2] from src_size=(H,W) by scale factors.
-            Always returns integers, preserving order [x1_new, x2_new, y1_new, y2_new].
+            Map a crop point [y1, y2, x1, x2] from src_size=(H,W) by scale factors.
+            Always returns integers, preserving order [y1_new, y2_new, x1_new, x2_new].
         """
         if src_size == dst_size:
             return point
-        sx = dst_size[1] / float(src_size[1]) # Width scale factor
-        sy = dst_size[0] / float(src_size[0]) # Height scale factor
-        x1 = int(round(point[0] * sx))
-        x2 = int(round(point[1] * sx))
-        y1 = int(round(point[2] * sy))
-        y2 = int(round(point[3] * sy))
-        return [x1, x2, y1, y2]
+
+        # src_size/dst_size are (H, W)
+        sy = dst_size[0] / float(src_size[0])  # height (rows)
+        sx = dst_size[1] / float(src_size[1])  # width  (cols)
+
+        y1 = int(round(point[0] * sy))
+        y2 = int(round(point[1] * sy))
+        x1 = int(round(point[2] * sx))
+        x2 = int(round(point[3] * sx))
+        return [y1, y2, x1, x2]
     
     @staticmethod
     def _valid_bounds(b):
@@ -1094,8 +1170,8 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
             Decide (hr_point, lr_point) with independent fixed-cutout knobs. Based on HR and LR ROI domains. (ROI = region of interest)
 
             Conventions:
-            - Points are [x1, x2, y1, y2] in pixel indices on their *native* grids.
-            - Slicing is [y1:y2, x1:x2] elsewhere in the code.
+            - Points are [y1, y2, x1, x2] in pixel indices on their *native* grids.
+            - Slicing is always [y1:y2, x1:x2]
             - self.hr_data_size = (H_hr, W_hr); self.target_lr_size = (H_lr, W_lr).
 
             Priority:
@@ -1150,9 +1226,9 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                 if not self.cutouts:
                     hr_point = None
                 else:
-                    hr_point = find_rand_points(self.hr_cutout_domains, self.hr_data_size)
-                    # NOTE: If you *want* forced co-location even for different named domains,
-                    # replace the line above with the mapping call and accept possible mismatch.
+                    crop_w_h = (int(self.hr_data_size[1]), int(self.hr_data_size[0]))  # (W, H)
+                    x1, x2, y1, y2 = find_rand_points(self.hr_cutout_domains, crop_w_h)
+                    hr_point = [y1, y2, x1, x2]
             return hr_point, lr_point
 
         # Warn once if LR was requested fixed but bounds invalid
@@ -1175,7 +1251,9 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
             if (self.lr_cutout_domains is None) or domains_same:
                 lr_point = self._map_point_to_size(hr_point, self.hr_data_size, self.target_lr_size)
             else:
-                lr_point = find_rand_points(self.lr_cutout_domains, self.target_lr_size)
+                crop_w_h = (int(self.target_lr_size[1]), int(self.target_lr_size[0]))  # (W, H)
+                x1, x2, y1, y2 = find_rand_points(self.lr_cutout_domains, crop_w_h)
+                lr_point = [y1, y2, x1, x2]
 
         return hr_point, lr_point
 
@@ -1317,7 +1395,7 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
             
             # Crop LR data using lr_point if cutouts are enabled and lr_point is not None
             if self.cutouts and data is not None and lr_point is not None:
-                # lr_point is in format [x1, x2, y1, y2]
+                # lr_point is [y1, y2, x1, x2]; numpy slicing is [y1:y2, x1:x2]
                 data = data[lr_point[0]:lr_point[1], lr_point[2]:lr_point[3]]
                 logger.debug(f"Cropped {cond} data to shape {data.shape} using lr_point {lr_point}")
             # logger.debug(f"Data shape for {cond}: {data.shape if data is not None else None}")
@@ -1343,6 +1421,7 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
             hr = None
 
         if self.cutouts and (hr is not None) and (hr_point is not None):
+            # hr_point is [y1, y2, x1, x2]; tensor slicing is [y1:y2, x1:x2]
             hr = hr[hr_point[0]:hr_point[1], hr_point[2]:hr_point[3]]
             logger.debug(f"Cropped HR data to shape {hr.shape} using hr_point {hr_point}")
         if self.save_original and (hr is not None):
@@ -1389,12 +1468,22 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                     geo_data = None
                     geo_transform = None
                 if geo_data is not None and self.cutouts:
-                    # For geo data, if an LR-specific size and domain are provided, use lr_point
-                    if self.lr_data_size is not None and self.lr_cutout_domains is not None and lr_point is not None:
-                        geo_data = geo_data[lr_point[0]:lr_point[1], lr_point[2]:lr_point[3]]
-                    else:
+                    # In Paper2 large-domain mode, LR fields can be large-domain, but static geo should be HR-local.
+                    spatial_mode = None
+                    if self.cfg is not None:
+                        spatial_mode = (self.cfg.get("paper2", {}) or {}).get("spatial_context", {}).get("mode", None)
+
+                    if spatial_mode == "large_domain":
+                        # Always crop geo to the HR target region
                         if hr_point is not None:
                             geo_data = geo_data[hr_point[0]:hr_point[1], hr_point[2]:hr_point[3]]
+                    else:
+                        # Legacy behavior
+                        if self.lr_data_size is not None and self.lr_cutout_domains is not None and lr_point is not None:
+                            geo_data = geo_data[lr_point[0]:lr_point[1], lr_point[2]:lr_point[3]]
+                        else:
+                            if hr_point is not None:
+                                geo_data = geo_data[hr_point[0]:hr_point[1], hr_point[2]:hr_point[3]]
                 
                 if geo_data is not None and geo_transform is not None:
                     geo_data = geo_transform(geo_data)
