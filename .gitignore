@@ -27,7 +27,8 @@ lumi_private/
 repro_private/
 era5_download_pipeline/slurm_private/
 data_analysis_pipeline_private/
-era5_download_pipeline_private
+era5_download_pipeline_private/
+runs/
 
 # NEED TO UPDATE BELOW THIS LINE BASED ON PROJECT NEEDS
 # # Build / packaging
