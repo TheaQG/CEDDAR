@@ -37,6 +37,7 @@ paper2:
     lr_context_size: [589, 789] # The size of the raw LR context field loaded before context encoding (e.g. 589x789 for full domain, or smaller if pre-cropping to a sub-domain). 
     encoder:
       enabled: true
+      input_mode: context_plus_local # context_only | context_plus_local
       c_out: 32
       depth: 3
       base_channels: 16
