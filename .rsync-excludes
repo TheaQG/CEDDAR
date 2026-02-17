@@ -2,6 +2,11 @@
 models_and_samples/
 data_examples/
 data_analysis_pipeline/saved/
+runs/
+figures/
+repro/
+repro_private/
+bash_paper1/
 
 # logs
 logs/
