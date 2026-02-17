@@ -20,6 +20,163 @@ import functools
 logger = logging.getLogger(__name__)
 
 
+class ContextEncoder(nn.Module):
+    """Spatial (and optional temporal) context encoder.
+
+    Goal:
+      Compress large-domain LR fields (e.g. 589x789) into a compact feature map at HR size
+      (typically 128x128) for conditioning the main UNet.
+
+    Key design choices:
+      - Shared CNN trunk across variables and times (cheap, stable)
+      - Variable-ID conditioning via FiLM (per-variable modulation without separate encoders)
+      - Simple aggregation over variables and time (mean), so the downstream UNet does the heavy lifting
+
+    Expected input:
+      x: [B, T, V, H_lr, W_lr]
+
+    Output:
+      ctx: [B, c_out, H_tgt, W_tgt]
+
+    Notes:
+      - Provide `var_ids` (Long) to identify variables. If omitted, assumes variables are ordered 0..V-1.
+      - `num_vars` should be set >= V.
+
+    """
+
+    def __init__(
+        self,
+        *,
+        num_vars: int,
+        c_in: int = 1,
+        c_out: int = 32,
+        base_channels: int = 16,
+        depth: int = 3,
+        target_size: tuple[int, int] = (128, 128),
+        gn_groups: int = 8,
+    ):
+        super().__init__()
+
+        if num_vars <= 0:
+            raise ValueError(f"ContextEncoder: num_vars must be > 0, got {num_vars}")
+        if depth <= 0:
+            raise ValueError(f"ContextEncoder: depth must be > 0, got {depth}")
+        if base_channels <= 0:
+            raise ValueError(f"ContextEncoder: base_channels must be > 0, got {base_channels}")
+
+        self.num_vars = int(num_vars)
+        self.c_in = int(c_in)
+        self.c_out = int(c_out)
+        self.base_channels = int(base_channels)
+        self.depth = int(depth)
+        self.target_size = tuple(target_size)
+
+        # Variable-ID embedding -> FiLM (gamma,beta) per block
+        # Keep embedding small; it only modulates shared conv features.
+        emb_dim = max(8, base_channels)
+        self.var_emb = nn.Embedding(self.num_vars, emb_dim)
+
+        # Stem: project single-channel field to base_channels
+        self.stem = nn.Conv2d(self.c_in, self.base_channels, kernel_size=3, padding=1)
+
+        # Repeated conv blocks (shared)
+        self.blocks = nn.ModuleList()
+        self.film = nn.ModuleList()
+        for _ in range(self.depth):
+            self.blocks.append(
+                nn.Sequential(
+                    nn.Conv2d(self.base_channels, self.base_channels, kernel_size=3, padding=1),
+                    nn.GroupNorm(num_groups=min(gn_groups, self.base_channels), num_channels=self.base_channels),
+                    nn.SiLU(),
+                    nn.Conv2d(self.base_channels, self.base_channels, kernel_size=3, padding=1),
+                    nn.GroupNorm(num_groups=min(gn_groups, self.base_channels), num_channels=self.base_channels),
+                )
+            )
+            # Map var embedding -> (gamma,beta) for FiLM
+            self.film.append(nn.Linear(emb_dim, 2 * self.base_channels))
+
+        self.act = nn.SiLU()
+        self.proj = nn.Conv2d(self.base_channels, self.c_out, kernel_size=1)
+
+    def _apply_film(self, h: torch.Tensor, var_id: torch.Tensor, idx: int) -> torch.Tensor:
+        """FiLM: h <- (1+gamma) * h + beta, broadcasting over H,W."""
+        # var_id: [N] (N = B*T*V)
+        e = self.var_emb(var_id)  # [N, emb_dim]
+        gb = self.film[idx](e)    # [N, 2C]
+        gamma, beta = gb.chunk(2, dim=-1)
+        gamma = gamma.view(-1, self.base_channels, 1, 1)
+        beta = beta.view(-1, self.base_channels, 1, 1)
+        return (1.0 + gamma) * h + beta
+
+    def forward(self, x: torch.Tensor, *, var_ids: torch.Tensor | None = None) -> torch.Tensor:
+        """Forward.
+
+        Args:
+          x: [B, T, V, H, W]
+          var_ids: optional LongTensor identifying variables.
+              Accepts:
+                - shape [V] (preferred)
+                - shape [B, T, V] (will be flattened)
+
+        Returns:
+          ctx: [B, c_out, H_tgt, W_tgt]
+        """
+        if x.ndim != 5:
+            raise ValueError(f"ContextEncoder expected x with shape [B,T,V,H,W], got {tuple(x.shape)}")
+
+        B, T, V, H, W = x.shape
+
+        # Build var_ids
+        if var_ids is None:
+            var_ids = torch.arange(V, device=x.device, dtype=torch.long)
+        if var_ids.dtype not in (torch.long, torch.int64):
+            var_ids = var_ids.long()
+
+        if var_ids.ndim == 1:
+            if var_ids.numel() != V:
+                raise ValueError(f"ContextEncoder var_ids must have length V={V}, got {var_ids.numel()}")
+            # Broadcast to [B,T,V]
+            var_ids_bt = var_ids.view(1, 1, V).expand(B, T, V)
+        elif var_ids.ndim == 3:
+            if tuple(var_ids.shape) != (B, T, V):
+                raise ValueError(f"ContextEncoder var_ids must be [B,T,V]={B,T,V}, got {tuple(var_ids.shape)}")
+            var_ids_bt = var_ids
+        else:
+            raise ValueError(f"ContextEncoder var_ids must be [V] or [B,T,V], got {tuple(var_ids.shape)}")
+
+        # Flatten (B,T,V) -> N
+        N = B * T * V
+        var_ids_flat = var_ids_bt.reshape(N)
+
+        # Collapse fields to batch of single-channel images
+        # Accept both float tensors and numpy-converted tensors.
+        x_f = x.reshape(N, 1, H, W)
+
+        h = self.stem(x_f)
+        for i, blk in enumerate(self.blocks):
+            h = blk(h)
+            h = self._apply_film(h, var_ids_flat, i)
+            h = self.act(h)
+
+        # Resize to target
+        if h.shape[-2:] != self.target_size:
+            h = nn.functional.interpolate(
+                h,
+                size=self.target_size,
+                mode="bilinear",
+                align_corners=False,
+            )
+
+        # Restore structure: [B,T,V,C,Ht,Wt]
+        h = h.view(B, T, V, self.base_channels, self.target_size[0], self.target_size[1])
+
+        # Aggregate: mean over variables, then mean over time
+        h = h.mean(dim=2)  # [B,T,C,Ht,Wt]
+        h = h.mean(dim=1)  # [B,C,Ht,Wt]
+
+        ctx = self.proj(h)  # [B,c_out,Ht,Wt]
+        return ctx
+
 class SigmaEmbed(nn.Module):
     """
         sigma-embedding -> R^time_dim for FiLM like conditioning.
@@ -51,12 +208,53 @@ class EDMPrecondUNet(nn.Module):
                  decoder: nn.Module,
                  sigma_data: float = 1.0,
                  predict_residual: bool = True,
+                 cfg: dict | None = None,
                  ):
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.sigma_data = sigma_data
         self.predict_residual = predict_residual
+
+        # ------------------------------------------------------------
+        # Paper 2: Spatial context encoder (large-domain LR -> HR-sized context fmap)
+        # ------------------------------------------------------------
+        self.cfg = cfg
+        self.use_spatial_context = False
+        self.spatial_context_input_mode = "context_plus_local"
+        self.context_encoder: ContextEncoder | None = None
+        self.context_c_out: int = 0
+        self._context_lr_vars: list[str] = []
+
+        if isinstance(cfg, dict):
+            paper2_cfg = (cfg.get("paper2", {}) or {})
+            spatial_cfg = (paper2_cfg.get("spatial_context", {}) or {})
+            enc_cfg = (spatial_cfg.get("encoder", {}) or {})
+
+            self.use_spatial_context = bool(enc_cfg.get("enabled", False))
+            self.spatial_context_input_mode = str(enc_cfg.get("input_mode", "context_plus_local"))
+
+            if self.use_spatial_context:
+                lr_vars = list((cfg.get("lowres", {}) or {}).get("condition_variables", []) or [])
+                if len(lr_vars) == 0:
+                    raise ValueError("paper2.spatial_context.encoder.enabled=True but lowres.condition_variables is empty")
+                self._context_lr_vars = lr_vars
+
+                c_out = int(enc_cfg.get("c_out", 32))
+                depth = int(enc_cfg.get("depth", 3))
+                base_ch = int(enc_cfg.get("base_channels", 16))
+
+                hr_size = tuple((cfg.get("highres", {}) or {}).get("data_size", (128, 128)))
+
+                self.context_encoder = ContextEncoder(
+                    num_vars=len(lr_vars),
+                    c_in=1,
+                    c_out=c_out,
+                    base_channels=base_ch,
+                    depth=depth,
+                    target_size=hr_size,
+                )
+                self.context_c_out = c_out
 
         # time_embedding size is already defined in encoder
         time_dim = getattr(encoder, "time_embedding", 128)
@@ -115,7 +313,19 @@ class EDMPrecondUNet(nn.Module):
         # c_noise = 0.5 * log(sigma) as a scalar feature -> [B,1]
         c_noise = (sigma.log() * 0.5).unsqueeze(-1)  # [B, 1]   
         return c_in, c_skip, c_out, c_noise
-    
+
+    def encode_spatial_context(self, x_ctx: torch.Tensor, *, var_ids: torch.Tensor | None = None) -> torch.Tensor:
+        """
+        Args:
+            x_ctx: [B, T, V, H_lr, W_lr]
+            var_ids: optional [V] or [B,T,V]
+        Returns:
+            ctx: [B, Cctx, H_hr, W_hr]
+        """
+        if self.context_encoder is None:
+            raise RuntimeError("encode_spatial_context called but context_encoder is None")
+        return self.context_encoder(x_ctx, var_ids=var_ids)
+
     def forward(self,
                 x_t: torch.Tensor,
                 sigma: torch.Tensor,
@@ -127,6 +337,9 @@ class EDMPrecondUNet(nn.Module):
                 lr_ups: torch.Tensor | None = None # <- needed if predict_residual = True
                 ) -> torch.Tensor:
         B = x_t.shape[0]
+        # Move context encoder to the right device lazily (handles CPU->GPU after construction)
+        if self.context_encoder is not None:
+            self.context_encoder = self.context_encoder.to(x_t.device)
         c_in, c_skip, c_out, c_noise = self._precond(sigma) # c_noise is [B, 1]
 
         # Sigmaa embedding [B, time_dim]

@@ -1065,11 +1065,22 @@ def get_final_gen_dataloader(cfg, split: str = "test", verbose: bool = True):
 
 def infer_in_channels(cfg: dict) -> int:
     # TODO: Should be more general - e.g. if multiple LR conds with different channels (HR/LR scaling), multiple geo channels (mask+value)
-    # low-res conditions
+    # low-res conditions (local LR channels)
     n_lr = len(cfg['lowres']['condition_variables']) if cfg['lowres']['condition_variables'] is not None else 0
-
     if cfg['lowres']['dual_lr']:
         n_lr += 1 # Add one extra LR channel (dual LR)
+
+    # Paper 2: spatial context encoder channels
+    paper2 = cfg.get("paper2", {}) or {}
+    spatial = paper2.get("spatial_context", {}) or {}
+    enc = spatial.get("encoder", {}) or {}
+    if bool(enc.get("enabled", False)):
+        c_ctx = int(enc.get("c_out", 32))
+        mode = str(enc.get("input_mode", "context_plus_local"))
+        if mode == "context_only":
+            n_lr = c_ctx
+        else:
+            n_lr = n_lr + c_ctx
 
     n_geo = 0
     if cfg['stationary_conditions']['geographic_conditions']['sample_w_geo']:
@@ -1154,11 +1165,13 @@ def get_model(cfg):
     if edm_enabled:
         sigma_data = float(edm_cfg.get('sigma_data', 1.0))
         predict_residual = bool(edm_cfg.get('predict_residual', False)) # NOTE: Start with False, when EDM is stable, try True
-        score_model = EDMPrecondUNet(encoder=encoder,
-                                     decoder=decoder,
-                                     sigma_data=sigma_data,
-                                     predict_residual=predict_residual).to(device)
-        
+        score_model = EDMPrecondUNet(
+            encoder=encoder,
+            decoder=decoder,
+            sigma_data=sigma_data,
+            predict_residual=predict_residual,
+            cfg=cfg,
+        ).to(device)
     else:
         sigma = float(cfg.get('ve_dsm', {}).get('sigma', 25.0))
         mprob = partial(marginal_prob_std, sigma=sigma)

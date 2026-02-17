@@ -11,6 +11,7 @@ import pickle
 import tqdm
 import logging 
 import math
+import time 
 
 import torch.nn.functional as F
 import torch.nn as nn
@@ -65,6 +66,60 @@ class TrainingPipeline_general:
         Class for building a training pipeline for the SBGM.
         To run through the training batches in one epoch.
     '''
+    def _build_cond_img(self, batch: dict) -> torch.Tensor | None:
+        """
+        Build the conditioning image passed to the UNet encoder.
+
+        Supports Paper2 spatial context encoder:
+          - large-domain LR fields: {var}_lr  -> ContextEncoder -> ctx [B,Cctx,128,128]
+          - local co-located LR fields: {var}_lr_local (fallback to {var}_lr if missing)
+
+        Config:
+          paper2.spatial_context.encoder.enabled: bool
+          paper2.spatial_context.encoder.input_mode: 'context_only' | 'context_plus_local'
+        """
+        if self.lr_vars is None or len(self.lr_vars) == 0:
+            return None
+
+        # --- Local LR tensor from *_lr_local if present; else fall back to *_lr
+        lr_tensors_local = []
+        for v in self.lr_vars:
+            k_local = f"{v}_lr_local"
+            k_ctx = f"{v}_lr"
+            if (k_local in batch) and (batch[k_local] is not None):
+                lr_tensors_local.append(batch[k_local])
+            else:
+                lr_tensors_local.append(batch[k_ctx])
+
+        cond_local = torch.cat(lr_tensors_local, dim=1).to(self.device)  # [B,C_local,128,128] (or [B,C_local,H_lr,W_lr] in non-context modes)
+
+        # --- Paper2 context encoder
+        paper2 = (self.cfg.get("paper2", {}) or {})
+        spatial = (paper2.get("spatial_context", {}) or {})
+        enc_cfg = (spatial.get("encoder", {}) or {})
+        use_ctx = bool(enc_cfg.get("enabled", False)) and (getattr(self.model, "context_encoder", None) is not None)
+        ctx_mode = str(enc_cfg.get("input_mode", "context_plus_local"))
+
+        if not use_ctx:
+            return cond_local
+
+        # Build context input x_ctx: [B,T=1,V,H_lr,W_lr] from large-domain {var}_lr
+        xs = []
+        for v in self.lr_vars:
+            k = f"{v}_lr"
+            t = batch[k]  # [B,1,H_lr,W_lr] (or [B,2,...] for dual_lr main var)
+            # Use first channel for context encoder; dual-lr 2nd channel is LR-only stats and not needed here.
+            xs.append(t[:, 0])  # -> [B,H_lr,W_lr]
+        x_bvhw = torch.stack(xs, dim=1)   # [B,V,H_lr,W_lr]
+        x_ctx = x_bvhw.unsqueeze(1).to(self.device)  # [B,1,V,H_lr,W_lr]
+
+        ctx = self.model.encode_spatial_context(x_ctx)  # [B,Cctx,128,128]
+
+        if ctx_mode == "context_only":
+            return ctx
+
+        # default: context_plus_local
+        return torch.cat([cond_local, ctx], dim=1)
 
     @staticmethod
     def _build_cond_channel_map_cfg(lr_vars: list, hr_var: str, dual_lr: bool, lr_main_var_scale: str) -> dict:
@@ -768,17 +823,135 @@ class TrainingPipeline_general:
 
         # Set the progress bar
         pbar = tqdm.tqdm(dataloader, desc=f"Epoch {current_epoch}/{epochs}", unit="batch")
+        t_epoch0 = time.time()
         # Iterate through batches in dataloader (tuple of images and classifiers 'y')
         for idx, samples in enumerate(pbar):
+            t0 = time.time()
             # Samples is a dict with following available keys: 'img', 'y', 'img_cond', 'lsm', 'sdf', 'topo', 'points'
             # Extract samples
             x, y, cond_images, lsm_hr, lsm, sdf, topo, hr_points, lr_points = extract_samples(samples, self.device)
+            # --- Always feed HR co-located statics to the UNet ---
+            lsm_cond = lsm_hr if lsm_hr is not None else lsm
+
+            topo_hr = None
+            if isinstance(samples, dict) and ("topo_hr" in samples) and (samples["topo_hr"] is not None):
+                topo_hr = samples["topo_hr"].to(self.device)
+            topo_cond = topo_hr if topo_hr is not None else topo
+
+            # --- Always build LR conditioning through the unified helper (handles context encoder) ---
+            try:
+                local_cond = self._build_cond_img(samples)
+            except Exception:
+                local_cond = cond_images  # fallback
+
+            cond_images = local_cond
+            if idx == 0:
+                logger.info(f"[timing] extract_samples: {time.time() - t0:.2f} sec (batch size {x.shape[0]})")
+            # ------------------------------------------------------------
+            # Paper 2: build conditioning tensor (optionally: context encoder + local LR)
+            #   - local_cond: concatenation of {var}_lr_local if present else {var}_lr
+            #   - ctx: ContextEncoder({var}_lr large-domain) -> [B,Cctx,H_hr,W_hr]
+            #   - cond_images (final): depends on cfg.paper2.spatial_context.encoder.input_mode
+            # Notes:
+            #   * We keep local channels first so existing channel maps / diagnostics still work.
+            #   * lr_ups_baseline MUST be built from local_cond (not from ctx channels).
+            # ------------------------------------------------------------
+            local_cond = cond_images  # legacy fallback (from extract_samples)
+            paper2 = (self.cfg.get('paper2', {}) or {}) if isinstance(self.cfg, dict) else {}
+            spatial = (paper2.get('spatial_context', {}) or {})
+            enc_cfg = (spatial.get('encoder', {}) or {})
+            ctx_enabled = bool(enc_cfg.get('enabled', False))
+            input_mode = str(enc_cfg.get('input_mode', 'context_plus_local'))
+
+            # Rebuild local_cond explicitly from batch keys if available (preferred).
+            try:
+                lr_vars = list((self.cfg.get('lowres', {}) or {}).get('condition_variables', []) or [])
+                if len(lr_vars) > 0:
+                    local_list = []
+                    for v in lr_vars:
+                        k_local = f"{v}_lr_local"
+                        k_large = f"{v}_lr"
+                        if isinstance(samples, dict) and (k_local in samples):
+                            t = samples[k_local]
+                        elif isinstance(samples, dict) and (k_large in samples):
+                            t = samples[k_large]
+                        else:
+                            # fall back to whatever extract_samples produced
+                            t = None
+
+                        if t is not None:
+                            if not torch.is_tensor(t):
+                                t = torch.tensor(t)
+                            t = t.to(self.device)
+                            # expected [B,1,H,W]
+                            if t.ndim == 3:
+                                t = t.unsqueeze(1)
+                            elif t.ndim == 2:
+                                t = t.unsqueeze(0).unsqueeze(0)
+                            local_list.append(t)
+
+                    if len(local_list) > 0:
+                        local_cond = torch.cat(local_list, dim=1)
+            except Exception as e:
+                # keep legacy local_cond from extract_samples
+                if idx == 0 and current_epoch == 1:
+                    logger.warning(f"[paper2][train] Failed to rebuild local_cond from batch keys; using extract_samples cond_images. err={e}")
+
+            # Build context features if enabled
+            ctx = None
+            if ctx_enabled:
+                try:
+                    lr_vars = list((self.cfg.get('lowres', {}) or {}).get('condition_variables', []) or [])
+                    ctx_list = []
+                    for v in lr_vars:
+                        k = f"{v}_lr"
+                        if not (isinstance(samples, dict) and (k in samples)):
+                            raise KeyError(f"Missing key '{k}' in batch needed for context encoder")
+                        t = samples[k]
+                        if not torch.is_tensor(t):
+                            t = torch.tensor(t)
+                        t = t.to(self.device)
+                        # expected [B,1,H_lr,W_lr] -> [B,H_lr,W_lr]
+                        if t.ndim == 4 and t.shape[1] == 1:
+                            t = t[:, 0]
+                        elif t.ndim != 3:
+                            t = t.reshape(t.shape[0], t.shape[-2], t.shape[-1])
+                        ctx_list.append(t)
+
+                    # [B,V,H_lr,W_lr] -> [B,1,V,H_lr,W_lr]
+                    x_ctx = torch.stack(ctx_list, dim=1).unsqueeze(1)
+
+                    if hasattr(self.model, 'encode_spatial_context'):
+                        ctx = self.model.encode_spatial_context(x_ctx)
+                    elif hasattr(self.model, 'module') and hasattr(self.model.module, 'encode_spatial_context'):
+                        # DDP wrapper case
+                        ctx = self.model.module.encode_spatial_context(x_ctx)
+                    else:
+                        raise AttributeError("Model has no encode_spatial_context (expected EDMPrecondUNet)")
+
+                    # Final cond_images selection
+                    if input_mode.lower() == 'context_only':
+                        cond_images = ctx
+                    else:
+                        # default: context_plus_local
+                        if local_cond is None:
+                            cond_images = ctx
+                        else:
+                            cond_images = torch.cat([local_cond, ctx], dim=1)
+                except Exception as e:
+                    if idx == 0 and current_epoch == 1:
+                        logger.warning(f"[paper2][train] Context encoder enabled but failed; falling back to local_cond only. err={e}")
+                    cond_images = local_cond
+            else:
+                # no context encoder: use local conditioning only
+                cond_images = local_cond
             self._check_y_runtime(y)
 
             # === EDM: build lr_ups_baseline if needed ===
             lr_ups_baseline = None
             if self.edm_enabled and self.edm_predict_residual:
-                lr_ups_baseline = self._build_lr_ups_baseline(cond_images)  # [B, 1, H, W]
+                # IMPORTANT: lr_ups_baseline must be built from local LR field(s), not from context channels
+                lr_ups_baseline = self._build_lr_ups_baseline(local_cond)  # [B, 1, H, W]
 
             # === Rain-gate auxiliary supervision (before CFG dropout affects inputs) ===
             rg_aux_loss = None
@@ -786,12 +959,13 @@ class TrainingPipeline_general:
             if self.rg_enabled and (self.rain_gate is not None):
                 # Build gate inputs by concatenation at HR resolution
                 gate_inputs = []
-                if cond_images is not None:
-                    gate_inputs.append(cond_images)  # LR condition channels already upsampled to HR in dataset
-                if self.rg_include_lsm and (lsm is not None):
-                    gate_inputs.append(lsm)
-                if self.rg_include_topo and (topo is not None):
-                    gate_inputs.append(topo)
+                if local_cond is not None:
+                    # Use local conditioning for the rain gate (keeps gate stable when context channels are enabled)
+                    gate_inputs.append(local_cond)
+                if self.rg_include_lsm and (lsm_cond is not None):
+                    gate_inputs.append(lsm_cond)
+                if self.rg_include_topo and (topo_cond is not None):
+                    gate_inputs.append(topo_cond)
                 if self.rg_include_lr_baseline and (lr_ups_baseline is not None):
                     gate_inputs.append(lr_ups_baseline)
                 # logger.info(f"[rain_gate debug] cond_images={cond_images is not None}, lsm={lsm is not None}, topo={topo is not None}, lr_ups_baseline={lr_ups_baseline is not None}")
@@ -825,7 +999,21 @@ class TrainingPipeline_general:
 
                     # Class imbalance handling via pos_weight
                     pos_w = torch.tensor(self.rg_pos_weight, device=x.device, dtype=torch.float32)
-                    bce = F.binary_cross_entropy_with_logits(wet_logits, wet_target, pos_weight=pos_w)
+                    wet_logits_use = wet_logits
+                    if (wet_logits_use is not None) and (wet_target is not None):
+                        if wet_logits_use.shape[-2:] != wet_target.shape[-2:]:
+                            wet_logits_use = F.interpolate(
+                                wet_logits_use,
+                                size=wet_target.shape[-2:],
+                                mode="bilinear",
+                                align_corners=False,
+                            )
+
+                    bce = F.binary_cross_entropy_with_logits(wet_logits_use, wet_target, pos_weight=pos_w)
+                    rg_aux_loss = bce * self.rg_loss_weight
+
+                    # keep consistent for downstream reweighting
+                    wet_logits = wet_logits_use
                     rg_aux_loss = bce * self.rg_loss_weight  # Scale BCE loss
                 else:
                     rg_aux_loss = None  # No inputs for rain gate
@@ -838,7 +1026,8 @@ class TrainingPipeline_general:
                 if do_reweight and ('wet_logits' in locals()) and (wet_logits is not None):
                     rg_cfg = self.cfg.get('rain_gate', {})
                     p = torch.sigmoid(wet_logits)  # [B, 1, H, W] probabilities
-
+                    if p.shape[-2:] != x.shape[-2:]:
+                        p = F.interpolate(p, size=x.shape[-2:], mode="bilinear", align_corners=False)
                     # Base weighting shape from config
                     strategy = str(rg_cfg.get('weight_strategy', 'prob')).lower()  # 'prob' or 'binary'
                     alpha = float(rg_cfg.get('weight_alpha', 2.0))  # Weighting strength
@@ -958,10 +1147,10 @@ class TrainingPipeline_general:
 
             # # === CFG dropout (training) ===
             cfg_guidance = self.cfg_guidance
-            cond_images, lsm, topo, y, lr_ups_baseline, drop_info = apply_cfg_dropout(
+            cond_images, lsm_cond, topo_cond, y, lr_ups_baseline, drop_info = apply_cfg_dropout(
                 cond_images=cond_images,
-                lsm_cond=lsm,
-                topo_cond=topo,
+                lsm_cond=lsm_cond,
+                topo_cond=topo_cond,
                 y=y,
                 lr_ups=lr_ups_baseline,
                 cfg_guidance=self.cfg_guidance,
@@ -977,6 +1166,7 @@ class TrainingPipeline_general:
                 if tensor is not None:
                     assert tensor.device == x.device, f"{name} is on device {tensor.device}, expected {x.device}"
             
+            t2 = time.time()
             if hasattr(self, 'scaler') and self.scaler:
                 with autocast():
                     # Pass the score model and samples+conditions to the loss_fn
@@ -984,8 +1174,8 @@ class TrainingPipeline_general:
                                                x,
                                                y=y,
                                                cond_img=cond_images,
-                                               lsm_cond=lsm,
-                                               topo_cond=topo,
+                                               lsm_cond=lsm_cond,
+                                               topo_cond=topo_cond,
                                                sdf_cond=sdf,
                                                lr_ups=lr_ups_baseline,
                                                pixel_weight_map=pixel_weight_map
@@ -996,12 +1186,15 @@ class TrainingPipeline_general:
                                            x,
                                            y=y,
                                            cond_img=cond_images,
-                                           lsm_cond=lsm,
-                                           topo_cond=topo,
+                                           lsm_cond=lsm_cond,
+                                           topo_cond=topo_cond,
                                            sdf_cond=sdf,
                                            lr_ups=lr_ups_baseline,
                                            pixel_weight_map=pixel_weight_map
                                        )
+            if idx == 0:
+                logger.info(f"[timing] forward pass: {time.time() - t2:.2f} sec")
+
             # Add rain-gate auxiliary loss if available
             if rg_aux_loss is not None:
                 batch_loss = batch_loss + rg_aux_loss
@@ -1012,22 +1205,40 @@ class TrainingPipeline_general:
             # === In-loop monitoring (lightweight): cosine and HR-LR correlation ===
             monitor_cfg = self.cfg.get('monitoring', {})
             log_every = monitor_cfg.get('edm_metrics_every', 50)
-            global_step = (current_epoch - 1) * len(dataloader) + idx
+            # Some callers (e.g. smoke tests) may pass an iterator without __len__ (e.g. itertools.islice)
+            try:
+                epoch_len = len(dataloader)
+            except Exception:
+                epoch_len = None
+
+            if epoch_len is not None:
+                global_step = (current_epoch - 1) * epoch_len + idx
+            else:
+                # Fallback: use the pipeline's running global_step (monotonic)
+                global_step = int(getattr(self, "global_step", 0))
             edm_on = self.cfg.get('edm', {}).get('enabled', False)
 
             if edm_on and log_every > 0 and (global_step % log_every == 0):
                 metrics = in_loop_metrics(loss_obj=self.loss_fn, model=self.model,
-                    x0=x, y=y, cond_img=cond_images, lsm_cond=lsm, topo_cond=topo,
+                    x0=x, y=y, cond_img=cond_images, lsm_cond=lsm_cond, topo_cond=topo_cond,
                     lr_ups=lr_ups_baseline, eval_land_only=self.eval_land_only)
 
                 self.live_metrics['steps'].append(global_step)
                 self.live_metrics['edm_cosine'].append(float(metrics.get('edm_cosine', float('nan')))) # type: ignore
                 self.live_metrics['hr_lr_corr'].append(float(metrics.get('hr_lr_corr', float('nan')))) # type: ignore
 
+            t3 = time.time()
             # Backward pass
             batch_loss.backward()
+            if idx == 0:
+                logger.info(f"[timing] backward pass: {time.time() - t3:.2f} sec")
+
+            t4 = time.time()
             # Update weights
             self.optimizer.step()
+            if idx == 0:
+                logger.info(f"[timing] optimizer step: {time.time() - t4:.2f} sec")
+
             # --- EMA update (after optimizer step) ---
             self.global_step += 1
             if self.with_ema:
@@ -1048,9 +1259,10 @@ class TrainingPipeline_general:
             # Update the bar
             if idx % self.cfg['training'].get('train_postfix_every', 10) == 0:
                 pbar.set_postfix(loss=loss_sum / (idx+1), rg_bce=float(rg_aux_loss.item()) if rg_aux_loss is not None else None)
-        
+            
+            logger.info(f"[timing] epoch {current_epoch} batch {idx}: total time {(time.time() - t0):.2f} sec (extract {t2-t0:.2f}s, forward {t3-t2:.2f}s, backward {t4-t3:.2f}s, step {time.time()-t4:.2f}s)")
         # Calculate average loss
-        avg_loss = loss_sum / len(dataloader)
+        avg_loss = loss_sum / max(1, (idx + 1))
 
         # Print average loss if verbose
         if verbose:
@@ -1220,13 +1432,112 @@ class TrainingPipeline_general:
             # Samples is a dict with following available keys: 'img', 'classifier', 'img_cond', 'lsm', 'sdf', 'topo', 'points'
             # Extract samples
             x, y, cond_images, lsm_hr, lsm, sdf, topo, hr_points, lr_points = extract_samples(samples, self.device)
+            lsm_cond = lsm_hr if lsm_hr is not None else lsm
 
+            topo_hr = None
+            if isinstance(samples, dict) and ("topo_hr" in samples) and (samples["topo_hr"] is not None):
+                topo_hr = samples["topo_hr"].to(self.device)
+            topo_cond = topo_hr if topo_hr is not None else topo
 
+            try:
+                local_cond = self._build_cond_img(samples)
+            except Exception:
+                local_cond = cond_images
+            cond_images = local_cond
+            # ------------------------------------------------------------
+            # Paper 2: build LOCAL vs CONTEXT conditioning for validation
+            # ------------------------------------------------------------
+            local_cond = None
+            ctx_cond = None
+
+            # Build local_cond from per-variable *_lr_local tensors when available.
+            # Fallbacks:
+            #   1) use legacy `cond_images` (already HR-sized)
+            #   2) (last resort) use per-variable *_lr (if those are already HR-sized)
+            try:
+                lr_vars = list((self.cfg.get('lowres', {}) or {}).get('condition_variables', []) or [])
+            except Exception:
+                lr_vars = []
+
+            local_list = []
+            if isinstance(lr_vars, list) and len(lr_vars) > 0:
+                for v in lr_vars:
+                    k_local = f"{v}_lr_local"
+                    k_lr = f"{v}_lr"
+                    t = None
+                    if isinstance(samples, dict) and (k_local in samples):
+                        t = samples[k_local]
+                    elif isinstance(samples, dict) and (k_lr in samples):
+                        # Only use *_lr as local if it is already HR-sized
+                        t = samples[k_lr]
+                    if torch.is_tensor(t):
+                        # Expect [B,1,H,W]
+                        if t.ndim == 4: # type: ignore
+                            local_list.append(t.to(self.device)) # type: ignore
+            if len(local_list) > 0:
+                try:
+                    local_cond = torch.cat(local_list, dim=1)
+                except Exception:
+                    local_cond = None
+
+            if local_cond is None:
+                # Fall back to legacy stacked conditioning
+                local_cond = cond_images
+
+            # Optional: encode spatial context (large-domain LR -> HR-sized fmap)
+            enc_mod = getattr(model_eval, 'context_encoder', None)
+            use_ctx = bool(getattr(model_eval, 'use_spatial_context', False)) and (enc_mod is not None)
+            input_mode = str(getattr(model_eval, 'spatial_context_input_mode', 'context_plus_local'))
+
+            if use_ctx:
+                try:
+                    # Build x_ctx: [B, T, V, H_lr, W_lr]
+                    # Temporal context not used here yet -> T=1
+                    ctx_vars = getattr(model_eval, '_context_lr_vars', None)
+                    if not isinstance(ctx_vars, list) or len(ctx_vars) == 0:
+                        ctx_vars = lr_vars
+
+                    x_ctx_list = []
+                    for v in ctx_vars:
+                        k = f"{v}_lr"  # large-domain field
+                        if isinstance(samples, dict) and (k in samples) and torch.is_tensor(samples[k]):
+                            t = samples[k].to(self.device)
+                            # expect [B,1,H,W] -> [B,H,W]
+                            if t.ndim == 4 and t.shape[1] == 1:
+                                t = t[:, 0]
+                            elif t.ndim == 3:
+                                pass
+                            else:
+                                # last resort: squeeze
+                                t = t.reshape(t.shape[0], t.shape[-2], t.shape[-1])
+                            x_ctx_list.append(t)
+
+                    if len(x_ctx_list) > 0:
+                        x_bvhw = torch.stack(x_ctx_list, dim=1)      # [B,V,H,W]
+                        x_ctx = x_bvhw.unsqueeze(1)                  # [B,1,V,H,W]
+                        ctx_cond = model_eval.encode_spatial_context(x_ctx)  # [B,Cctx,H_hr,W_hr]
+                except Exception as e:
+                    if (idx == 0) and (current_epoch == 1):
+                        logger.warning(f"[val][paper2] Failed to build/encode spatial context. Error: {e}")
+                    ctx_cond = None
+
+            # Final cond_images fed to the model/loss
+            if use_ctx and (ctx_cond is not None):
+                if input_mode.lower() == 'context_only':
+                    cond_images = ctx_cond
+                else:
+                    # context_plus_local (default)
+                    if local_cond is not None:
+                        cond_images = torch.cat([local_cond, ctx_cond], dim=1)
+                    else:
+                        cond_images = ctx_cond
+            else:
+                cond_images = local_cond
 
             # Setup lr_ups_baseline if needed
             lr_ups_baseline = None
             if edm_on and self.edm_predict_residual:
-                lr_ups_baseline = self._build_lr_ups_baseline(cond_images)  # [B, 1, H, W]
+                lr_ups_baseline = self._build_lr_ups_baseline(local_cond)  # [B, 1, H, W]
 
             if (idx == 0) and (current_epoch == 1) and edm_on and (not self.edm_predict_residual):
                 logger.info("[val] edm.predict_residual=False → lr_ups_baseline not built (expected).")
@@ -1238,9 +1549,9 @@ class TrainingPipeline_general:
             if getattr(self, 'rg_enabled', False) and (getattr(self, 'rain_gate', None) is not None):
                 # Build gate inputs by concatenation at HR resolution
                 gate_inputs = []
-                if cond_images is not None: gate_inputs.append(cond_images)
-                if self.rg_include_lsm and (lsm is not None): gate_inputs.append(lsm)
-                if self.rg_include_topo and (topo is not None): gate_inputs.append(topo)
+                if local_cond is not None: gate_inputs.append(local_cond)
+                if self.rg_include_lsm and (lsm_cond is not None): gate_inputs.append(lsm_cond)
+                if self.rg_include_topo and (topo_cond is not None): gate_inputs.append(topo_cond)
                 if self.rg_include_lr_baseline and (lr_ups_baseline is not None): gate_inputs.append(lr_ups_baseline)
 
                 if len(gate_inputs) > 0 and self.rain_gate is not None:
@@ -1250,6 +1561,8 @@ class TrainingPipeline_general:
                     with torch.no_grad():
                         wet_logits_val = self.rain_gate(gate_x)
                         p = torch.sigmoid(wet_logits_val)
+                        if p.shape[-2:] != x.shape[-2:]:
+                            p = F.interpolate(p, size=x.shape[-2:], mode="bilinear", align_corners=False)
                 else:
                     wet_logits_val = None
 
@@ -1257,6 +1570,8 @@ class TrainingPipeline_general:
                 do_reweight = bool(self.cfg.get('rain_gate', {}).get('reweight_enabled', False)) and (current_epoch > self.rg_warm_start)
                 if do_reweight and (wet_logits_val is not None):
                     p = torch.sigmoid(wet_logits_val)
+                    if p.shape[-2:] != x.shape[-2:]:
+                        p = F.interpolate(p, size=x.shape[-2:], mode="bilinear", align_corners=False)
                     rg_cfg = self.cfg.get('rain_gate', {})
                     strategy = str(rg_cfg.get('weight_strategy', 'prob')).lower()
                     alpha = float(rg_cfg.get('weight_alpha', 2.0))
@@ -1299,9 +1614,23 @@ class TrainingPipeline_general:
                             wet_target = wet_target[:, :1, :, :]
                     pos_w = torch.tensor(self.rg_pos_weight, device=x.device, dtype=torch.float32)
                     # Tensor BCE for adding to loss
-                    rg_val_bce_t = F.binary_cross_entropy_with_logits(wet_logits_val, wet_target, pos_weight=pos_w)
+                    wet_logits_use = wet_logits_val
+                    if (wet_logits_use is not None) and (wet_target is not None):
+                        if wet_logits_use.shape[-2:] != wet_target.shape[-2:]:
+                            wet_logits_use = F.interpolate(
+                                wet_logits_use,
+                                size=wet_target.shape[-2:],
+                                mode="bilinear",
+                                align_corners=False,
+                            )
+
+                    bce = F.binary_cross_entropy_with_logits(wet_logits_use, wet_target, pos_weight=pos_w)
+                    rg_aux_loss = bce * self.rg_loss_weight
+
+                    # keep consistent for downstream reweighting
+                    wet_logits = wet_logits_use
                     # Optional scalr for logging
-                    rg_val_bce = float(rg_val_bce_t.item())
+                    rg_val_bce = float(rg_val_bce_t.item()) # type: ignore
                 except Exception as e:
                     logger.warning(f"[rain_gate] Could not compute validation BCE or target. Error: {e}")
                     wet_target = None
@@ -1330,8 +1659,8 @@ class TrainingPipeline_general:
                                              x,
                                              y=y,
                                              cond_img=cond_images,
-                                             lsm_cond=lsm,
-                                             topo_cond=topo,
+                                             lsm_cond=lsm_cond,
+                                             topo_cond=topo_cond,
                                              sdf_cond=sdf,
                                              lr_ups=lr_ups_baseline,
                                              pixel_weight_map=pixel_weight_map
@@ -1342,8 +1671,8 @@ class TrainingPipeline_general:
                                          x,
                                          y=y,
                                          cond_img=cond_images,
-                                         lsm_cond=lsm,
-                                         topo_cond=topo,
+                                         lsm_cond=lsm_cond,
+                                         topo_cond=topo_cond,
                                          sdf_cond=sdf,
                                          lr_ups=lr_ups_baseline,
                                          pixel_weight_map=pixel_weight_map
@@ -1357,7 +1686,7 @@ class TrainingPipeline_general:
                 log_every = monitor_cfg.get('edm_metrics_every', 50)
                 if edm_on and log_every > 0 and (idx % log_every == 0):
                     metrics = in_loop_metrics(loss_obj=self.loss_fn, model=model_eval,
-                        x0=x, y=y, cond_img=cond_images, lsm_cond=lsm, topo_cond=topo,
+                        x0=x, y=y, cond_img=cond_images, lsm_cond=lsm_cond, topo_cond=topo_cond,
                         lr_ups=lr_ups_baseline, eval_land_only=self.eval_land_only)
                     if verbose and metrics is not None:
                         logger.info(f"→ [monitor][val] Step {idx}: EDM cosine metric: {metrics.get('edm_cosine', float('nan')):.4f}")
@@ -1381,7 +1710,7 @@ class TrainingPipeline_general:
                 logger.warning(f"[debug][rain_gate] Could not plot reliability at epoch {current_epoch}. Error: {e}")
 
         # Calculate average loss
-        avg_loss = loss / len(dataloader)
+        avg_loss = loss / max(1, (idx + 1))
 
         # Print average loss if verbose
         if verbose:
