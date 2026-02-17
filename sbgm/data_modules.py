@@ -550,7 +550,22 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
         
         # Specify target LR size (if different from HR size)
         self.target_lr_size = self.lr_data_size if self.lr_data_size is not None else self.hr_data_size
-        
+
+        # ------------------------------------------------------------
+        # Paper2: spatial context flags
+        # ------------------------------------------------------------
+        self.paper2_spatial_mode = None
+        self.paper2_encoder_input_mode = "context_plus_local"  # default
+        if isinstance(cfg, dict):
+            p2 = cfg.get("paper2", {}) or {}
+            sc = p2.get("spatial_context", {}) or {}
+            self.paper2_spatial_mode = sc.get("mode", None)
+            enc_cfg = sc.get("encoder", {}) or {}
+            self.paper2_encoder_input_mode = str(enc_cfg.get("input_mode", "context_plus_local"))
+
+        self._paper2_large_domain = (str(self.paper2_spatial_mode).lower() == "large_domain")
+        self._paper2_use_local = (str(self.paper2_encoder_input_mode).lower() == "context_plus_local")
+
         # Resize factor for input conditions (for running with smaller data)
         self.resize_factor = resize_factor
         if self.resize_factor > 1:
@@ -957,6 +972,35 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                     ])
 
                     self.lr_transforms_dict[cond_var] = DualLRTransform(t_main, t_lr_only)
+                    # Paper2 large_domain: also build local (co-located) LR transform at HR size
+                    if getattr(self, "_paper2_large_domain", False) and getattr(self, "_paper2_use_local", False):
+                        if not hasattr(self, "lr_transforms_local_dict"):
+                            self.lr_transforms_local_dict = {}
+
+                        # Prefer LR stats for the HR ROI crop (crop_region_hr_str) if available; fall back to resize-only.
+                        try:
+                            local_list = [
+                                SafeToTensor(),
+                                ResizeTensor(self.hr_size_reduced),
+                                get_transforms_from_stats(
+                                    variable=cond_var,
+                                    model=self.lr_model,
+                                    domain_str=domain_str_lr,
+                                    crop_region_str=crop_region_hr_str,
+                                    scaling_split=scaling_split,
+                                    transform_type=trans_type,
+                                    buffer_frac=self.lr_buffer_frac,
+                                    stats_file_path=stats_load_dir,
+                                    eps=eps_val,
+                                )
+                            ]
+                        except Exception:
+                            local_list = [
+                                SafeToTensor(),
+                                ResizeTensor(self.hr_size_reduced)
+                            ]
+
+                        self.lr_transforms_local_dict[cond_var] = transforms.Compose(local_list)
                     logger.info(f"Dual-LR transform set for main condition '{cond_var}': returning 2-channels [main({scale_mode}), lr_only(LR)].")
                 elif is_main and not self.dual_lr:
                     # Single channel, but choose statistics source as per lr_main_var_scale
@@ -1021,6 +1065,35 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                                 )
                             ]
                     self.lr_transforms_dict[cond_var] = transforms.Compose(transform_list)
+                    # Paper2 large_domain: also build local (co-located) LR transform at HR size
+                    if getattr(self, "_paper2_large_domain", False) and getattr(self, "_paper2_use_local", False):
+                        if not hasattr(self, "lr_transforms_local_dict"):
+                            self.lr_transforms_local_dict = {}
+
+                        # Prefer LR stats for the HR ROI crop (crop_region_hr_str) if available; fall back to resize-only.
+                        try:
+                            local_list = [
+                                SafeToTensor(),
+                                ResizeTensor(self.hr_size_reduced),
+                                get_transforms_from_stats(
+                                    variable=cond_var,
+                                    model=self.lr_model,
+                                    domain_str=domain_str_lr,
+                                    crop_region_str=crop_region_hr_str,
+                                    scaling_split=scaling_split,
+                                    transform_type=trans_type,
+                                    buffer_frac=self.lr_buffer_frac,
+                                    stats_file_path=stats_load_dir,
+                                    eps=eps_val,
+                                )
+                            ]
+                        except Exception:
+                            local_list = [
+                                SafeToTensor(),
+                                ResizeTensor(self.hr_size_reduced)
+                            ]
+
+                        self.lr_transforms_local_dict[cond_var] = transforms.Compose(local_list)
                 else:
                     # Not main condition - standard single-channel LR-only stats
                     transform_list = prefix + [
@@ -1038,6 +1111,35 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                         )
                     ]
                     self.lr_transforms_dict[cond_var] = transforms.Compose(transform_list)
+                    # Paper2 large_domain: also build local (co-located) LR transform at HR size
+                    if getattr(self, "_paper2_large_domain", False) and getattr(self, "_paper2_use_local", False):
+                        if not hasattr(self, "lr_transforms_local_dict"):
+                            self.lr_transforms_local_dict = {}
+
+                        # Prefer LR stats for the HR ROI crop (crop_region_hr_str) if available; fall back to resize-only.
+                        try:
+                            local_list = [
+                                SafeToTensor(),
+                                ResizeTensor(self.hr_size_reduced),
+                                get_transforms_from_stats(
+                                    variable=cond_var,
+                                    model=self.lr_model,
+                                    domain_str=domain_str_lr,
+                                    crop_region_str=crop_region_hr_str,
+                                    scaling_split=scaling_split,
+                                    transform_type=trans_type,
+                                    buffer_frac=self.lr_buffer_frac,
+                                    stats_file_path=stats_load_dir,
+                                    eps=eps_val,
+                                )
+                            ]
+                        except Exception:
+                            local_list = [
+                                SafeToTensor(),
+                                ResizeTensor(self.hr_size_reduced)
+                            ]
+
+                        self.lr_transforms_local_dict[cond_var] = transforms.Compose(local_list)
                 
                 # Log summary of LR transforms
                 for cond, transform in self.lr_transforms_dict.items():
@@ -1093,12 +1195,35 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                     SafeToTensor(),
                     ResizeTensor(self.lr_size_reduced, mode='nearest'), # Nearest for categorical data
                 ])
+                self.geo_transform_topo_hr = transforms.Compose([
+                    transforms.Lambda(lambda x: np.ascontiguousarray(x)),
+                    SafeToTensor(),
+                    ResizeTensor(self.hr_size_reduced, mode='bilinear', align_corners=False),
+                    Scale(topo_scale_min, topo_scale_max, self.topo_full_domain.min(), self.topo_full_domain.max())
+                ])
+                self.geo_transform_lsm_hr = transforms.Compose([
+                    transforms.Lambda(lambda x: np.ascontiguousarray(x)),
+                    SafeToTensor(),
+                    ResizeTensor(self.hr_size_reduced, mode='nearest'),
+                ])
+
         else:
             # 1. Set condition transforms
             self.lr_transforms_dict = {cond: transforms.Compose([
                 SafeToTensor(),
                 ResizeTensor(self.lr_size_reduced)
             ]) for cond in self.lr_conditions_ordered}
+
+            # Paper2 large_domain: also provide local (co-located) LR transforms at HR size
+            if getattr(self, "_paper2_large_domain", False) and getattr(self, "_paper2_use_local", False):
+                self.lr_transforms_local_dict = {
+                    cond: transforms.Compose([
+                        SafeToTensor(),
+                        ResizeTensor(self.hr_size_reduced)
+                    ]) for cond in self.lr_conditions_ordered
+                }
+            else:
+                self.lr_transforms_local_dict = {}
 
             # 2. Set HR target transform
             self.hr_transform = transforms.Compose([
@@ -1108,12 +1233,29 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
 
             # 3. Set geo variable transforms (if any)
             if self.geo_variables is not None:
+                # Large-domain transforms (LR size)
                 self.geo_transform_topo = transforms.Compose([
-                    transforms.Lambda(lambda x: np.ascontiguousarray(x)), # To make sure np.flipud is not messing up the tensor
+                    transforms.Lambda(lambda x: np.ascontiguousarray(x)),
                     SafeToTensor(),
-                    ResizeTensor(self.lr_size_reduced)
+                    ResizeTensor(self.lr_size_reduced, mode='bilinear', align_corners=False)
                 ])
-                self.geo_transform_lsm = self.geo_transform_topo
+                self.geo_transform_lsm = transforms.Compose([
+                    transforms.Lambda(lambda x: np.ascontiguousarray(x)),
+                    SafeToTensor(),
+                    ResizeTensor(self.lr_size_reduced, mode='nearest'),
+                ])
+                # HR co-located transforms (HR size)
+                self.geo_transform_topo_hr = transforms.Compose([
+                    transforms.Lambda(lambda x: np.ascontiguousarray(x)),
+                    SafeToTensor(),
+                    ResizeTensor(self.hr_size_reduced, mode='bilinear', align_corners=False),
+                ])
+                self.geo_transform_lsm_hr = transforms.Compose([
+                    transforms.Lambda(lambda x: np.ascontiguousarray(x)),
+                    SafeToTensor(),
+                    ResizeTensor(self.hr_size_reduced, mode='nearest'),
+                ])
+
 
     def __len__(self):
         '''
@@ -1397,17 +1539,35 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
             if self.cutouts and data is not None and lr_point is not None:
                 # lr_point is [y1, y2, x1, x2]; numpy slicing is [y1:y2, x1:x2]
                 data = data[lr_point[0]:lr_point[1], lr_point[2]:lr_point[3]]
+                # Paper2 large_domain: also extract a co-located local LR crop using the HR ROI bounds
+                data_local = None
+                if getattr(self, "_paper2_large_domain", False) and getattr(self, "_paper2_use_local", False) and data is not None and hr_point is not None:
+                    try:
+                        data_local = data[hr_point[0]:hr_point[1], hr_point[2]:hr_point[3]]
+                    except Exception:
+                        data_local = None
                 logger.debug(f"Cropped {cond} data to shape {data.shape} using lr_point {lr_point}")
             # logger.debug(f"Data shape for {cond}: {data.shape if data is not None else None}")
                 
             # If save_original is True, save original conditional data
             if self.save_original:
                 sample_dict[f"{cond}_lr_original"] = data.copy() if data is not None else None
+                if getattr(self, "_paper2_large_domain", False) and getattr(self, "_paper2_use_local", False):
+                    sample_dict[f"{cond}_lr_local_original"] = data_local.copy() if data_local is not None else None
 
-            # Apply specified transform (specific to various conditions)
-            if data is not None and self.lr_transforms_dict.get(cond, None) is not None:
-                data = self.lr_transforms_dict[cond](data)
-            sample_dict[cond + "_lr"] = data
+            # Apply specified transform for context-sized LR (stored as *_lr)
+            data_ctx_t = data
+            if data_ctx_t is not None and self.lr_transforms_dict.get(cond, None) is not None:
+                data_ctx_t = self.lr_transforms_dict[cond](data_ctx_t)
+            sample_dict[f"{cond}_lr"] = data_ctx_t
+
+            # Paper2 large_domain: also store co-located LR crop at HR size (stored as *_lr_local)
+            if getattr(self, "_paper2_large_domain", False) and getattr(self, "_paper2_use_local", False):
+                data_loc_t = data_local
+                tloc = getattr(self, "lr_transforms_local_dict", {}).get(cond, None)
+                if data_loc_t is not None and tloc is not None:
+                    data_loc_t = tloc(data_loc_t)
+                sample_dict[f"{cond}_lr_local"] = data_loc_t
         
 
         # Load HR target variable data
@@ -1463,6 +1623,22 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                     geo_data = self.topo_full_domain
                     # logger.info('topo_full_domain shape:', geo_data.shape)
                     geo_transform = self.geo_transform_topo
+
+                    full = self.topo_full_domain
+
+                    # Large domain (for plotting / optional context)
+                    topo_full = full
+                    if self.cutouts and lr_point is not None and self.lr_data_size is not None:
+                        topo_full = topo_full[lr_point[0]:lr_point[1], lr_point[2]:lr_point[3]]
+                    topo_full = self.geo_transform_topo(topo_full)
+                    sample_dict["topo"] = topo_full
+
+                    # HR co-located (for UNet input)
+                    if self.cutouts and hr_point is not None:
+                        topo_hr = full[hr_point[0]:hr_point[1], hr_point[2]:hr_point[3]]
+                        topo_hr = self.geo_transform_topo_hr(topo_hr)   # you’ll add this transform in __init__
+                        sample_dict["topo_hr"] = topo_hr
+
                 else:
                     # Add custom logic for other geo variables when needed
                     geo_data = None

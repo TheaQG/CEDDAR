@@ -145,7 +145,7 @@ def main():
 
     print("\n=== Shapes ===")
     for k in sorted(list(batch.keys())):
-        if any(k.endswith(suf) for suf in ("_hr", "_lr")) or k in ("lsm", "topo", "lsm_hr", "sdf"):
+        if any(k.endswith(suf) for suf in ("_hr", "_lr", "_lr_local")) or k in ("lsm", "lsm_hr", "topo", "topo_hr", "sdf"):
             print(f"{k:>20s}: {_shape(batch[k])}")
 
     # --- Basic shape assertions (spatial dims only)
@@ -192,6 +192,37 @@ def main():
 
     assert (H, W) == hr_size, f"HR spatial size mismatch: got {(H, W)} expected {hr_size}"
 
+    # --- Geo fields ---
+    if "lsm" in batch:
+        lsm_t = batch["lsm"]
+        if lsm_t.ndim == 3:
+            _, lh, lw = lsm_t.shape
+        elif lsm_t.ndim == 4:
+            _, _, lh, lw = lsm_t.shape
+        else:
+            raise ValueError(f"Unexpected ndim for lsm: {lsm_t.ndim}")
+        assert (lh, lw) == lr_size, f"LSM (large) spatial size mismatch: got {(lh, lw)} expected {lr_size}"
+
+    if "lsm_hr" in batch:
+        lsmh_t = batch["lsm_hr"]
+        if lsmh_t.ndim == 3:
+            _, lh, lw = lsmh_t.shape
+        elif lsmh_t.ndim == 4:
+            _, _, lh, lw = lsmh_t.shape
+        else:
+            raise ValueError(f"Unexpected ndim for lsm_hr: {lsmh_t.ndim}")
+        assert (lh, lw) == hr_size, f"LSM_HR spatial size mismatch: got {(lh, lw)} expected {hr_size}"
+
+    if "topo_hr" in batch:
+        th = batch["topo_hr"]
+        if th.ndim == 3:
+            _, thh, thw = th.shape
+        elif th.ndim == 4:
+            _, _, thh, thw = th.shape
+        else:
+            raise ValueError(f"Unexpected ndim for topo_hr: {th.ndim}")
+        assert (thh, thw) == hr_size, f"TOPO_HR spatial size mismatch: got {(thh, thw)} expected {hr_size}"
+
     for cond in cfg["lowres"]["condition_variables"]:
         lr_key = f"{cond}_lr"
         if lr_key not in batch:
@@ -208,6 +239,17 @@ def main():
             raise ValueError(f"Unexpected ndim for {lr_key}: {lr_t.ndim}")
 
         assert (h, w) == lr_size, f"LR spatial size mismatch for {lr_key}: got {(h, w)} expected {lr_size}"
+
+        lr_local_key = f"{cond}_lr_local"
+        if lr_local_key in batch:
+            lr_loc = batch[lr_local_key]
+            if lr_loc.ndim == 3:
+                _, hl, wl = lr_loc.shape
+            elif lr_loc.ndim == 4:
+                _, _, hl, wl = lr_loc.shape
+            else:
+                raise ValueError(f"Unexpected ndim for {lr_local_key}: {lr_loc.ndim}")
+            assert (hl, wl) == hr_size, f"LR local spatial size mismatch for {lr_local_key}: got {(hl, wl)} expected {hr_size}"
 
     print(f"\n[paper2][spatial_context] mode={spatial_mode!s} -> expected LR size={lr_size}, expected HR size={hr_size}")
     print("dataset_context_test: basic shape checks passed")
