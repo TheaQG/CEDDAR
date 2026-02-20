@@ -22,7 +22,10 @@ def _build_generation_config(cfg, out_root: Path) -> GenerationConfig:
     # Ensemble size: prefer evaluation.n_gen_samples, fall back to data_handling.n_gen_samples, else 32
     # Set the configuration cfg as full_gen_eval
     cfg_full_gen_eval = cfg.get('full_gen_eval', cfg)
-    M = int(cfg_full_gen_eval.get('ensemble_size', cfg.data_handling.get('n_gen_samples', 32)))
+    if isinstance(cfg_full_gen_eval, dict):
+        M = int(cfg_full_gen_eval.get('ensemble_size', cfg.get('data_handling', {}).get('n_gen_samples', 32)))
+    else:
+        M = int(cfg_full_gen_eval.get('ensemble_size', cfg.data_handling.get('n_gen_samples', 32)))
     
     edm = cfg.get('edm', {})
     gen_cfg = GenerationConfig(
@@ -49,7 +52,13 @@ def generation_main(cfg):
         Entry point used by launch_generation.run()
     """
     # ----------------------- Seed & logging -----------------------
-    seed = int(cfg.full_gen_eval.get('seed', 1234))
+    # Support both plain dict configs and OmegaConf/DictConfig.
+    if isinstance(cfg, dict):
+        full_gen_eval = cfg.get('full_gen_eval', {}) or {}
+    else:
+        full_gen_eval = getattr(cfg, 'full_gen_eval', None) or {}
+
+    seed = int(full_gen_eval.get('seed', 1234))
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
@@ -58,7 +67,7 @@ def generation_main(cfg):
     # logger.info(f"[generation_main] Configuration:\n{OmegaConf.to_yaml(cfg)}")
 
     # ----------------------- Device -----------------------
-    device = cfg.training.device
+    device = cfg['training']['device'] if isinstance(cfg, dict) else cfg.training.device
 
     # ----------------------- Model & checkpoint -----------------------
     # Matches prior script: use 'network_params' (not EMA) for sampling unless changing policy later
@@ -67,7 +76,11 @@ def generation_main(cfg):
     ckpt = torch.load(ckpt_path, map_location=device)
 
     # Decide whether to sample with EMA weights if present
-    use_ema = bool(getattr(cfg.training, "eval_use_ema", False))
+    # Decide whether to sample with EMA weights if present (support dict + OmegaConf)
+    if isinstance(cfg, dict):
+        use_ema = bool(cfg.get("training", {}).get("eval_use_ema", False))
+    else:
+        use_ema = bool(getattr(getattr(cfg, "training", None), "eval_use_ema", False))
 
     # Prefer EMA weights when requested and available
     if use_ema and ("ema_network_params" in ckpt):
@@ -84,7 +97,7 @@ def generation_main(cfg):
 
     # ----------------------- Data (ensure deterministic loop over chosen split) -----------------------
     # Decide which temporal split to generate for: train / val / test
-    split_cfg = str(cfg.full_gen_eval.get('split', 'test')).lower()
+    split_cfg = str(full_gen_eval.get('split', 'test')).lower()
 
     if split_cfg in ("val", "valid", "validation"):
         split_for_dataset = "valid"
@@ -94,13 +107,19 @@ def generation_main(cfg):
         split_for_dataset = "test"
 
     # Make sure data_handling exists on cfg
-    if not hasattr(cfg, "data_handling") or cfg.data_handling is None:
-        cfg.data_handling = {}
-
-    cfg.data_handling["split"] = split_for_dataset      # which zarr split to read
-    cfg.data_handling["batch_size"] = 1                 # 1 date per iteration
-    cfg.data_handling["shuffle"] = False                # preserve chronological/file order
-    cfg.data_handling["drop_last"] = False              # keep last sample even if incomplete
+    if isinstance(cfg, dict):
+        cfg.setdefault('data_handling', {})
+        cfg['data_handling']["split"] = split_for_dataset      # which zarr split to read
+        cfg['data_handling']["batch_size"] = 1                 # 1 date per iteration
+        cfg['data_handling']["shuffle"] = False                # preserve chronological/file order
+        cfg['data_handling']["drop_last"] = False              # keep last sample even if incomplete
+    else:
+        if not hasattr(cfg, "data_handling") or cfg.data_handling is None:
+            cfg.data_handling = {}
+        cfg.data_handling["split"] = split_for_dataset      # which zarr split to read
+        cfg.data_handling["batch_size"] = 1                 # 1 date per iteration
+        cfg.data_handling["shuffle"] = False                # preserve chronological/file order
+        cfg.data_handling["drop_last"] = False              # keep last sample even if incomplete
 
     logger.info(f"[generation_main] Using data split='{split_for_dataset}' for generation")
 
