@@ -36,6 +36,8 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from typing import Optional, Union
+from omegaconf import OmegaConf, DictConfig, ListConfig
+
 # --------------------------------------------------------------------------------
 # Helper: return numpy array with mask-channel removed, if shape == (2, H, W)
 # --------------------------------------------------------------------------------
@@ -495,19 +497,35 @@ def crop_to_region(data, crop_region):
 
 from omegaconf import OmegaConf
 
-def load_config(config_path):
+def load_config(config_path: str, *, as_dict: bool = False):
+    """Load YAML config.
+
+    - Default: returns OmegaConf DictConfig (backwards compatible).
+    - If as_dict=True: returns fully-resolved plain Python dict.
     """
-        Loads and resolves an OmegaConf configuration
-    """
-    if not OmegaConf.has_resolver("env"):
-        OmegaConf.register_new_resolver("env", lambda x: os.environ.get(x))
-    
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Config file does not exist: {config_path}")
+    # Allow ${env:VAR} and ${env:VAR,default}
+    try:
+        OmegaConf.register_new_resolver(
+            "env",
+            lambda key, default="": os.environ.get(str(key), default),
+            replace=True,
+        )
+    except Exception:
+        pass
 
     cfg = OmegaConf.load(config_path)
-    cfg = OmegaConf.to_container(cfg, resolve=True)
-    cfg = OmegaConf.create(cfg)
+
+    # Unwrap single-element ListConfig -> DictConfig
+    if isinstance(cfg, ListConfig):
+        if len(cfg) == 1 and isinstance(cfg[0], DictConfig):
+            cfg = cfg[0]
+        else:
+            raise RuntimeError(
+                "Expected a DictConfig or a single-element ListConfig containing a DictConfig."
+            )
+
+    if as_dict:
+        return OmegaConf.to_container(cfg, resolve=True)  # type: ignore
 
     return cfg
 

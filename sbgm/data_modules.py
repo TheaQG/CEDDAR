@@ -705,7 +705,7 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
             else:
                 # Check that the bounds are valid, bounds: [y0, y1, x0, x1], size: (H, W)
                 if (self.fixed_lr_bounds[1] - self.fixed_lr_bounds[0] != self.target_lr_size[0]) or (self.fixed_lr_bounds[3] - self.fixed_lr_bounds[2] != self.target_lr_size[1]):
-                    raise ValueError('Fixed LR cutout bounds are not valid. They must match the target LR data size (H,W).')
+                    raise ValueError('Fixed LR cutout bounds are not valid, {}. They must match the target LR data size (H,W) = {}'.format(self.fixed_lr_bounds, self.target_lr_size))
                 else:
                     logger.info(f'Using fixed cutout for LR with bounds: {self.fixed_lr_bounds}')
         else:

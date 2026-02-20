@@ -81,15 +81,29 @@ class TrainingPipeline_general:
         if self.lr_vars is None or len(self.lr_vars) == 0:
             return None
 
-        # --- Local LR tensor from *_lr_local if present; else fall back to *_lr
+        paper2 = (self.cfg.get("paper2", {}) or {})
+        spatial = (paper2.get("spatial_context", {}) or {})
+        mode = str(spatial.get("mode", "")).lower()
+
         lr_tensors_local = []
         for v in self.lr_vars:
             k_local = f"{v}_lr_local"
             k_ctx = f"{v}_lr"
-            if (k_local in batch) and (batch[k_local] is not None):
+
+            if mode == "large_domain":
+                # In large_domain mode, local must be explicitly provided at HR grid size
+                if (k_local not in batch) or (batch[k_local] is None):
+                    raise KeyError(
+                        f"paper2.spatial_context.mode='large_domain' requires '{k_local}' in batch "
+                        f"(got keys: {list(batch.keys())})."
+                    )
                 lr_tensors_local.append(batch[k_local])
             else:
-                lr_tensors_local.append(batch[k_ctx])
+                # legacy / colocated mode: allow fallback
+                if (k_local in batch) and (batch[k_local] is not None):
+                    lr_tensors_local.append(batch[k_local])
+                else:
+                    lr_tensors_local.append(batch[k_ctx])
 
         cond_local = torch.cat(lr_tensors_local, dim=1).to(self.device)  # [B,C_local,128,128] (or [B,C_local,H_lr,W_lr] in non-context modes)
 
@@ -826,6 +840,26 @@ class TrainingPipeline_general:
         t_epoch0 = time.time()
         # Iterate through batches in dataloader (tuple of images and classifiers 'y')
         for idx, samples in enumerate(pbar):
+            # --- Paper2 sanity check: print LR shapes on first batch of each epoch
+            if idx == 0:
+                try:
+                    print("\n[DEBUG] Batch LR tensor shapes:")
+                    for v in self.lr_vars:
+                        k_ctx = f"{v}_lr"
+                        k_local = f"{v}_lr_local"
+
+                        if k_ctx in samples:
+                            print(f"  {k_ctx}: {tuple(samples[k_ctx].shape)}")
+                        else:
+                            print(f"  {k_ctx}: MISSING")
+
+                        if k_local in samples:
+                            print(f"  {k_local}: {tuple(samples[k_local].shape)}")
+                        else:
+                            print(f"  {k_local}: MISSING")
+
+                except Exception as e:
+                    print(f"[DEBUG] Failed LR shape print: {e}")
             t0 = time.time()
             # Samples is a dict with following available keys: 'img', 'y', 'img_cond', 'lsm', 'sdf', 'topo', 'points'
             # Extract samples
@@ -1818,13 +1852,99 @@ class TrainingPipeline_general:
             # Samples is a dict with following available keys: 'img', 'classifier', 'img_cond', 'lsm', 'sdf', 'topo', 'points'
             # Extract samples
             x_gen, y_gen, cond_images_gen, lsm_hr_gen, lsm_gen, sdf_gen, topo_gen, hr_points_gen, lr_points_gen = extract_samples(samples, self.device)
+
+            # --- Paper2 sanity check: print LR shapes on first gen batch of each epoch
+            if idx == 0:
+                try:
+                    print("\n[DEBUG][gen] Batch LR tensor shapes:")
+                    for v in self.lr_vars:
+                        k_ctx = f"{v}_lr"
+                        k_local = f"{v}_lr_local"
+
+                        if k_ctx in samples:
+                            print(f"  {k_ctx}: {tuple(samples[k_ctx].shape)}")
+                        else:
+                            print(f"  {k_ctx}: MISSING")
+
+                        if k_local in samples:
+                            print(f"  {k_local}: {tuple(samples[k_local].shape)}")
+                        else:
+                            print(f"  {k_local}: MISSING")
+
+                except Exception as e:
+                    print(f"[DEBUG][gen] Failed LR shape print: {e}")
+
+            # --- Always feed HR co-located statics to the UNet (match train_batches) ---
+            lsm_cond = lsm_hr_gen if lsm_hr_gen is not None else lsm_gen
+
+            topo_hr_gen = None
+            if isinstance(samples, dict) and ("topo_hr" in samples) and (samples["topo_hr"] is not None):
+                topo_hr_gen = samples["topo_hr"].to(self.device)
+            topo_cond = topo_hr_gen if topo_hr_gen is not None else topo_gen
+
+            # --- Always build LR conditioning through the unified helper (handles context encoder) ---
+            try:
+                cond_images_gen = self._build_cond_img(samples)
+            except Exception:
+                # fallback to whatever extract_samples provided
+                pass
+
+            # ------------------------------------------------------------
+            # Build local_cond explicitly from batch keys for lr_ups_baseline.
+            # IMPORTANT: lr_ups_baseline must be built from local LR field(s), not from context channels.
+            # ------------------------------------------------------------
+            local_cond = cond_images_gen
+            try:
+                lr_vars = list((self.cfg.get('lowres', {}) or {}).get('condition_variables', []) or [])
+                if len(lr_vars) > 0:
+                    local_list = []
+                    for v in lr_vars:
+                        k_local = f"{v}_lr_local"
+                        k_large = f"{v}_lr"
+                        if isinstance(samples, dict) and (k_local in samples) and (samples[k_local] is not None):
+                            t = samples[k_local]
+                        elif isinstance(samples, dict) and (k_large in samples) and (samples[k_large] is not None):
+                            t = samples[k_large]
+                        else:
+                            t = None
+
+                        if t is not None:
+                            if not torch.is_tensor(t):
+                                t = torch.tensor(t)
+                            t = t.to(self.device)
+                            # expected [B,1,H,W]
+                            if t.ndim == 3:
+                                t = t.unsqueeze(1)
+                            elif t.ndim == 2:
+                                t = t.unsqueeze(0).unsqueeze(0)
+                            local_list.append(t)
+
+                    if len(local_list) > 0:
+                        local_cond = torch.cat(local_list, dim=1)
+            except Exception as e:
+                if idx == 0 and epoch == 1:
+                    logger.warning(f"[paper2][gen] Failed to rebuild local_cond from batch keys; using cond_images_gen. err={e}")
+
+            # One-time shape logging for generation conditioning
+            if idx == 0 and epoch == 1:
+                try:
+                    logger.info(
+                        f"[gen][cond] cond_images_gen={None if cond_images_gen is None else tuple(cond_images_gen.shape)}, "
+                        f"local_cond={None if local_cond is None else tuple(local_cond.shape)}, "
+                        f"lsm_cond={None if lsm_cond is None else tuple(lsm_cond.shape)}, "
+                        f"topo_cond={None if topo_cond is None else tuple(topo_cond.shape)}"
+                    )
+                except Exception:
+                    pass
+
             logger.info(f"→ Generating {len(x_gen)} samples at epoch {epoch}, batch {idx}...")
             logger.info(f"      Only plotting first {min(cfg['visualization'].get('n_plot_samples', 4), cfg['data_handling']['n_gen_samples'])} samples.")
 
             # Setup lr_ups_baseline if needed
             lr_ups_baseline = None
             if edm_on and self.edm_predict_residual:
-                lr_ups_baseline = self._build_lr_ups_baseline(cond_images_gen)  # [B, 1, H, W]
+                # IMPORTANT: lr_ups_baseline must be built from local LR field(s), not from context channels
+                lr_ups_baseline = self._build_lr_ups_baseline(local_cond)  # [B, 1, H, W]
 
             if edm_on and sampler_edm is not None:
                 edm_cfg = cfg.get('edm', {}) or {}
@@ -1837,8 +1957,8 @@ class TrainingPipeline_general:
                                             img_size=cfg['highres']['data_size'][0],
                                             y=y_gen,
                                             cond_img=cond_images_gen,
-                                            lsm_cond=lsm_gen,
-                                            topo_cond=topo_gen,
+                                            lsm_cond=lsm_cond,
+                                            topo_cond=topo_cond,
                                             sigma_min=float(edm_cfg.get('sigma_min', 0.002)),
                                             sigma_max=float(edm_cfg.get('sigma_max', 80)),
                                             rho=float(edm_cfg.get('rho', 7.0)),
@@ -1861,8 +1981,8 @@ class TrainingPipeline_general:
                     img_size=cfg['highres']['data_size'][0],
                     y=y_gen,
                     cond_img=cond_images_gen,
-                    lsm_cond=lsm_gen,
-                    topo_cond=topo_gen,
+                    lsm_cond=lsm_cond,
+                    topo_cond=topo_cond,
                 )
             else:
                 raise ValueError("No valid sampler found. Please check the configuration.")
