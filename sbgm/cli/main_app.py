@@ -18,7 +18,7 @@ import argparse
 import os
 import logging
 
-
+from omegaconf import OmegaConf
 
 from sbgm.utils import get_model_string, load_config
 from sbgm.logging_utils import (
@@ -80,6 +80,7 @@ def main():
         else:
             raise RuntimeError("Expected a DictConfig or a single-element ListConfig containing a DictConfig for cfg.")
     cfg = cast(DictConfig, cfg)
+    cfg_run = OmegaConf.to_container(cfg, resolve=True)  # type: ignore
 
     # # Apply baseline CLI overrides if provided
     # if args.baseline_type is not None:
@@ -100,7 +101,6 @@ def main():
     make_plots = args.make_plots or (args.mode in ['evaluate', 'full_pipeline'] and not args.skip_evaluation)
 
     # === Logging + manifest ===
-    from omegaconf import OmegaConf
     cfg_py = OmegaConf.to_container(cfg, resolve=True) # Convert to plain dict for logging
     file_level = getattr(cfg, "logging", {}).get("file_level", "INFO")
     console_level = getattr(cfg, "logging", {}).get("console_level", "WARNING")
@@ -137,17 +137,17 @@ def main():
     # === Dispatch with banners ===
     if args.mode == "data_splits":
         log_banner("DATA SPLIT CREATION START")
-        launch_split_creation.run(cfg)
+        launch_split_creation.run(cfg_run)
         log_banner("DATA SPLIT CREATION DONE")
 
     if args.mode == "train":
         log_banner("TRAINING START")
-        launch_sbgm.run_training(cfg)
+        launch_sbgm.run_training(cfg_run)
         log_banner("TRAINING DONE")
 
     elif args.mode == "generate":
         log_banner("GENERATION START")
-        launch_generation.run_generation(cfg)
+        launch_generation.run_generation(cfg_run)
         log_banner("GENERATION DONE")
 
     elif args.mode == "evaluate":
@@ -155,77 +155,77 @@ def main():
         # exists, gen_dir = check_generated_samples_exist(cfg)
         # if not exists:
         #     raise RuntimeError(f"Cannot evaluate: generated samples not found in {gen_dir}")
-        launch_evaluation.run_evaluation(cfg, make_plots=make_plots)
+        launch_evaluation.run_evaluation(cfg_run, make_plots=make_plots)
         log_banner("EVALUATION DONE")
 
     elif args.mode == "quicklook":
         log_banner("QUICKLOOK START")
-        exists, ckpt_dir = check_model_exists(cfg)
+        exists, ckpt_dir = check_model_exists(cfg_run)
         if not exists:
             raise RuntimeError(f"Cannot run quicklook: model checkpoint not found in {ckpt_dir}")
-        launch_quicklook.run_quicklook(cfg)
+        launch_quicklook.run_quicklook(cfg_run)
         log_banner("QUICKLOOK DONE")
 
     elif args.mode == "full_pipeline":
         log_banner("TRAINING START")
-        exists, ckpt_dir = check_model_exists(cfg)
+        exists, ckpt_dir = check_model_exists(cfg_run)
         if args.skip_train and not exists:
             raise RuntimeError(f"Cannot skip training: no trained model found in {ckpt_dir}")
         if not args.skip_train:
-            launch_sbgm.run_training(cfg)
+            launch_sbgm.run_training(cfg_run)
         log_banner("TRAINING DONE")
 
         log_banner("QUICKLOOK START")
-        exists, ckpt_dir = check_model_exists(cfg)
+        exists, ckpt_dir = check_model_exists(cfg_run)
         if not exists:
             raise RuntimeError(f"Cannot run quicklook: model checkpoint not found in {ckpt_dir}")
-        launch_quicklook.run_quicklook(cfg)
+        launch_quicklook.run_quicklook(cfg_run)
         log_banner("QUICKLOOK DONE")
 
         log_banner("GENERATION START")
-        exists, gen_dir = check_generated_samples_exist(cfg)
+        exists, gen_dir = check_generated_samples_exist(cfg_run)
         # if args.skip_generation and not exists:
         #     raise RuntimeError(f"Cannot skip generation: no samples found in {gen_dir}")
         if not args.skip_generation:
-            launch_generation.run_generation(cfg)
+            launch_generation.run_generation(cfg_run)
         log_banner("GENERATION DONE")
 
         log_banner("EVALUATION START")
         if not args.skip_evaluation:
-            launch_evaluation.run_evaluation(cfg, make_plots=make_plots)
+            launch_evaluation.run_evaluation(cfg_run, make_plots=make_plots)
         log_banner("EVALUATION DONE")
 
     elif args.mode == "baseline":
         log_banner(f"BASELINE START")
-        run_baselines(cfg)
+        run_baselines(cfg_run)
         log_banner(f"BASELINE DONE")
 
     elif args.mode == "baseline_eval":
         log_banner(f"BASELINE EVALUATION START")
         # run_baseline_eval(cfg)
-        run_all_baselines(cfg)
+        run_all_baselines(cfg_run)
         log_banner(f"BASELINE EVALUATION DONE")
 
     elif args.mode == "sigma_star_generation":
         log_banner("SIGMA_STAR GENERATION START")
-        launch_generation_sigma_star.run(cfg)
+        launch_generation_sigma_star.run(cfg_run)
         log_banner("SIGMA_STAR GENERATION DONE")
 
     elif args.mode == "sigma_star_evaluation":
         log_banner("SIGMA_STAR EVALUATION START")
         # use args.make_plots to also toggle making qualitative example montages
-        launch_evaluation_sigma_star.run(cfg, make_plots=make_plots, make_examples=args.make_plots)
+        launch_evaluation_sigma_star.run(cfg_run, make_plots=make_plots, make_examples=args.make_plots)
         log_banner("SIGMA_STAR EVALUATION DONE")
 
     elif args.mode == "sampler_grid_generation":
         log_banner("SAMPLER GRID GENERATION START")
-        launch_generation_sampler_grid.run(cfg)
+        launch_generation_sampler_grid.run(cfg_run)
         log_banner("SAMPLER GRID GENERATION DONE")
 
     elif args.mode == "sampler_grid_evaluation":
         log_banner("SAMPLER GRID EVALUATION START")
         # make_plots can control whether the evaluation makes plots or only tables
-        launch_evaluation_sampler_grid.run(cfg, make_plots=make_plots)
+        launch_evaluation_sampler_grid.run(cfg_run, make_plots=make_plots)
         log_banner("SAMPLER GRID EVALUATION DONE")
 
     logger.info("=== SBGM_SD MAIN APP DONE ===")
