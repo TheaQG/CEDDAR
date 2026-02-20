@@ -16,6 +16,14 @@ env/
 .idea/
 .vscode/
 
+# Any .zipped files (e.g., for packaging)
+*.zip
+*.tar.gz
+*.tar
+
+# Logs
+era5_logs/
+
 # Weird large "core" files that can appear in some environments
 core.*
 core
