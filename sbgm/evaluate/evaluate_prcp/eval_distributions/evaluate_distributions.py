@@ -14,9 +14,111 @@ from sbgm.evaluate.evaluate_prcp.eval_distributions.metrics_distributions import
 )
 from sbgm.evaluate.evaluate_prcp.eval_distributions.plot_distributions import (
     plot_distributional,
+    plot_pooled_distribution,
+    plot_seasonal_distributions,
 )
 
+
 logger = logging.getLogger(__name__)
+
+# --- Task list and helpers for distributional evaluation ---
+SUPPORTED_TASKS = [
+    "pooled_hist",
+    "daily_hist",
+    "ensemble_hist_pool",
+    "ensemble_hist_member_mean",
+    "metrics",
+    "plot_pooled",
+    "plot_seasons",
+]
+DEFAULT_TASKS_BASE = ["pooled_hist", "daily_hist", "metrics", "plot_pooled", "plot_seasons"]
+
+def _as_dict(obj):
+    # Safely convert OmegaConf/dict/dataclass-like to dict
+    if obj is None:
+        return {}
+    if isinstance(obj, dict):
+        return dict(obj)
+    if hasattr(obj, "items"):
+        try:
+            return dict(obj.items())
+        except Exception:
+            pass
+    if hasattr(obj, "__dict__"):
+        try:
+            return dict(obj.__dict__)
+        except Exception:
+            pass
+    return {}
+
+def _get_family_cfg(eval_cfg, keys):
+    # keys: list of possible family keys (in priority order)
+    fam = None
+    # Try families
+    families = getattr(eval_cfg, "families", None)
+    if families is not None:
+        for k in keys:
+            if hasattr(families, k):
+                fam = getattr(families, k)
+                break
+            if isinstance(families, dict) and k in families:
+                fam = families[k]
+                break
+    # Try family_plans
+    if fam is None:
+        family_plans = getattr(eval_cfg, "family_plans", None)
+        if family_plans is not None:
+            for k in keys:
+                if hasattr(family_plans, k):
+                    fam = getattr(family_plans, k)
+                    break
+                if isinstance(family_plans, dict) and k in family_plans:
+                    fam = family_plans[k]
+                    break
+    # Try direct attribute
+    if fam is None:
+        for k in keys:
+            if hasattr(eval_cfg, k):
+                fam = getattr(eval_cfg, k)
+                break
+            if isinstance(eval_cfg, dict) and k in eval_cfg:
+                fam = eval_cfg[k]
+                break
+    return _as_dict(fam)
+
+def _norm_tasks(task_list):
+    # Lowercase, map legacy/alias names, map plot synonyms
+    if not isinstance(task_list, (list, tuple)):
+        return []
+    norm = []
+    for t in task_list:
+        if not isinstance(t, str):
+            continue
+        tl = t.strip().lower()
+        # Legacy/alias mapping (distributional -> prcp_distributions is only for family name, not here)
+        # Plot synonyms
+        if tl in ("plot", "plot_pooled", "pooled_plot", "main_plot", "pooled"):
+            norm.append("plot_pooled")
+        elif tl in ("plot_seasons", "seasonal_plot", "seasons_plot"):
+            norm.append("plot_seasons")
+        elif tl in ("ensemble_hist", "ensemble_hist_pool"):
+            norm.append("ensemble_hist_pool")
+        elif tl in ("ensemble_hist_member_mean", "ensemble_hist_mean"):
+            norm.append("ensemble_hist_member_mean")
+        elif tl in ("metrics", "metric"):
+            norm.append("metrics")
+        elif tl in ("pooled_hist", "hist_pooled"):
+            norm.append("pooled_hist")
+        elif tl in ("daily_hist", "hist_daily"):
+            norm.append("daily_hist")
+        else:
+            norm.append(tl)
+    return norm
+
+def _warn_unknown_tasks(tasks):
+    for t in tasks:
+        if t not in SUPPORTED_TASKS:
+            logger.warning(f"[prcp_distributions] Unknown task requested: '{t}' (not in {SUPPORTED_TASKS})")
 
 
 def run_distributional(
@@ -27,21 +129,7 @@ def run_distributional(
     plot_only: bool = False,
 ) -> None:
     """
-    Distributional (1D, pooled-pixel) evaluation.
-
-    Inputs via resolver (same style as for scale):
-        - list_dates()
-        - load_obs(date)   -> HR [H,W]
-        - load_pmm(date)   -> GEN/PMM [H,W]
-        - load_lr(date)    -> LR [H,W]     (optional)
-        - load_mask(date)  -> mask [H,W]   (optional)
-
-    Outputs:
-        <out_root>/tables/dist_bins.csv
-        <out_root>/tables/dist_hr.csv
-        <out_root>/tables/dist_gen.csv
-        <out_root>/tables/dist_lr.csv  (if LR available)
-        <out_root>/tables/dist_metrics.csv  (KL/KS/W1 vs HR)
+    Distributional (1D, pooled-pixel) evaluation - now supports task-list driven exeution
     """
     out_root = Path(out_root)
     tables_dir = out_root / "tables"
@@ -49,14 +137,85 @@ def run_distributional(
     tables_dir.mkdir(parents=True, exist_ok=True)
     figs_dir.mkdir(parents=True, exist_ok=True)
 
-    if plot_only:
-        plot_distributional(out_root, eval_cfg=eval_cfg)
-        logger.info("[eval_distributional] plot_only=True – done plotting.")
+    # --- Resolve family config (prcp_distributions) ---
+    fam = _get_family_cfg(eval_cfg, [
+        "prcp_distributions", "prcp_distributional", "prcp_distribution", "distributional"
+    ])
+    enabled = fam.get("enabled", None)
+    if enabled is not None and not bool(enabled):
+        logger.info("[prcp_distributions] Family disabled via config - skipping.")
         return
 
+    # Output toggles: prefer explicit family knobs; if missing, derive from task_list; else fallback to legacy
+    output_plots = fam.get("output_plots", None)
+    output_metrics = fam.get("output_metrics", None)
+
+    # Derive from tasks if knobs are not provided
+    if output_plots is None:
+        output_plots = any(
+            t in ("plot_pooled", "plot_seasons")
+            for t in _norm_tasks(fam.get("task_list", []) or [])
+        )
+        # If task list is empty/unspecified, fall back to legacy make_plots
+        if not (fam.get("task_list", None) and isinstance(fam.get("task_list", None), (list, tuple)) and len(fam.get("task_list", None)) > 0):
+            output_plots = bool(getattr(eval_cfg, "make_plots", True))
+
+    if output_metrics is None:
+        # Treat all non-plot tasks as "compute" tasks
+        output_metrics = any(
+            t in ("pooled_hist", "daily_hist", "ensemble_hist_pool", "ensemble_hist_member_mean", "metrics")
+            for t in _norm_tasks(fam.get("task_list", []) or [])
+        )
+        # If task list is empty/unspecified, default to not plot_only
+        if not (fam.get("task_list", None) and isinstance(fam.get("task_list", None), (list, tuple)) and len(fam.get("task_list", None)) > 0):
+            output_metrics = (not plot_only)
+
+    # --- Task list selection ---
+    selected_tasks = fam.get("task_list", None)
+    # If missing or empty, use defaults
+    if not selected_tasks or (isinstance(selected_tasks, (list, tuple)) and len(selected_tasks) == 0):
+        # Build task list starting from defaults, add ensemble task(s) as needed
+        selected_tasks = list(DEFAULT_TASKS_BASE)
+        use_ensemble = bool(getattr(eval_cfg, "use_ensemble", False))
+        mode = str(getattr(eval_cfg, "dist_ensemble_pool_mode", "pool"))
+        if use_ensemble:
+            if mode == "pool":
+                selected_tasks.insert(2, "ensemble_hist_pool")
+            elif mode == "member_mean":
+                selected_tasks.insert(2, "ensemble_hist_member_mean")
+    else:
+        selected_tasks = _norm_tasks(selected_tasks)
+    # If both ensemble tasks are requested, both will be run
+    _warn_unknown_tasks(selected_tasks)
+
+    # --- plot_only hard override ---
+    # If plot_only True, skip all compute/metrics tasks, only execute plotting if requested.
+    plot_tasks = {"plot_pooled", "plot_seasons"}
+    if plot_only:
+        if not output_plots:
+            logger.info("[prcp_distributions] plot_only=True but output_plots=False - skipping all plots.")
+            return
+        # Plot if *any* plot task is requested (call explicit plot functions)
+        if any(t in plot_tasks for t in selected_tasks):
+            do_pooled = ("plot_pooled" in selected_tasks)
+            do_seasons = ("plot_seasons" in selected_tasks)
+            if do_pooled:
+                plot_pooled_distribution(out_root, eval_cfg=eval_cfg)
+            if do_seasons:
+                plot_seasonal_distributions(out_root, eval_cfg=eval_cfg)
+            logger.info("[prcp_distributions] plot_only=True - done plotting.")
+        else:
+            logger.info("[prcp_distributions] plot_only=True but no plot tasks requested - nothing to do.")
+        return
+
+    # --- Compute gating ---
+    want_compute = output_metrics and (not plot_only)
+    want_plot = output_plots
+
+    # --- Gather dates ---
     dates = list(resolver.list_dates())
     if not dates:
-        logger.warning("[eval_distributional] No dates from resolver – nothing to do.")
+        logger.warning("[eval_distributional] No dates from resolver - nothing to do.")
         return
     logger.info(f"[eval_distributional] Running on {len(dates)} dates.")
 
@@ -65,90 +224,217 @@ def run_distributional(
     vmax_pct: float = float(getattr(eval_cfg, "dist_vmax_percentile", 99.5))
     include_lr: bool = bool(getattr(eval_cfg, "dist_include_lr", True))
     save_cap: int = int(getattr(eval_cfg, "dist_save_cap", 200_000))
-
-    pooled = collect_pooled_distributions(
-        resolver=resolver,
-        dates=dates,
-        include_lr=include_lr,
-        n_bins=n_bins,
-        vmax_percentile=vmax_pct,
-        save_samples_cap=save_cap,
-    )
-
-    # write CSVs
-    bins = pooled["bins"]  # [B+1]
-    np.savetxt(tables_dir / "dist_bins.csv", bins, delimiter=",", header="bin_edge", comments="")
-
-    def _write_series(name: str, arr: np.ndarray):
-        p = tables_dir / f"dist_{name}.csv"
-        with open(p, "w") as f:
-            f.write("bin_idx,count\n")
-            for i, c in enumerate(arr.astype(int)):
-                f.write(f"{i},{int(c)}\n")
-
-    _write_series("hr", pooled["hr_hist"])
-    _write_series("gen", pooled["gen_hist"])
-    if pooled.get("lr_hist") is not None:
-        _write_series("lr", pooled["lr_hist"])
-
-    # daily histograms for CI shading and alternative (day-weighted) views
-    try:
-        daily = collect_daily_histograms(
+    # --- Task execution ---
+    pooled = None
+    daily = None
+    bins = None
+    # --- Pooled histogram ---
+    if "pooled_hist" in selected_tasks and want_compute:
+        pooled = collect_pooled_distributions(
             resolver=resolver,
             dates=dates,
             include_lr=include_lr,
-            bins=bins,
+            n_bins=n_bins,
+            vmax_percentile=vmax_pct,
+            save_samples_cap=save_cap,
         )
-        np.savez_compressed(
-            tables_dir / "dist_daily.npz",
-            **daily
-        )
-    except Exception as e:
-        logger.warning(f"[eval_distributional] Could not build daily histograms: {e}")
-
-    # Ensemble-native histograms (optional)
-    ens_out: Dict[str, Any] | None = None
-    try:
-        if bool(getattr(eval_cfg, "use_ensemble", False)):
-            mode = str(getattr(eval_cfg, "dist_ensemble_pool_mode", "pool"))
-            ens_out = collect_ensemble_histograms(
-                resolver=resolver,
-                dates=dates,
-                bins=bins,
-                mode=mode,
-                n_members=getattr(eval_cfg, "ensemble_n_members", None),
-                seed=int(getattr(eval_cfg, "ensemble_member_seed", 1234)),
+        bins = pooled["bins"]
+        # Write CSVs
+        np.savetxt(tables_dir / "dist_bins.csv", bins, delimiter=",", header="bin_edge", comments="")
+        def _write_series(name: str, arr: np.ndarray):
+            p = tables_dir / f"dist_{name}.csv"
+            with open(p, "w") as f:
+                f.write("bin_idx,count\n")
+                for i, c in enumerate(arr.astype(int)):
+                    f.write(f"{i},{int(c)}\n")
+        _write_series("hr", pooled["hr_hist"])
+        _write_series("gen", pooled["gen_hist"])
+        if pooled.get("lr_hist") is not None:
+            _write_series("lr", pooled["lr_hist"])
+        # Save capped pooled sample vectors so metrics can be computed later without reloading fields
+        try:
+            np.savez_compressed(
+                tables_dir / "dist_pooled_samples.npz",
+                hr_vec=np.asarray(pooled.get("hr_vec", np.empty((0,), dtype=np.float32))),
+                gen_vec=np.asarray(pooled.get("gen_vec", np.empty((0,), dtype=np.float32))),
+                lr_vec=np.asarray(pooled.get("lr_vec", np.empty((0,), dtype=np.float32))) if pooled.get("lr_vec", None) is not None else np.empty((0,), dtype=np.float32),
+                bins=np.asarray(pooled.get("bins", np.empty((0,), dtype=np.float32))),
             )
-            if ens_out:
-                if mode == "pool" and "counts_pool" in ens_out:
-                    p = tables_dir / "dist_gen_ens_pool.csv"
-                    with open(p, "w") as f:
-                        f.write("bin_idx,count\n")
-                        for i, c in enumerate(ens_out["counts_pool" ].astype(int)):
-                            f.write(f"{i},{int(c)}\n")
-                if mode == "member_mean" and "pdf_mean" in ens_out:
-                    p = tables_dir / "dist_gen_ens_mean.csv"
-                    with open(p, "w") as f:
-                        f.write("bin_idx,pdf\n")
-                        for i, v in enumerate(ens_out["pdf_mean" ].astype(float)):
-                            f.write(f"{i},{float(v)}\n")
-                # Save extra arrays for optional plotting of spread
-                np.savez_compressed(
-                    tables_dir / "dist_member_histograms.npz",
-                    **{k: v for k, v in ens_out.items() if k in ("bins","counts_members","n_members","pdf_mean","pdf_q10","pdf_q50","pdf_q90","mode")}
+        except Exception as e:
+            logger.warning(f"[prcp_distributions] Could not save dist_pooled_samples.npz: {e}")            
+    # If not run, but needed for downstream, try to load bins
+    if bins is None:
+        try:
+            bins_path = tables_dir / "dist_bins.csv"
+            if bins_path.exists():
+                bins = np.loadtxt(bins_path, delimiter=",", skiprows=1) if bins_path.read_text().startswith("bin_edge") else np.loadtxt(bins_path, delimiter=",")
+        except Exception:
+            bins = None
+
+    # --- Daily histogram ---
+    if "daily_hist" in selected_tasks and want_compute:
+        if bins is None:
+            logger.warning("[prcp_distributions] Cannot build daily_hist - dist_bins.csv missing and pooled_hist not run.")
+        else:
+            try:
+                daily = collect_daily_histograms(
+                    resolver=resolver,
+                    dates=dates,
+                    include_lr=include_lr,
+                    bins=bins,
                 )
-    except Exception as e:
-        logger.warning(f"[eval_distributional] Ensemble histogram build failed: {e}")
+                np.savez_compressed(
+                    tables_dir / "dist_daily.npz",
+                    **daily
+                )
+            except Exception as e:
+                logger.warning(f"[prcp_distributions] Could not build daily histograms: {e}")
 
-    # metrics (vs HR)
-    metrics_rows = compute_distributional_metrics(pooled, ensembles=ens_out)
-    with open(tables_dir / "dist_metrics.csv", "w") as f:
-        f.write("ref,comp,wasserstein,ks_stat,ks_p,kl_hr_to_x\n")
-        for r in metrics_rows:
-            f.write("{ref},{comp},{wasserstein:.6f},{ks_stat:.6f},{ks_p:.6f},{kl_hr_to_x:.6f}\n"
-                    .format(**{k: (v if v is not None else float("nan")) for k, v in r.items()}))
+    # --- Ensemble histogram(s) ---
+    ens_outs = {}
+    use_ensemble = bool(getattr(eval_cfg, "use_ensemble", False))
+    if use_ensemble and bins is not None:
+        # Only build if requested
+        ens_modes_to_run = []
+        if "ensemble_hist_pool" in selected_tasks:
+            ens_modes_to_run.append("pool")
+        if "ensemble_hist_member_mean" in selected_tasks:
+            ens_modes_to_run.append("member_mean")
+        # De-duplicate
+        ens_modes_to_run = list(dict.fromkeys(ens_modes_to_run))
+        for mode in ens_modes_to_run:
+            try:
+                ens_out = collect_ensemble_histograms(
+                    resolver=resolver,
+                    dates=dates,
+                    bins=bins,
+                    mode=mode,
+                    n_members=getattr(eval_cfg, "ensemble_n_members", None),
+                    seed=int(getattr(eval_cfg, "ensemble_member_seed", 1234)),
+                )
+                if ens_out:
+                    ens_outs[mode] = ens_out
+                    # Write CSVs/NPZ as in old logic
+                    if mode == "pool" and "counts_pool" in ens_out:
+                        p = tables_dir / "dist_gen_ens_pool.csv"
+                        with open(p, "w") as f:
+                            f.write("bin_idx,count\n")
+                            for i, c in enumerate(ens_out["counts_pool"].astype(int)):
+                                f.write(f"{i},{int(c)}\n")
+                    if mode == "member_mean" and "pdf_mean" in ens_out:
+                        p = tables_dir / "dist_gen_ens_mean.csv"
+                        with open(p, "w") as f:
+                            f.write("bin_idx,pdf\n")
+                            for i, v in enumerate(ens_out["pdf_mean"].astype(float)):
+                                f.write(f"{i},{float(v)}\n")
+                    # Save extra arrays for optional plotting of spread
+                    np.savez_compressed(
+                        tables_dir / "dist_member_histograms.npz",
+                        **{k: v for k, v in ens_out.items() if k in ("bins","counts_members","n_members","pdf_mean","pdf_q10","pdf_q50","pdf_q90","mode")}
+                    )
+            except Exception as e:
+                logger.warning(f"[prcp_distributions] Ensemble histogram build failed for mode '{mode}': {e}")
 
-    # plots
-    if bool(getattr(eval_cfg, "make_plots", True)):
-        plot_distributional(out_root, eval_cfg=eval_cfg)
-        logger.info(f"[eval_distributional] Plots saved to {figs_dir}")
+    # --- Metrics ---
+    if "metrics" in selected_tasks and want_compute:
+        if pooled is None:
+            # Prefer loading pooled sample vectors (required for KS/W1 on samples)
+            pooled_npz = tables_dir / "dist_pooled_samples.npz"
+            if pooled_npz.exists():
+                try:
+                    d = np.load(pooled_npz)
+                    pooled = {
+                        "bins": np.asarray(d["bins"]),
+                        "hr_vec": np.asarray(d["hr_vec"]).astype(np.float32),
+                        "gen_vec": np.asarray(d["gen_vec"]).astype(np.float32),
+                    }
+                    lr_vec = np.asarray(d["lr_vec"]).astype(np.float32) if ("lr_vec" in d) else None
+                    if lr_vec is not None and lr_vec.size > 0:
+                        pooled["lr_vec"] = lr_vec
+                    # Also include histograms if present (optional)
+                    if "hr_hist" in d: pooled["hr_hist"] = np.asarray(d["hr_hist"]).astype(np.int64)
+                    if "gen_hist" in d: pooled["gen_hist"] = np.asarray(d["gen_hist"]).astype(np.int64)
+                    if "lr_hist" in d: pooled["lr_hist"] = np.asarray(d["lr_hist"]).astype(np.int64)
+                except Exception as e:
+                    logger.warning(f"[prcp_distributions] Failed to load dist_pooled_samples.npz: {e}")
+                    pooled = None
+
+            # Last-resort: load only histograms from CSVs (NOTE: metrics may be limited)
+            if pooled is None:
+                try:
+                    bins_path = tables_dir / "dist_bins.csv"
+                    hr_path = tables_dir / "dist_hr.csv"
+                    gen_path = tables_dir / "dist_gen.csv"
+                    if bins_path.exists() and hr_path.exists() and gen_path.exists():
+                        bins = np.loadtxt(bins_path, delimiter=",", skiprows=1) if bins_path.read_text().startswith("bin_edge") else np.loadtxt(bins_path, delimiter=",")
+                        hr_hist = np.loadtxt(hr_path, delimiter=",", skiprows=1)[:, 1]
+                        gen_hist = np.loadtxt(gen_path, delimiter=",", skiprows=1)[:, 1]
+                        pooled = {"bins": bins, "hr_hist": hr_hist, "gen_hist": gen_hist}
+                except Exception as e:
+                    logger.warning(f"[prcp_distributions] Failed to load pooled histograms from CSVs: {e}")
+                    pooled = None
+        # Try to load ensemble if not run
+        ens_for_metrics = None
+        if "ensemble_hist_pool" in ens_outs:
+            ens_for_metrics = ens_outs["pool"]
+        elif "ensemble_hist_member_mean" in ens_outs:
+            ens_for_metrics = ens_outs["member_mean"]
+        else:
+            ens_for_metrics = None
+        if pooled is not None:
+            # compute_distributional_metrics requires pooled sample vectors for KS/W1
+            if ("hr_vec" not in pooled) or ("gen_vec" not in pooled):
+                logger.warning("[prcp_distributions] Skipping metrics: pooled sample vectors not available. Run pooled_hist to create dist_pooled_samples.npz.")
+            else:
+                try:
+                    metrics_rows = compute_distributional_metrics(pooled, ensembles=ens_for_metrics)
+                    with open(tables_dir / "dist_metrics.csv", "w") as f:
+                        f.write("ref,comp,wasserstein,ks_stat,ks_p,kl_hr_to_x\n")
+                        for r in metrics_rows:
+                            f.write("{ref},{comp},{wasserstein:.6f},{ks_stat:.6f},{ks_p:.6f},{kl_hr_to_x:.6f}\n"
+                                    .format(**{k: (v if v is not None else float("nan")) for k, v in r.items()}))
+                except Exception as e:
+                    logger.warning(f"[prcp_distributions] Could not compute/write metrics: {e}")
+        else:
+            logger.warning("[prcp_distributions] Skipping metrics: pooled histograms unavailable.")
+
+    # --- Plots ---
+    # Dependency checks before plotting
+    def _check_plot_deps():
+        missing = []
+        bins_path = tables_dir / "dist_bins.csv"
+        hr_path = tables_dir / "dist_hr.csv"
+        gen_path = tables_dir / "dist_gen.csv"
+        ens_pool_path = tables_dir / "dist_gen_ens_pool.csv"
+        ens_mean_path = tables_dir / "dist_gen_ens_mean.csv"
+        daily_npz = tables_dir / "dist_daily.npz"
+        # Pooled plot deps
+        if "plot_pooled" in selected_tasks:
+            if not bins_path.exists():
+                missing.append("dist_bins.csv")
+            if not (hr_path.exists() or gen_path.exists()):
+                missing.append("dist_hr.csv or dist_gen.csv")
+
+        # Seasonal plot deps
+        if "plot_seasons" in selected_tasks:
+            if not daily_npz.exists():
+                missing.append("dist_daily.npz")
+
+        # For ensemble overlays: warn if both missing
+        if ("ensemble_hist_pool" in selected_tasks or "ensemble_hist_member_mean" in selected_tasks) and (not ens_pool_path.exists() and not ens_mean_path.exists()):
+            logger.warning("[prcp_distributions] Ensemble plot requested but no ensemble histogram CSVs present. Run the relevant ensemble_hist_* task.")
+        return missing
+
+    if want_plot:
+        deps_missing = _check_plot_deps()
+        if deps_missing:
+            logger.warning(f"[prcp_distributions] Plot(s) requested but missing required files: {deps_missing}")
+        else:
+            if "plot_pooled" in selected_tasks or "plot_seasons" in selected_tasks:
+                do_pooled = ("plot_pooled" in selected_tasks)
+                do_seasons = ("plot_seasons" in selected_tasks)
+                if do_pooled:
+                    plot_pooled_distribution(out_root, eval_cfg=eval_cfg)
+                if do_seasons:
+                    plot_seasonal_distributions(out_root, eval_cfg=eval_cfg)
+                logger.info(f"[prcp_distributions] Plots saved to {figs_dir}")

@@ -38,69 +38,66 @@ DEFAULT_SHOW_INSET = True  # Show tail-zoom inset by default
 Y_FLOOR = 1e-7             # Log-axis floor to avoid collapsing
 
 
-def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> None:
-    dist_root = Path(dist_root)
-    tables = dist_root / "tables"
-    figs = _ensure_dir(dist_root / "figures")
-
-    # Set colors
-    col_hr = get_color_for_model("hr")
-    col_pmm = get_color_for_model("pmm")
-    col_ens = get_color_for_model("ensemble")
-    col_lr  = get_color_for_model("lr")
-
+def _load_bins(tables: Path) -> Optional[np.ndarray]:
     bins_path = tables / "dist_bins.csv"
     if not bins_path.exists():
-        logger.warning("[plot_distributional] No dist_bins.csv – skipping.")
-        return
-    bins = np.loadtxt(bins_path, delimiter=",", skiprows=1) if bins_path.read_text().startswith("bin_edge") else np.loadtxt(bins_path, delimiter=",")
-    # If 1D
+        return None
+    bins = (
+        np.loadtxt(bins_path, delimiter=",", skiprows=1)
+        if bins_path.read_text().startswith("bin_edge")
+        else np.loadtxt(bins_path, delimiter=",")
+    )
     if bins.ndim > 1:
         bins = bins[:, 0]
+    return bins
 
-    def _read_hist(name: str) -> Optional[np.ndarray]:
-        p = tables / f"dist_{name}.csv"
-        if not p.exists():
-            return None
-        xs, cs = [], []
-        with open(p, "r") as f:
-            next(f)  # header
-            for ln in f:
-                s = ln.strip().split(",")
-                if len(s) != 2:
-                    continue
-                xs.append(int(s[0])); cs.append(int(float(s[1])))
-        return np.array(cs, dtype=float)
 
-    hr = _read_hist("hr")
-    gen = _read_hist("gen")
-    lr  = _read_hist("lr")
+def _read_hist(tables: Path, name: str) -> Optional[np.ndarray]:
+    p = tables / f"dist_{name}.csv"
+    if not p.exists():
+        return None
+    xs, cs = [], []
+    with open(p, "r") as f:
+        next(f)  # header
+        for ln in f:
+            s = ln.strip().split(",")
+            if len(s) != 2:
+                continue
+            xs.append(int(s[0]))
+            cs.append(int(float(s[1])))
+    return np.array(cs, dtype=float)
 
-    # Try to read ensemble artifacts
+
+def _load_ensemble_artifacts(tables: Path):
+    """Return (ens_mode, gen_ens_pool, gen_ens_mean, q10, q50, q90)."""
     ens_mode = None
     gen_ens_pool = None
     gen_ens_mean = None
+
     ens_npz = tables / "dist_member_histograms.npz"
+
     if (tables / "dist_gen_ens_pool.csv").exists():
-        xs, cs = [], []
+        cs = []
         with open(tables / "dist_gen_ens_pool.csv", "r") as f:
             next(f)
             for ln in f:
                 s = ln.strip().split(",")
                 if len(s) == 2:
-                    xs.append(int(s[0])); cs.append(float(s[1]))
+                    cs.append(float(s[1]))
         gen_ens_pool = np.array(cs, dtype=float)
         ens_mode = "pool"
+
     if (tables / "dist_gen_ens_mean.csv").exists():
-        xs, ps = [], []
+        ps = []
         with open(tables / "dist_gen_ens_mean.csv", "r") as f:
             next(f)
             for ln in f:
                 s = ln.strip().split(",")
                 if len(s) == 2:
-                    xs.append(int(s[0])); ps.append(float(s[1]))
+                    ps.append(float(s[1]))
         gen_ens_mean = np.array(ps, dtype=float)
         ens_mode = "member_mean"
+
     q10 = q50 = q90 = None
     if ens_npz.exists():
         try:
@@ -116,49 +113,94 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
         except Exception as e:
             logger.warning(f"[plot_distributional] Could not load ensemble NPZ: {e}")
 
+    return ens_mode, gen_ens_pool, gen_ens_mean, q10, q50, q90
+
+
+def _load_metrics_text(tables: Path):
+    """Return (gen_text, lr_text) for plot annotations."""
     metrics_path = tables / "dist_metrics.csv"
     gen_text = None
     lr_text = None
-    if metrics_path.exists():
-        lines = metrics_path.read_text().strip().splitlines()
-        # header: ref,comp,wasserstein,ks_stat,ks_p,kl_hr_to_x
-        rows = []
-        for ln in lines[1:]:
+    if not metrics_path.exists():
+        return gen_text, lr_text
+
+    lines = metrics_path.read_text().strip().splitlines()
+    rows = []
+    for ln in lines[1:]:
+        try:
             ref, comp, w1, ks_s, ks_p, kl = ln.split(",")
             rows.append((ref, comp, float(w1), float(ks_s), float(ks_p), float(kl)))
-        # Separate GEN and LR metrics
-        gen_parts = []
-        lr_parts = []
-        for (ref, comp, w1, kss, ksp, kl) in rows:
-            if comp.lower() in ("gen_ens_pool", "gen_ens_mean", "gen_pmm"):
-                txt = (
-                    f"{comp.upper()} vs {ref.upper()}:\n"
-                    f"  W1  = {w1:.3f}\n"
-                    f"  KS  = {kss:.3f}\n" #(p={ksp:.2f})
-                    f"  KL  = {kl:.3f}"
-                )
-                gen_parts.append(txt)
-        gen_text = "\n".join(gen_parts).strip() if gen_parts else None
+        except Exception:
+            continue
 
-        for (ref, comp, w1, kss, ksp, kl) in rows:
-            if comp.lower() == "lr":
-                txt = (
-                    f"{comp.upper()} vs {ref.upper()}:\n"
-                    f"  W1  = {w1:.3f}\n"
-                    f"  KS  = {kss:.3f} (p={ksp:.2f})\n"
-                    f"  KL  = {kl:.3f}"
-                )
-                lr_parts.append(txt)
-        lr_text = "\n".join(lr_parts).strip() if lr_parts else None
+    gen_parts = []
+    lr_parts = []
+    for (ref, comp, w1, kss, ksp, kl) in rows:
+        if comp.lower() in ("gen_ens_pool", "gen_ens_mean", "gen_pmm"):
+            txt = (
+                f"{comp.upper()} vs {ref.upper()}:\n"
+                f"  W1  = {w1:.3f}\n"
+                f"  KS  = {kss:.3f}\n"
+                f"  KL  = {kl:.3f}"
+            )
+            gen_parts.append(txt)
+        if comp.lower() == "lr":
+            txt = (
+                f"{comp.upper()} vs {ref.upper()}:\n"
+                f"  W1  = {w1:.3f}\n"
+                f"  KS  = {kss:.3f} (p={ksp:.2f})\n"
+                f"  KL  = {kl:.3f}"
+            )
+            lr_parts.append(txt)
 
-    # Plot
+    gen_text = "\n".join(gen_parts).strip() if gen_parts else None
+    lr_text = "\n".join(lr_parts).strip() if lr_parts else None
+    return gen_text, lr_text
+
+
+def plot_pooled_distribution(
+    dist_root: str | Path,
+    eval_cfg: Any | None = None,
+) -> None:
+    """Pooled (all-days) 1D distribution plot.
+
+    Dependencies:
+      - tables/dist_bins.csv
+      - tables/dist_hr.csv and/or tables/dist_gen.csv (LR optional)
+      - tables/dist_metrics.csv (optional, for annotation)
+      - tables/dist_gen_ens_pool.csv or tables/dist_gen_ens_mean.csv (optional)
+      - tables/dist_member_histograms.npz (optional, for q10/q90 band)
+      - tables/dist_daily.npz (optional, for CI bands + Npix)
+    """
+    dist_root = Path(dist_root)
+    tables = dist_root / "tables"
+    figs = _ensure_dir(dist_root / "figures")
+
+    # Set colors
+    col_hr = get_color_for_model("hr")
+    col_pmm = get_color_for_model("pmm")
+    col_ens = get_color_for_model("ensemble")
+    col_lr = get_color_for_model("lr")
+
+    bins = _load_bins(tables)
+    if bins is None:
+        logger.warning("[plot_pooled_distribution] No dist_bins.csv - skipping pooled plot.")
+        return
+
+    hr = _read_hist(tables, "hr")
+    gen = _read_hist(tables, "gen")
+    lr = _read_hist(tables, "lr")
+
+    ens_mode, gen_ens_pool, gen_ens_mean, q10, q50, q90 = _load_ensemble_artifacts(tables)
+    gen_text, lr_text = _load_metrics_text(tables)
+
     _nice()
-    fig, ax = plt.subplots(figsize=(7,5.5))
+    fig, ax = plt.subplots(figsize=(7, 5.5))
 
     bin_centers = 0.5 * (bins[:-1] + bins[1:])
     eps = 1e-12
-    y_floor = Y_FLOOR  # use module-level constant
-    # normalize to PDF shape (so the area is comparable)
+    y_floor = Y_FLOOR
+
     def _norm(h: np.ndarray | None) -> np.ndarray | None:
         if h is None:
             return None
@@ -169,7 +211,7 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
 
     hr_n = _norm(hr)
     gen_n = _norm(gen)
-    lr_n  = _norm(lr)
+    lr_n = _norm(lr)
 
     # Optional toggles from eval config
     show_ci = DEFAULT_SHOW_CI
@@ -187,26 +229,23 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
     if daily_npz.exists():
         try:
             npz = np.load(daily_npz)
+
             def _series_ci(counts_key: str, n_key: str):
-                # np.load(...) returns an NpzFile which exposes 'files'; fall back to dict-like keys() if needed
                 keys = getattr(npz, "files", None)
                 if keys is None:
-                    # avoid direct attribute access that static analyzers may confuse with Path
                     keys_attr = getattr(npz, "keys", None)
                     if callable(keys_attr):
                         try:
                             k = keys_attr()
-                            # Only convert to list if the returned object is actually iterable
                             try:
-                                from collections.abc import Iterable  # local import to avoid unused-top-level import
+                                from collections.abc import Iterable
+
                                 if isinstance(k, Iterable):
                                     keys = list(k)
                                 else:
                                     keys = None
                             except Exception:
-                                # Fallback: attempt a best-effort conversion
                                 try:
-                                    # k may be typed as 'object' by static analyzers; silence that specific type error
                                     keys = list(k)  # type: ignore[arg-type]
                                 except Exception:
                                     keys = None
@@ -214,26 +253,27 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                             keys = None
                     else:
                         keys = None
+
                 if keys is None or (counts_key not in keys) or (n_key not in keys):
                     return None
-                C = npz[counts_key]      # [D,B]
-                n = npz[n_key]           # [D]
+                C = npz[counts_key]  # [D,B]
+                n = npz[n_key]  # [D]
                 if C.size == 0 or n.size == 0:
                     return None
-                # avoid division by zero
                 n = np.maximum(n.astype(float), 1.0)
                 pdf = (C.astype(float).T / n).T  # [D,B]
                 lo = np.percentile(pdf, 5, axis=0)
                 hi = np.percentile(pdf, 95, axis=0)
                 med = np.percentile(pdf, 50, axis=0)
                 return lo, hi, med
-            ci["hr"]  = _series_ci("counts_hr",  "n_hr")
+
+            ci["hr"] = _series_ci("counts_hr", "n_hr")
             ci["gen"] = _series_ci("counts_gen", "n_gen")
             if "counts_lr" in npz and "n_lr" in npz:
                 ci["lr"] = _series_ci("counts_lr", "n_lr")
         except Exception as e:
-            logger.warning(f"[plot_distributional] Failed to parse dist_daily.npz for CI shading: {e}")
-    # Plot CI bands (shading) before lines, only if show_ci is True
+            logger.warning(f"[plot_pooled_distribution] Failed to parse dist_daily.npz for CI shading: {e}")
+
     if show_ci:
         val = ci.get("hr")
         if val is not None:
@@ -242,7 +282,9 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                 bin_centers,
                 np.maximum(_finite(lo, eps), y_floor).tolist(),
                 np.maximum(_finite(hi, eps), y_floor).tolist(),
-                color=col_hr, alpha=0.10, linewidth=0
+                color=col_hr,
+                alpha=0.10,
+                linewidth=0,
             )
         val = ci.get("gen")
         if val is not None:
@@ -251,7 +293,9 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                 bin_centers,
                 np.maximum(_finite(lo, eps), y_floor).tolist(),
                 np.maximum(_finite(hi, eps), y_floor).tolist(),
-                color=col_pmm, alpha=0.08, linewidth=0
+                color=col_pmm,
+                alpha=0.08,
+                linewidth=0,
             )
         val = ci.get("lr")
         if val is not None and lr_n is not None:
@@ -260,20 +304,20 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                 bin_centers,
                 np.maximum(_finite(lo, eps), y_floor).tolist(),
                 np.maximum(_finite(hi, eps), y_floor).tolist(),
-                color=col_lr, alpha=0.07, linewidth=0
+                color=col_lr,
+                alpha=0.07,
+                linewidth=0,
             )
 
-    # Helper: percentile from histogram
     def _percentile_from_hist(counts: np.ndarray | None, bins_arr: np.ndarray, p: float) -> Optional[float]:
         if counts is None or counts.size == 0:
             return None
         c = np.cumsum(counts.astype(float))
         c /= max(c[-1], 1.0)
         idx = np.searchsorted(c, p)
-        idx = int(np.clip(idx, 0, len(bins_arr)-2))
-        return float(0.5 * (bins_arr[idx] + bins_arr[idx+1]))
+        idx = int(np.clip(idx, 0, len(bins_arr) - 2))
+        return float(0.5 * (bins_arr[idx] + bins_arr[idx + 1]))
 
-    # Base curves: LR in the back, then HR, then PMM; ensemble will sit on top via ZORDER_ENS
     if lr_n is not None:
         ax.plot(
             bin_centers,
@@ -298,13 +342,11 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
             bin_centers,
             gen_n,
             color=col_pmm,
-            ls='-.',
+            ls="-.",
             lw=1.2,
             label="PMM",
             zorder=ZORDER_PMM,
         )
-
-    # Build reusable ensemble curve (pool preferred, else member mean)
     ens_curve = None
     if gen_ens_pool is not None:
         s = float(np.sum(gen_ens_pool))
@@ -313,16 +355,15 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
     elif gen_ens_mean is not None:
         ens_curve = np.asarray(gen_ens_mean, dtype=float)
 
-    # Reference wet-day threshold
-    wet_thr = float(getattr(eval_cfg, "wet_threshold_mm", 1.0)) if eval_cfg is not None else 1.0
-    # ax.axvline(wet_thr, ls=":", lw=0.8, color="0.3", alpha=0.6)
+    # Reference wet-day threshold (kept for optional debugging/annotation)
+    _ = float(getattr(eval_cfg, "wet_threshold_mm", 1.0)) if eval_cfg is not None else 1.0
 
-    # HR percentiles from histogram
-    p95   = _percentile_from_hist(hr, bins, 0.95)
-    p99   = _percentile_from_hist(hr, bins, 0.99)
-    p999  = _percentile_from_hist(hr, bins, 0.999)
+    p95 = _percentile_from_hist(hr, bins, 0.95)
+    p99 = _percentile_from_hist(hr, bins, 0.99)
+    p999 = _percentile_from_hist(hr, bins, 0.999)
     p9999 = _percentile_from_hist(hr, bins, 0.9999)
     p99999 = _percentile_from_hist(hr, bins, 0.99999)
+
     ylim_main = ax.get_ylim()
     y_ann = ylim_main[1] * 0.6
     if p95 is not None:
@@ -341,7 +382,7 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
         ax.axvline(p99999, color="0.2", lw=0.8, ls="--", alpha=0.6)
         ax.text(p99999, y_ann, "P99.999", rotation=90, va="top", ha="right", fontsize=8, color="0.25")
 
-    # Tail inset (fixed window 20–80 mm/day), optional and placed fully outside the axes
+    # Tail inset (optional)
     try:
         if show_inset:
             x_min = 20.0
@@ -349,11 +390,12 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
             if x_max > x_min:
                 ax_ins = inset_axes(
                     ax,
-                    width="36%", height="56%",
+                    width="36%",
+                    height="56%",
                     loc="upper right",
-                    bbox_to_anchor=(-0.22, 1.0),   # outside, to the LEFT of the axes to avoid legend
+                    bbox_to_anchor=(-0.22, 1.0),
                     bbox_transform=ax.transAxes,
-                    borderpad=0.0
+                    borderpad=0.0,
                 )
                 if hr_n is not None:
                     ax_ins.plot(bin_centers, hr_n, color=col_hr, lw=1.2)
@@ -369,9 +411,8 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                 ax_ins.tick_params(labelsize=7)
                 ax_ins.grid(True, ls=":", alpha=0.3)
     except Exception as e:
-        logger.info(f"[plot_distributional] Tail inset skipped: {e}")
+        logger.info(f"[plot_pooled_distribution] Tail inset skipped: {e}")
 
-    # Plot ensemble curve(s)
     if ens_curve is not None:
         ax.plot(
             bin_centers,
@@ -382,7 +423,14 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
             zorder=ZORDER_ENS,
         )
     if q10 is not None and q90 is not None:
-        ax.fill_between(bin_centers, np.maximum(q10, eps).tolist(), np.maximum(q90, eps).tolist(), alpha=0.10, linewidth=0, label="Ens spread (10–90%)")
+        ax.fill_between(
+            bin_centers,
+            np.maximum(q10, eps).tolist(),
+            np.maximum(q90, eps).tolist(),
+            alpha=0.10,
+            linewidth=0,
+            label="Ens spread (10-90%)",
+        )
 
     # === Baseline overlays ===
     bo = getattr(eval_cfg, "baselines_overlay", None) if eval_cfg is not None else None
@@ -392,346 +440,235 @@ def plot_distributional(dist_root: str | Path, eval_cfg: Any | None = None) -> N
                 sample_root=bo["sample_root"],
                 types=tuple(bo.get("types", ())),
                 split=str(bo.get("split", "test")),
-                eval_type="distributional"
+                eval_type="distributional",
             )
         except Exception as e:
-            logger.warning(f"[plot_distributional] Failed to resolve baseline dirs: {e}")
+            logger.warning(f"[plot_pooled_distribution] Failed to resolve baseline dirs: {e}")
             dirs = {}
-        for t, d in dirs.items():
+        for t, d0 in dirs.items():
             try:
-                # Try to read baseline's dist_bins.csv
                 bins_arr = None
-                bins_path = d / "dist_bins.csv"
-                if bins_path.exists():
-                    bins_arr = np.loadtxt(bins_path, delimiter=",", skiprows=1) if bins_path.read_text().startswith("bin_edge") else np.loadtxt(bins_path, delimiter=",")
+                bins_path_b = d0 / "dist_bins.csv"
+                if bins_path_b.exists():
+                    bins_arr = (
+                        np.loadtxt(bins_path_b, delimiter=",", skiprows=1)
+                        if bins_path_b.read_text().startswith("bin_edge")
+                        else np.loadtxt(bins_path_b, delimiter=",")
+                    )
                     if bins_arr.ndim > 1:
                         bins_arr = bins_arr[:, 0]
                 else:
-                    logger.info(f"[plot_distributional] Baseline {t}: missing dist_bins.csv at {bins_path}")
+                    logger.info(f"[plot_pooled_distribution] Baseline {t}: missing dist_bins.csv at {bins_path_b}")
                     continue
+
                 bin_centers_b = 0.5 * (bins_arr[:-1] + bins_arr[1:])
-                # Try dist_gen.csv first, else dist_lr.csv
-                arr = load_csv_if_exists(d, "dist_gen")
+                arr = load_csv_if_exists(d0, "dist_gen")
                 if arr is None:
-                    arr = load_csv_if_exists(d, "dist_lr")
+                    arr = load_csv_if_exists(d0, "dist_lr")
                     if arr is None:
-                        logger.info(f"[plot_distributional] Baseline {t}: missing both dist_gen.csv and dist_lr.csv in {d}")
+                        logger.info(
+                            f"[plot_pooled_distribution] Baseline {t}: missing both dist_gen.csv and dist_lr.csv in {d0}"
+                        )
                         continue
-                # arr: structured array with fields 'bin_idx' and 'count'
+
+
                 try:
                     counts = np.asarray(arr["count"], dtype=float)
                 except Exception:
-                    # fallback for 2-column shape
                     counts = np.asarray(arr[:, 1], dtype=float)
                 pdf = counts / (np.sum(counts) + eps)
                 label = bo.get("labels", {}).get(t, t)
-                # Start from configured style (if any) and enforce a sensible default z-order
                 style = dict(bo.get("styles", {}).get(t, {}))
                 style.setdefault("zorder", ZORDER_BASELINE)
                 ax.plot(bin_centers_b, pdf, label=label, **style)
             except Exception as e:
-                logger.info(f"[plot_distributional] Baseline overlay for {t} failed: {e}")
+                logger.info(f"[plot_pooled_distribution] Baseline overlay for {t} failed: {e}")
                 continue
-
 
     ax.set_xlabel("Precipitation (mm/day)")
     ax.set_yscale("log")
     ax.set_ylabel("Probability")
-    # Title + subtitle with pooling info
-    ens_label = " (ensemble)" if (gen_ens_pool is not None or gen_ens_mean is not None) else ""
     ax.set_title("Pooled pixel distributions", fontsize=15, pad=10)
-    # Compact annotation for sample size (top-right, inside axes, away from title)
-    Npix = None
-    if daily_npz.exists():
-        try:
-            d = np.load(daily_npz)
-            if "n_hr" in d:
-                Npix = int(np.sum(d["n_hr"]))
-        except Exception:
-            Npix = None
-    # if Npix is not None:
-    #     ax.text(0.98, 0.98, f"N ≈ {Npix:,}", transform=ax.transAxes,
-    #             ha="right", va="top", fontsize=9, color="0.35",
-    #             bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="0.8", alpha=0.8))
 
     ax.grid(True, ls=":", alpha=0.5)
     ax.legend(fontsize=9)
-    # Make main y-axis respect the new floor
-    ax.set_ylim(bottom=max(ax.get_ylim()[0], y_floor))    
+    ax.set_ylim(bottom=max(ax.get_ylim()[0], y_floor))
 
-    # Place GEN vs HR metrics (top-left) and LR vs HR (bottom-right) to avoid overlap
     boxprops = dict(boxstyle="round,pad=0.25", fc="white", ec="0.7", alpha=0.85)
     if gen_text:
         ax.text(
-            0.02, 0.4, gen_text, transform=ax.transAxes,
-            va="top", ha="left", fontsize=8,
+            0.02,
+            0.4,
+            gen_text,
+            transform=ax.transAxes,
+            va="top",
+            ha="left",
+            fontsize=8,
             bbox=boxprops,
         )
-
     if lr_text:
         ax.text(
-            0.02, 0.02, lr_text, transform=ax.transAxes,
-            va="bottom", ha="left", fontsize=8,
+            0.02,
+            0.02,
+            lr_text,
+            transform=ax.transAxes,
+            va="bottom",
+            ha="left",
+            fontsize=8,
             bbox=boxprops,
         )
 
-
-    # === Seasonal distributions figure ===
     try:
-        if daily_npz.exists():
-            d = np.load(daily_npz)
-            bins_s = d["bins"] if "bins" in d else bins
-            mids_s = 0.5 * (bins_s[:-1] + bins_s[1:])
-            dates_s = d["dates"].astype(str) if "dates" in d else np.array([], dtype=str)
-            # Helper: map yyyymmdd -> season label
-            def _season(yyyymmdd: str) -> str:
-                try:
-                    m = datetime.strptime(yyyymmdd, "%Y%m%d").month
-                except Exception:
-                    return "UNK"
-                if m in (12,1,2): return "DJF"
-                if m in (3,4,5):  return "MAM"
-                if m in (6,7,8):  return "JJA"
-                return "SON"
-            idxs = {k: [] for k in ("DJF","MAM","JJA","SON")}
-            for i, ds in enumerate(dates_s):
-                s = _season(ds)
-                if s in idxs:
-                    idxs[s].append(i)
-
-            # === Helper: build seasonal PDF from baseline dist_daily.npz ===
-            def _seasonal_pdf_from_daily_npz(npz_obj, season_label: str):
-                """
-                Build a season-specific PDF from a baseline dist_daily.npz-like object.
-                Prefers counts_gen; falls back to counts_lr if counts_gen missing.
-                Returns (mids, pdf) or (None, None) if unavailable.
-                """
-                try:
-                    bins_b = npz_obj["bins"] if "bins" in npz_obj else None
-                    if bins_b is None:
-                        return None, None
-                    mids_b = 0.5 * (bins_b[:-1] + bins_b[1:])
-                    dates_b = npz_obj["dates"].astype(str) if "dates" in npz_obj else None
-                    if dates_b is None or dates_b.size == 0:
-                        return None, None
-
-                    # Select season indices based on baseline dates
-                    ids = []
-                    for ii, ds in enumerate(dates_b):
-                        if _season(str(ds)) == season_label:
-                            ids.append(ii)
-                    if not ids:
-                        return None, None
-                    ids = np.asarray(ids, dtype=int)
-
-                    counts_key = "counts_gen" if "counts_gen" in npz_obj else ("counts_lr" if "counts_lr" in npz_obj else None)
-                    if counts_key is None:
-                        return None, None
-
-                    C = npz_obj[counts_key][ids].sum(axis=0)
-                    s = float(np.sum(C))
-                    if s <= 0:
-                        return None, None
-                    pdf = C.astype(float) / s
-                    return mids_b, pdf
-                except Exception:
-                    return None, None
-
-            # Seasonal facecolors
-            season_face = {
-                "DJF": (0.35, 0.55, 0.85, 0.20),  # stronger light blue
-                "MAM": (0.60, 0.80, 0.60, 0.20),  # stronger light green
-                "JJA": (0.95, 0.85, 0.40, 0.22),  # stronger light yellow
-                "SON": (0.95, 0.70, 0.60, 0.20),  # stronger light red/orange
-            }
-            figS, axs = plt.subplots(2, 2, figsize=(8,7), sharey=True)
-            for axS, (lab, ids) in zip(axs.flat, idxs.items()):
-                if not ids:
-                    axS.set_title(f"{lab} (no data)"); axS.axis('off'); continue
-                # light seasonal background
-                if lab in season_face:
-                    axS.set_facecolor(season_face[lab])
-                ids = np.asarray(ids, dtype=int)
-                # HR
-                C_hr = d["counts_hr"][ids].sum(axis=0) if "counts_hr" in d else None
-                C_gen = d["counts_gen"][ids].sum(axis=0) if "counts_gen" in d else None
-                C_lr = d["counts_lr"][ids].sum(axis=0) if ("counts_lr" in d) else None
-
-                def _norm_counts(C):
-                    if C is None:
-                        return None
-                    s = float(np.sum(C))
-                    return (C / s) if s > 0 else None
-                
-                pdf_hr = _norm_counts(C_hr)
-                pdf_gen = _norm_counts(C_gen)
-                pdf_lr  = _norm_counts(C_lr)
-                
-                # Prefer ensemble curve over PMM if available
-                pdf_gen_pref = ens_curve if ens_curve is not None else pdf_gen
-
-                if pdf_hr is not None:
-                    axS.plot(mids_s, np.maximum(pdf_hr, eps), color=col_hr, lw=1.2, label="HR")
-                if pdf_gen_pref is not None:
-                    axS.plot(
-                        mids_s,
-                        np.maximum(pdf_gen_pref, eps),
-                        color=(col_ens if ens_curve is not None else col_pmm),
-                        lw=1.1,
-                        label=("Gen (ensemble)" if ens_curve is not None else "PMM"),
-                    )
-                if pdf_lr is not None:
-                    axS.plot(mids_s, np.maximum(pdf_lr, eps), color=col_lr, lw=1.1, ls="--", label="LR")
-
-                # === Baseline overlays in seasonal plots (e.g., QM) ===
-                bo_season = getattr(eval_cfg, "baselines_overlay", None) if eval_cfg is not None else None
-                if bo_season:
-                    try:
-                        dirs_season = resolve_baseline_dirs(
-                            sample_root=bo_season["sample_root"],
-                            types=tuple(bo_season.get("types", ())),
-                            split=str(bo_season.get("split", "test")),
-                            eval_type="distributional",
-                        )
-                    except Exception as e:
-                        logger.warning(f"[plot_distributional] Seasonal baselines: failed to resolve baseline dirs: {e}")
-                        dirs_season = {}
-
-                    for t, ddir in dirs_season.items():
-                        try:
-                            daily_b = ddir / "dist_daily.npz"
-                            if not daily_b.exists():
-                                # If the baseline didn’t compute seasonal/daily histograms, skip (explicitly missing)
-                                continue
-                            npz_b = np.load(daily_b)
-                            mids_b, pdf_b = _seasonal_pdf_from_daily_npz(npz_b, lab)
-                            if mids_b is None or pdf_b is None:
-                                continue
-
-                            label_b = bo_season.get("labels", {}).get(t, t)
-                            style_b = dict(bo_season.get("styles", {}).get(t, {}))
-                            style_b.setdefault("zorder", ZORDER_BASELINE)
-                            # If the user forgot to specify linestyle/linewidth in styles, keep them readable
-                            style_b.setdefault("lw", 1.1)
-                            axS.plot(mids_b, np.maximum(pdf_b, eps), label=label_b, **style_b)
-                        except Exception as e:
-                            logger.info(f"[plot_distributional] Seasonal baseline overlay for {t} failed: {e}")
-                            continue
-
-                # Reference wet-day line
-                axS.axvline(wet_thr, ls=":", lw=0.6, color="0.4", alpha=0.6)
-
-                def _p_from_C(C, p):
-                    if C is None:
-                        return None
-                    c = np.cumsum(C.astype(float))
-                    c /= max(c[-1], 1.0)
-                    idx = int(np.clip(np.searchsorted(c, p), 0, len(bins_s) - 2))
-                    return float(0.5 * (bins_s[idx] + bins_s[idx + 1]))
-
-                p95s   = _p_from_C(C_hr, 0.95)
-                p99s   = _p_from_C(C_hr, 0.99)
-                p999s  = _p_from_C(C_hr, 0.999)
-                p9999s = _p_from_C(C_hr, 0.9999)
-                p99999s = _p_from_C(C_hr, 0.99999)
-
-                axS.set_title(lab)
-                axS.set_yscale("log")
-                axS.set_ylim(bottom=y_floor)
-                axS.set_xlabel("Precipitation (mm/day)")
-                axS.grid(True, ls=":", alpha=0.4)
-
-                # Add percentile verticals and labels after y-limits are fixed
-                ylim_s = axS.get_ylim()
-                y_ann_s = ylim_s[1] * 0.6                
-                if p95s is not None:
-                    axS.axvline(p95s, color="0.2", lw=0.6, ls="--", alpha=0.5)
-                    axS.text(
-                        p95s,
-                        y_ann_s,
-                        "P95",
-                        rotation=90,
-                        va="top",
-                        ha="right",
-                        fontsize=8.5,
-                        color="0.25",
-                    )
-                if p99s is not None:
-                    axS.axvline(p99s, color="0.2", lw=0.6, ls="--", alpha=0.5)
-                    axS.text(
-                        p99s,
-                        y_ann_s,
-                        "P99",
-                        rotation=90,
-                        va="top",
-                        ha="right",
-                        fontsize=8.5,
-                        color="0.25",
-                    )
-                if p999s is not None:
-                    axS.axvline(p999s, color="0.2", lw=0.6, ls="--", alpha=0.5)
-                    axS.text(
-                        p999s,
-                        y_ann_s,
-                        "P99.9",
-                        rotation=90,
-                        va="top",
-                        ha="right",
-                        fontsize=8.5,
-                        color="0.25",
-                    )
-                if p9999s is not None:
-                    axS.axvline(p9999s, color="0.2", lw=0.6, ls="--", alpha=0.5)
-                    axS.text(
-                        p9999s,
-                        y_ann_s,
-                        "P99.99",
-                        rotation=90,
-                        va="top",
-                        ha="right",
-                        fontsize=8.5,
-                        color="0.25",
-                    )
-                if p99999s is not None:
-                    axS.axvline(p99999s, color="0.2", lw=0.6, ls="--", alpha=0.5)
-                    axS.text(
-                        p99999s,
-                        y_ann_s,
-                        "P99.999",
-                        rotation=90,
-                        va="top",
-                        ha="right",
-                        fontsize=8.5,
-                        color="0.25",
-                    )
-            # Combined legend across panels (unique labels)
-            handles, labels = [], []
-            for _ax in axs.flat:
-                h, l = _ax.get_legend_handles_labels()
-                for hh, ll in zip(h, l):
-                    if ll not in labels:
-                        handles.append(hh)
-                        labels.append(ll)
-
-            if handles:
-                # Place legend outside panels, to the right
-                figS.legend(
-                    handles,
-                    labels,
-                    loc="center left",
-                    bbox_to_anchor=(0.9, 0.5),
-                    ncol=1,
-                    fontsize=10,
-                    frameon=True,
-                )
-
-            figS.tight_layout(rect=(0.03, 0.05, 0.88, 0.98))
-            # _savefig(figS, figs / "dist_pooled_seasons.png", dpi=SET_DPI)
-            # Save with tight bounding box so the external (right-side) legend is not clipped
-            figS.savefig(str(figs / "dist_pooled_seasons.png"), dpi=SET_DPI, bbox_inches="tight")
-            plt.close(figS)
+        _savefig(fig, figs / "dist_pooled.png", dpi=SET_DPI)
     except Exception as e:
-        logger.info(f"[plot_distributional] Seasonal figure skipped: {e}")
+        logger.warning(f"[plot_pooled_distribution] Failed saving pooled plot: {e}")
+    plt.close(fig)
 
-    fig.tight_layout(rect=(0, 0, 0.88, 1.0))  # leave space on the right for the inset
-    _savefig(fig, figs / "dist_pooled.png", dpi=SET_DPI)
+
+def plot_seasonal_distributions(
+    dist_root: str | Path,
+    eval_cfg: Any | None = None,
+) -> None:
+    """Seasonal distributions plot.
+
+    Dependencies:
+      - tables/dist_daily.npz (required)
+      - tables/dist_bins.csv (fallback bins if daily.npz lacks them)
+
+    Note: seasonal plots intentionally do NOT auto-trigger pooled plotting.
+    """
+    dist_root = Path(dist_root)
+    tables = dist_root / "tables"
+    figs = _ensure_dir(dist_root / "figures")
+
+    daily_npz = tables / "dist_daily.npz"
+    if not daily_npz.exists():
+        logger.warning("[plot_seasonal_distributions] dist_daily.npz missing - cannot plot seasons. Run daily_hist first.")
+        return
+
+    # Set colors
+    col_hr = get_color_for_model("hr")
+    col_pmm = get_color_for_model("pmm")
+    col_lr = get_color_for_model("lr")
+
+    bins_fallback = _load_bins(tables)
+    if bins_fallback is None:
+        logger.warning("[plot_seasonal_distributions] dist_bins.csv missing; will require bins inside dist_daily.npz.")
+
+    try:
+        d = np.load(daily_npz)
+        bins_s = d["bins"] if "bins" in d else bins_fallback
+        if bins_s is None:
+            logger.warning("[plot_seasonal_distributions] No bins available - skipping seasonal plot.")
+            return
+        mids_s = 0.5 * (bins_s[:-1] + bins_s[1:])
+
+        dates_s = d["dates"].astype(str) if "dates" in d else np.array([], dtype=str)
+
+        def _season(yyyymmdd: str) -> str:
+            try:
+                m = datetime.strptime(yyyymmdd, "%Y%m%d").month
+            except Exception:
+                return "UNK"
+            if m in (12, 1, 2):
+                return "DJF"
+            if m in (3, 4, 5):
+                return "MAM"
+            if m in (6, 7, 8):
+                return "JJA"
+            return "SON"
+
+        seasons = np.array([_season(s) for s in dates_s], dtype="U")
+
+        # Required arrays
+        counts_hr = d.get("counts_hr", None)
+        counts_gen = d.get("counts_gen", None)
+        n_hr = d.get("n_hr", None)
+        n_gen = d.get("n_gen", None)
+
+        if counts_hr is None or counts_gen is None or n_hr is None or n_gen is None:
+            logger.warning("[plot_seasonal_distributions] dist_daily.npz missing required keys (counts_hr/counts_gen/n_hr/n_gen).")
+            return
+
+        counts_lr = d.get("counts_lr", None)
+        n_lr = d.get("n_lr", None)
+
+        _nice()
+        fig, axes = plt.subplots(2, 2, figsize=(10, 7), sharex=True, sharey=True)
+        ax_map = {"DJF": axes[0, 0], "MAM": axes[0, 1], "JJA": axes[1, 0], "SON": axes[1, 1]}
+
+        eps = 1e-12
+        y_floor = Y_FLOOR
+
+        def _pool_pdf(C: np.ndarray, n: np.ndarray, sel: np.ndarray) -> Optional[np.ndarray]:
+            if C is None or n is None:
+                return None
+            if C.size == 0 or n.size == 0:
+                return None
+            if np.sum(sel) == 0:
+                return None
+            C_sel = C[sel]
+            n_sel = np.maximum(n[sel].astype(float), 1.0)
+            # pooled pdf across selected days
+            pooled_counts = C_sel.sum(axis=0).astype(float)
+            pooled_pdf = pooled_counts / max(pooled_counts.sum(), 1.0)
+            return pooled_pdf
+
+        for sname in ("DJF", "MAM", "JJA", "SON"):
+            ax = ax_map[sname]
+            sel = (seasons == sname)
+
+            hr_pdf = _pool_pdf(counts_hr, n_hr, sel)
+            gen_pdf = _pool_pdf(counts_gen, n_gen, sel)
+            lr_pdf = _pool_pdf(counts_lr, n_lr, sel) if (counts_lr is not None and n_lr is not None) else None
+
+            if lr_pdf is not None:
+                ax.plot(mids_s, np.maximum(lr_pdf, eps), color=col_lr, lw=1.0, ls="--", label="LR")
+            if hr_pdf is not None:
+                ax.plot(mids_s, np.maximum(hr_pdf, eps), color=col_hr, lw=1.5, label="HR")
+            if gen_pdf is not None:
+                ax.plot(mids_s, np.maximum(gen_pdf, eps), color=col_pmm, lw=1.2, ls="-.", label="PMM")
+
+            ax.set_title(sname)
+            ax.grid(True, ls=":", alpha=0.4)
+            ax.set_yscale("log")
+            ax.set_ylim(bottom=y_floor)
+
+        # Shared labels
+        for ax in axes[1, :]:
+            ax.set_xlabel("Precipitation (mm/day)")
+        for ax in axes[:, 0]:
+            ax.set_ylabel("Probability")
+
+        # One legend (top-left)
+        axes[0, 0].legend(fontsize=9)
+
+        fig.suptitle("Seasonal pooled pixel distributions", fontsize=15)
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+
+        try:
+            _savefig(fig, figs / "dist_seasons.png", dpi=SET_DPI)
+        except Exception as e:
+            logger.warning(f"[plot_seasonal_distributions] Failed saving seasonal plot: {e}")
+        plt.close(fig)
+
+    except Exception as e:
+        logger.warning(f"[plot_seasonal_distributions] Failed to build seasonal plots: {e}")
+
+
+def plot_distributional(
+    dist_root: str | Path,
+    eval_cfg: Any | None = None,
+    *,
+    plot_pooled: bool = True,
+    plot_seasons: bool = True,
+) -> None:
+    """Backward-compatible wrapper.
+
+    IMPORTANT: tasks should call `plot_pooled_distribution` and/or
+    `plot_seasonal_distributions` directly to avoid surprises.
+    """
+    if plot_pooled:
+        plot_pooled_distribution(dist_root, eval_cfg=eval_cfg)
+    if plot_seasons:
+        plot_seasonal_distributions(dist_root, eval_cfg=eval_cfg)
