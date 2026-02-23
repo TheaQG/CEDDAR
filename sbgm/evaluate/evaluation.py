@@ -110,6 +110,8 @@ class EvaluationConfig:
     sal_min_area_px: int = 9
     sal_smooth_sigma: Optional[float] = 0.75
     sal_peakedness_mode: str = "largest"  # "largest" | "herfindahl"
+    # Optional per-family plan overrides (Paper 2 subset eval)
+    family_plans: Optional[Dict[str, Any]] = None
 class EvaluationRunner:
     """
         Clean runner that uses EvalDataResolver to perform evaluations.
@@ -121,13 +123,22 @@ class EvaluationRunner:
             eval_cfg: EvaluationConfig,
             device: torch.device,
             baseline_eval_dirs: Optional[Dict[str, str]] = None,
-            plot_only: bool = False
+            plot_only: bool = False,
+            family_plans: Optional[Dict[str, Any]] = None,
     ):
         self.cfg_yaml = cfg_yaml
         self.eval_cfg = eval_cfg
         self.device = device
         self.baseline_eval_dirs = baseline_eval_dirs
         self.plot_only = plot_only
+        self.family_plans = family_plans
+        # Expose family plans to the per-family modules via eval_cfg as well
+        if self.family_plans is not None:
+            try:
+                if getattr(self.eval_cfg, "family_plans", None) is None:
+                    self.eval_cfg.family_plans = self.family_plans
+            except Exception:
+                pass
 
         # Data access
         self.data = EvalDataResolver(
@@ -187,30 +198,62 @@ class EvaluationRunner:
         if tasks is None:
             # Sensible default: run prcipitation probabilistic evaluation
             tasks = ["prcp_probabilistic", "prcp_scale", "prcp_distributional", "prcp_extremes"]
+        def _plan_for(task_norm: str) -> Dict[str, Any]:
+            # Accept both canonical and common aliases.
+            aliases = {
+                "prcp_distributions": "prcp_distributional",
+                "prcp_distribution": "prcp_distributional",
+                "dist": "prcp_distributional",
+            }
+            t = aliases.get(task_norm, task_norm)
+            return dict(self.family_plans.get(t, {}))
+
+        def _task_plot_only(task_norm: str) -> bool:
+            plan = _plan_for(task_norm)
+            if "output_metrics" in plan:
+                return (not bool(plan.get("output_metrics", True)))
+            return bool(self.plot_only)
+
+        def _task_make_plots(task_norm: str) -> bool:
+            plan = _plan_for(task_norm)
+            if "output_plots" in plan:
+                return bool(plan.get("output_plots", True))
+            return bool(getattr(self.eval_cfg, "make_plots", True))
+
         for task in tasks:
             # Normalize and log each task
             task_norm = str(task).strip().lower()
             logger.info(f"[EvaluationRunner] Dispatching task: '{task}' (normalized: '{task_norm}')")
+            plan = _plan_for(task_norm)
+            if plan:
+                # If explicitly disabled at the plan level, skip.
+                if ("enabled" in plan) and (not bool(plan.get("enabled", True))):
+                    logger.info(f"[EvaluationRunner] Task '{task}' disabled by family_plans; skipping.")
+                    continue
+                # If both plots and metrics are disabled, skip.
+                if ("output_plots" in plan) and ("output_metrics" in plan):
+                    if (not bool(plan.get("output_plots", True))) and (not bool(plan.get("output_metrics", True))):
+                        logger.info(f"[EvaluationRunner] Task '{task}' has output_plots=False and output_metrics=False; skipping.")
+                        continue
+
             # 1) Precipitation probabilistic evaluation
             if task_norm in ("prcp_probabilistic", "prcp_prob", "prob", "probabilistic"):
                 out_dir = self.out_root / "prcp" / "probabilistic"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
-                
                 run_probabilistic(
                     resolver=self.data,
                     eval_cfg=self.eval_cfg,
                     out_root=out_dir,
-                    plot_only=self.plot_only,
+                    plot_only=_task_plot_only(task_norm),
                 )
                 continue
-            
+
             # 2) Precipitation scale evaluation
             if task_norm in ("prcp_scale", "scale", "prcp_psd", "scale_dependent"):
                 out_dir = self.out_root / "prcp" / "scale"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
-                
                 # build a light eval cfg-like object for scale code
                 class _ScaleCfg:
                     hr_dx_km: float
@@ -235,7 +278,7 @@ class EvaluationRunner:
                 sc.compute_lr_fss = bool(self.eval_cfg.compute_lr_fss)
                 sc.low_k_max = float(self.eval_cfg.low_k_max)
                 sc.high_k_min = float(self.eval_cfg.high_k_min)
-                sc.make_plots = bool(self.eval_cfg.make_plots)
+                sc.make_plots = _task_make_plots(task_norm)
                 sc.use_ensemble = bool(self.eval_cfg.use_ensemble)
                 sc.ensemble_n_members = self.eval_cfg.ensemble_n_members
                 sc.ensemble_member_seed = int(self.eval_cfg.ensemble_member_seed)
@@ -245,12 +288,12 @@ class EvaluationRunner:
                     resolver=self.data,
                     eval_cfg=sc,
                     out_root=out_dir,
-                    plot_only=self.plot_only,
+                    plot_only=_task_plot_only(task_norm),
                 )
                 continue
 
             # 3) Precipitation distributional evaluation
-            if task_norm in ("prcp_distributional", "prcp_dist", "distributional", "dist"):
+            if task_norm in ("prcp_distributional", "prcp_distributions", "prcp_dist", "distributional", "dist"):
                 out_dir = self.out_root / "prcp" / "distributional"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
@@ -259,7 +302,7 @@ class EvaluationRunner:
                     resolver=self.data,
                     eval_cfg=self.eval_cfg,
                     out_root=out_dir,
-                    plot_only=self.plot_only,
+                    plot_only=_task_plot_only(task_norm),
                 )
                 continue
 
@@ -273,7 +316,7 @@ class EvaluationRunner:
                     resolver=self.data,
                     eval_cfg=self.eval_cfg,
                     out_root=out_dir,
-                    plot_only=self.plot_only,
+                    plot_only=_task_plot_only(task_norm),
                 )
                 continue
             # 5) Precipitation spatial structure evaluation
@@ -281,7 +324,13 @@ class EvaluationRunner:
                 out_dir = self.out_root / "prcp" / "spatial"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
-
+                # For spatial/features/dates, gate execution if both plots and metrics are disabled.
+                plan = _plan_for(task_norm)
+                if plan:
+                    if ("output_plots" in plan) and ("output_metrics" in plan):
+                        if (not bool(plan.get("output_plots", True))) and (not bool(plan.get("output_metrics", True))):
+                            logger.info(f"[EvaluationRunner] Task '{task}' has output_plots=False and output_metrics=False; skipping.")
+                            continue
                 run_spatial(
                     resolver=self.data,
                     eval_cfg=self.eval_cfg,
@@ -289,20 +338,18 @@ class EvaluationRunner:
                 )
                 continue
 
-
             # 6) Precipitation temporal evaluation
             if task_norm in ("prcp_temporal", "temporal", "time", "timeseries"):
                 out_dir = self.out_root / "prcp" / "temporal"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
-
                 run_temporal(
                     resolver=self.data,
                     eval_cfg=self.eval_cfg,
                     out_root=out_dir,
                     group_by=getattr(self.eval_cfg, "temporal_group_by", "year"),
                     seasons=getattr(self.eval_cfg, "seasons", ("ALL","DJF","MAM","JJA","SON")),
-                    make_plots=bool(getattr(self.eval_cfg, "make_plots", True)),
+                    make_plots=_task_make_plots(task_norm),
                 )
                 continue
 
@@ -311,7 +358,12 @@ class EvaluationRunner:
                 out_dir = self.out_root / "prcp" / "features"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
-
+                plan = _plan_for(task_norm)
+                if plan:
+                    if ("output_plots" in plan) and ("output_metrics" in plan):
+                        if (not bool(plan.get("output_plots", True))) and (not bool(plan.get("output_metrics", True))):
+                            logger.info(f"[EvaluationRunner] Task '{task}' has output_plots=False and output_metrics=False; skipping.")
+                            continue
                 run_features(
                     resolver=self.data,
                     eval_cfg=self.eval_cfg,
@@ -324,7 +376,12 @@ class EvaluationRunner:
                 out_dir = self.out_root / "prcp" / "dates"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
-
+                plan = _plan_for(task_norm)
+                if plan:
+                    if ("output_plots" in plan) and ("output_metrics" in plan):
+                        if (not bool(plan.get("output_plots", True))) and (not bool(plan.get("output_metrics", True))):
+                            logger.info(f"[EvaluationRunner] Task '{task}' has output_plots=False and output_metrics=False; skipping.")
+                            continue
                 run_dates(
                     resolver=self.data,
                     eval_cfg=self.eval_cfg,
@@ -339,7 +396,7 @@ class EvaluationRunner:
                 )
                 continue
 
-            logger.warning(f"[EvaluationRunner] Unknown task '{task}' (normalize '{task_norm}); skipping.")                
+            logger.warning(f"[EvaluationRunner] Unknown task '{task}' (normalized: '{task_norm}'); skipping.")
         # To be implemented: calls to...
         # if "scale" in tasks: evaluate_scale.run(...)
         # ... etc.

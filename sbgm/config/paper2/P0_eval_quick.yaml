@@ -368,12 +368,12 @@ full_gen_eval:
   # New, P2 (optional). If missing/empty -> run defaults for the family (i.e. all)
   families:
     prcp_probabilistic:
-      enabled: true        # Optional. If missing, derived from do_prob.
+      enabled: false        # Optional. If missing, derived from do_prob.
       output_plots: true   # Optional. Default derived from plot_only
       output_metrics: true # Optional. Default = not plot_only
       task_list: [CRPS, PIT, Reliability, SpreadSkill] # Full task list: 
     prcp_scale:
-      enabled: true
+      enabled: false
       output_plots: true
       output_metrics: true
       taks_list: [PSD, ISS] # Full task list:
@@ -381,29 +381,29 @@ full_gen_eval:
       enabled: true
       output_plots: true
       output_metrics: true
-      task_list: [pooled_hist, ensemble_hist_pool, ensemble_hist_member_mean, metrics] # Full task list: [pooled_hist, daily_hist, ensemble_hist_pool, ensemble_hist_member_mean, metrics, plot_pooled, plot_seasons]
+      task_list: [pooled_hist, ensemble_hist_pool, daily_hist, ensemble_hist_member_mean, metrics, plot_seasons, plot_pooled] # Full task list: [pooled_hist, daily_hist, ensemble_hist_pool, ensemble_hist_member_mean, metrics, plot_pooled, plot_seasons]
     prcp_extremes:
-      enabled: true
+      enabled: false
       output_plots: true
       output_metrics: true
       task_list: [Percentiles] # Full task list:
     prcp_spatial:
-      enabled: true
+      enabled: false
       output_plots: true
       output_metrics: true
       task_list: [SpatialCorr, SpatialMaps] # Full task list:
     prcp_temporal:
-      enabled: true
+      enabled: false
       output_plots: true
       output_metrics: true
       task_list: [Autocorr, SpellLength] # Full task list:
     prcp_features:
-      enabled: true
+      enabled: false
       output_plots: true  
       output_metrics: true
       task_list: [SAL] # Full task list:
     prcp_dates:
-      enabled: true
+      enabled: false
       output_plots: true  
       output_metrics: true  
       task_list: [DateScatter] # Full task list: 

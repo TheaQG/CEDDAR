@@ -28,6 +28,29 @@ def evaluation_main(cfg):
     """
     fe = cfg.get("full_gen_eval", {})
 
+    # --- Family key canonicalization and task list helpers ---
+    def _canon_family_key(k: str) -> str:
+        k2 = str(k).strip().lower()
+        aliases = {
+            "prcp_distributions": "prcp_distributional",
+            "prcp_distribution": "prcp_distributional",
+            "distributional": "prcp_distributional",
+            "dist": "prcp_distributional",
+        }
+        return aliases.get(k2, k2)
+
+    def _get_task_list(fam_cfg: dict) -> list[str] | None:
+        if not isinstance(fam_cfg, dict):
+            return None
+        tl = fam_cfg.get("task_list", None)
+        if tl is None:
+            tl = fam_cfg.get("tasks", None)
+        if tl is None:
+            tl = fam_cfg.get("taks_list", None)  # tolerate common typo
+        if tl is None:
+            return None
+        return list(tl) if isinstance(tl, (list, tuple)) else None
+
     # standard flags
     do_prob = bool(fe.get("do_prob", True))
     do_scale = bool(fe.get("do_scale", True))
@@ -181,24 +204,68 @@ def evaluation_main(cfg):
 
     )
 
-    # map YAML flags -> new modular task names
+    # --- Determine tasks to run ---
+    families = fe.get("families", None)
+
+    # Legacy defaults (backwards compatible)
+    legacy_enabled = {
+        "prcp_probabilistic": do_prob,
+        "prcp_scale": do_scale,
+        "prcp_extremes": do_ext,
+        "prcp_distributional": do_dist,
+        "prcp_spatial": do_spat,
+        "prcp_temporal": do_temp,
+        "prcp_features": do_feat,
+        "prcp_dates": do_dates,
+    }
+
+    family_plans: dict[str, dict] = {}
     tasks: list[str] = []
-    if do_prob:
-        tasks.append("prcp_probabilistic")
-    if do_scale:
-        tasks.append("prcp_scale")
-    if do_ext:
-        tasks.append("prcp_extremes")
-    if do_dist:
-        tasks.append("prcp_distributional")
-    if do_spat:
-        tasks.append("prcp_spatial")
-    if do_temp:
-        tasks.append("prcp_temporal")
-    if do_feat:
-        tasks.append("prcp_features")
-    if do_dates:
-        tasks.append("prcp_dates")
+
+    if isinstance(families, dict) and len(families) > 0:
+        for k, v in families.items():
+            fam_key = _canon_family_key(k)
+            fam_cfg = v if isinstance(v, dict) else {}
+
+            enabled = fam_cfg.get("enabled", None)
+            if enabled is None:
+                enabled = bool(legacy_enabled.get(fam_key, False))
+            enabled = bool(enabled)
+
+            # output toggles: defaults derived from global plot_only
+            output_plots = fam_cfg.get("output_plots", None)
+            if output_plots is None:
+                output_plots = True
+            output_plots = bool(output_plots)
+
+            output_metrics = fam_cfg.get("output_metrics", None)
+            if output_metrics is None:
+                output_metrics = (not bool(fe.get("plot_only", False)))
+            output_metrics = bool(output_metrics)
+
+            task_list = _get_task_list(fam_cfg)
+
+            family_plans[fam_key] = {
+                "enabled": enabled,
+                "output_plots": output_plots,
+                "output_metrics": output_metrics,
+                "task_list": task_list,
+            }
+            if enabled:
+                tasks.append(fam_key)
+
+        # If user provided families but none enabled, do nothing explicitly.
+    else:
+        # map YAML flags -> new modular task names (legacy)
+        tasks = [k for k, en in legacy_enabled.items() if en]
+
+    # Make family plans visible to per-family evaluation modules
+    if family_plans:
+        try:
+            ev_cfg.family_plans = family_plans
+        except Exception as e:
+            logger.warning(f"Could not set family_plans in EvaluationConfig: {e}")
+            pass
 
     runner = EvaluationRunner(
         cfg_yaml=cfg,
@@ -206,6 +273,7 @@ def evaluation_main(cfg):
         device=device,
         baseline_eval_dirs=None,
         plot_only=bool(fe.get("plot_only", False)),
+        family_plans=family_plans if family_plans else None,
     )
 
     runner.run(tasks=tasks)

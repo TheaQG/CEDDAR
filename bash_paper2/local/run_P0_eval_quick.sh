@@ -47,8 +47,8 @@ cd "$PROJECT_ROOT"
 # -------------------------------------------------
 # 1) TRAIN (quick)
 # -------------------------------------------------
-echo ""
-echo "=== TRAIN ==="
+# echo ""
+# echo "=== TRAIN ==="
 
 # IMPORTANT: Replace this command with your actual pipeline entrypoint.
 # Common patterns:
@@ -78,25 +78,52 @@ echo "=== TRAIN ==="
 # -------------------------------------------------
 # 2) GENERATE (quick)
 # -------------------------------------------------
+# echo ""
+# echo "=== GENERATE ==="
+
+# set +e
+
+# python -m sbgm.cli.main_app --mode generate --config_path "$CONFIG_PATH"
+# RC=$?
+
+# set -e
+
+# if [ $RC -ne 0 ]; then
+#   echo ""
+#   echo "[ERROR] Could not find a working generation entrypoint."
+#   echo "Fix the GENERATE command in this script to match your repo's CLI."
+#   exit 1
+# fi
+
+# echo ""
+# echo "Generation finished."
+
+# echo ""
+# echo "Done. Run root: $RUN_ROOT"
+
+# -------------------------------------------------
+# 3) EVALUATE (quick)
+# -------------------------------------------------
+
 echo ""
-echo "=== GENERATE ==="
+echo "=== EVALUATE ==="
 
 set +e
 
-python -m sbgm.cli.main_app --mode generate --config_path "$CONFIG_PATH"
+python -m sbgm.cli.main_app --mode evaluate --config_path "$CONFIG_PATH"
 RC=$?
 
 set -e
 
 if [ $RC -ne 0 ]; then
   echo ""
-  echo "[ERROR] Could not find a working generation entrypoint."
-  echo "Fix the GENERATE command in this script to match your repo's CLI."
+  echo "[ERROR] Could not find a working evaluation entrypoint."
+  echo "Fix the EVALUATE command in this script to match your repo's CLI."
   exit 1
 fi
 
 echo ""
-echo "Generation finished."
+echo "Evaluation finished."
 
 echo ""
 echo "Done. Run root: $RUN_ROOT"
