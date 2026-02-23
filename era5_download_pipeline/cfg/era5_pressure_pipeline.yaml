@@ -3,17 +3,18 @@ area: [60, -80, 40, 40]        # N,W,S,E  (edit!)
 dataset: reanalysis-era5-pressure-levels
 format: netcdf
 variables:
-  geopotential:
-    short: z_pl
+  temperature:
+    short: t_pl
     daily_stat: daymean
-pressure_levels: [1000, 850, 500, 250]  # Pressure levels in hPa
+  specific_humidity:
+    short: q_pl
+    daily_stat: daymean
+pressure_levels: [850]  # Pressure levels in hPa
 years: [1991, 2020]            # inclusive range
 max_workers: 3
 tmp_dir: /tmp/era5_downloads
 grid_file: ${env:ERA5_TMP_DIR}/grid/mygrid_danra_small
 weights_file: ${env:ERA5_TMP_DIR}/weights/ERA5_to_DANRA_bil_weights_new.nc
-# grid_file: /Users/au728490/OneDrive - Aarhus universitet/PhD_AU/Python_Scripts/Data/mygrid_danra_small
-# weights_file: /Users/au728490/OneDrive - Aarhus universitet/PhD_AU/Python_Scripts/Data/ERA5_to_DANRA_bil_weights_new.nc
 lumi:
   user:  lumi_user
   host:  lumi.csc.fi
