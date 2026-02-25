@@ -501,12 +501,42 @@ def plot_tails(tails_csv: Path, out_png: Path, bo: Optional[Dict[str, Any]] = No
     _savefig(fig, out_png, dpi=SET_DPI)
     plt.close(fig)
 
-def plot_extremes(out_root: str | Path, eval_cfg: Any | None = None):
+def plot_extremes(
+    out_root: str | Path,
+    eval_cfg: Any | None = None,
+    *,
+    do_plot_gev: bool = True,
+    do_plot_pot: bool = True,
+    do_plot_tails: bool = True,
+) -> None:
     out_root = Path(out_root)
-    figs = _ensure_dir(out_root / "figures")
     tables = out_root / "tables"
+    figs = _ensure_dir(out_root / "figures")
 
     bo = _get_bo(eval_cfg)
-    plot_return_levels(tables / "ext_rxk_gev.csv", figs / "ext_return_levels_rxk.png", bo=bo)
-    plot_pot(tables / "ext_pot_gpd.csv", figs / "ext_pot_gpd.png", bo=bo)
-    plot_tails(tables / "ext_tails.csv", figs / "ext_tails.png", bo=bo)
+
+    if do_plot_gev:
+        gev_csv = tables / "ext_rxk_gev.csv"
+        if gev_csv.exists():
+            plot_return_levels(gev_csv, figs / "ext_rxk_gev.png", bo=bo)
+        else:
+            logger.warning("[plot_extremes] Missing %s; skipping GEV return levels plot.", gev_csv)
+
+    if do_plot_pot:
+        pot_csv = tables / "ext_pot_gpd.csv"
+        if pot_csv.exists():
+            plot_pot(pot_csv, figs / "ext_pot_gpd.png", bo=bo)
+        else:
+            logger.warning("[plot_extremes] Missing %s; skipping POT/GPD plot.", pot_csv)
+
+    if do_plot_tails:
+        tails_csv = tables / "ext_tails.csv"
+        if tails_csv.exists():
+            plot_tails(tails_csv, figs / "ext_tails.png", bo=bo)
+        else:
+            logger.warning("[plot_extremes] Missing %s; skipping tails plot.", tails_csv)
+
+    logger.info(
+        "[plot_extremes] Done. Plotted: gev=%s, pot=%s, tails=%s → %s",
+        bool(do_plot_gev), bool(do_plot_pot), bool(do_plot_tails), figs,
+    )

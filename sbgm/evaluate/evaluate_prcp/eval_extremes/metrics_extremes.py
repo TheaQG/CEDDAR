@@ -269,9 +269,15 @@ def build_daily_series(resolver,
         lr_series = None
         assert len(hr_series) == len(gen_series) == len(dt)
 
-    logger.info(f"[build_daily_series] Collected {orig_days} days for HR/GEN; retained {lr_days} days for LR after alignment.")
-    logger.debug(f"[build_daily_series] Final series lengths: HR={len(hr_series)}, GEN={len(gen_series)}, LR={(len(lr_series) if lr_series is not None else 0)}")
-
+    if include_lr:
+        logger.info(
+            f"[build_daily_series] Collected {orig_days} days for HR/GEN; retained {lr_days} days for LR after alignment."
+        )
+    else:
+        logger.info(f"[build_daily_series] Collected {orig_days} days for HR/GEN (include_lr=False).")
+    logger.debug(
+        f"[build_daily_series] Final series lengths: HR={len(hr_series)}, GEN={len(gen_series)}, LR={(len(lr_series) if lr_series is not None else 0)}"
+    )
     return SeriesBundle(dates=dt, hr=hr_series, gen=gen_series, lr=lr_series)
 
 def build_daily_series_ensemble(resolver,

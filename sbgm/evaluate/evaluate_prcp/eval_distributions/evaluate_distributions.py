@@ -1,4 +1,4 @@
-# sbgm/evaluate/evaluate_prcp/eval_distributional/evaluate_distributional.py
+    # sbgm/evaluate/evaluate_prcp/eval_distributional/evaluate_distributional.py
 from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -13,7 +13,6 @@ from sbgm.evaluate.evaluate_prcp.eval_distributions.metrics_distributions import
     collect_ensemble_histograms
 )
 from sbgm.evaluate.evaluate_prcp.eval_distributions.plot_distributions import (
-    plot_distributional,
     plot_pooled_distribution,
     plot_seasonal_distributions,
 )
@@ -22,16 +21,40 @@ from sbgm.evaluate.evaluate_prcp.eval_distributions.plot_distributions import (
 logger = logging.getLogger(__name__)
 
 # --- Task list and helpers for distributional evaluation ---
+# Symmetric with extremes: tasks describe what to COMPUTE; plotting is controlled by output_plots.
+# Backwards compatibility:
+#   - old names like pooled_hist/daily_hist/ensemble_hist_* still work
+#   - plot_pooled/plot_seasons are treated as aliases for pooled/seasonal (compute + plot if output_plots)
 SUPPORTED_TASKS = [
-    "pooled_hist",
-    "daily_hist",
-    "ensemble_hist_pool",
-    "ensemble_hist_member_mean",
-    "metrics",
-    "plot_pooled",
-    "plot_seasons",
+    "pooled",                 # pooled pixel distribution (bins + hr/gen/lr hists)
+    "daily",                  # per-day histograms (CI bands)
+    "ensemble_pool",          # ensemble pooled histogram
+    "ensemble_member_mean",   # ensemble member-mean pdf + spread
+    "metrics",                # distributional metrics table
+    "seasonal",               # seasonal distributions (requires pooled bins/tables)
 ]
-DEFAULT_TASKS_BASE = ["pooled_hist", "daily_hist", "metrics", "plot_pooled", "plot_seasons"]
+
+DEFAULT_TASKS_BASE = ["pooled", "daily", "metrics", "seasonal"]
+
+_TASK_ALIASES = {
+    # old compute task names
+    "pooled_hist": "pooled",
+    "hist_pooled": "pooled",
+    "daily_hist": "daily",
+    "hist_daily": "daily",
+    "ensemble_hist_pool": "ensemble_pool",
+    "ensemble_hist": "ensemble_pool",
+    "ensemble_hist_member_mean": "ensemble_member_mean",
+    "ensemble_hist_mean": "ensemble_member_mean",
+    # old plotting tasks -> treat as compute tasks; plotting is handled by output_plots
+    "plot": "pooled",
+    "plot_pooled": "pooled",
+    "pooled_plot": "pooled",
+    "main_plot": "pooled",
+    "plot_seasons": "seasonal",
+    "seasonal_plot": "seasonal",
+    "seasons_plot": "seasonal",
+}
 
 def _as_dict(obj):
     # Safely convert OmegaConf/dict/dataclass-like to dict
@@ -87,39 +110,24 @@ def _get_family_cfg(eval_cfg, keys):
     return _as_dict(fam)
 
 def _norm_tasks(task_list):
-    # Lowercase, map legacy/alias names, map plot synonyms
     if not isinstance(task_list, (list, tuple)):
         return []
-    norm = []
+    out = []
+    seen = set()
     for t in task_list:
         if not isinstance(t, str):
             continue
         tl = t.strip().lower()
-        # Legacy/alias mapping (distributional -> prcp_distributions is only for family name, not here)
-        # Plot synonyms
-        if tl in ("plot", "plot_pooled", "pooled_plot", "main_plot", "pooled"):
-            norm.append("plot_pooled")
-        elif tl in ("plot_seasons", "seasonal_plot", "seasons_plot"):
-            norm.append("plot_seasons")
-        elif tl in ("ensemble_hist", "ensemble_hist_pool"):
-            norm.append("ensemble_hist_pool")
-        elif tl in ("ensemble_hist_member_mean", "ensemble_hist_mean"):
-            norm.append("ensemble_hist_member_mean")
-        elif tl in ("metrics", "metric"):
-            norm.append("metrics")
-        elif tl in ("pooled_hist", "hist_pooled"):
-            norm.append("pooled_hist")
-        elif tl in ("daily_hist", "hist_daily"):
-            norm.append("daily_hist")
-        else:
-            norm.append(tl)
-    return norm
+        tl = _TASK_ALIASES.get(tl, tl)
+        if tl not in seen:
+            out.append(tl)
+            seen.add(tl)
+    return out
 
 def _warn_unknown_tasks(tasks):
     for t in tasks:
         if t not in SUPPORTED_TASKS:
-            logger.warning(f"[prcp_distributions] Unknown task requested: '{t}' (not in {SUPPORTED_TASKS})")
-
+            logger.warning(f"[prcp_distributional] Unknown task requested: '{t}' (supported: {SUPPORTED_TASKS})")
 
 def run_distributional(
     resolver,
@@ -150,67 +158,61 @@ def run_distributional(
     output_plots = fam.get("output_plots", None)
     output_metrics = fam.get("output_metrics", None)
 
-    # Derive from tasks if knobs are not provided
+    # Output toggles (symmetric with extremes):
+    #  - tasks control what to compute
+    #  - output_plots controls whether we call plotting functions for whatever was requested/computed
+    output_plots = fam.get("output_plots", None)
+    output_metrics = fam.get("output_metrics", None)
+
     if output_plots is None:
-        output_plots = any(
-            t in ("plot_pooled", "plot_seasons")
-            for t in _norm_tasks(fam.get("task_list", []) or [])
-        )
-        # If task list is empty/unspecified, fall back to legacy make_plots
-        if not (fam.get("task_list", None) and isinstance(fam.get("task_list", None), (list, tuple)) and len(fam.get("task_list", None)) > 0):
-            output_plots = bool(getattr(eval_cfg, "make_plots", True))
+        output_plots = bool(getattr(eval_cfg, "make_plots", True))
+    output_plots = bool(output_plots)
 
     if output_metrics is None:
-        # Treat all non-plot tasks as "compute" tasks
-        output_metrics = any(
-            t in ("pooled_hist", "daily_hist", "ensemble_hist_pool", "ensemble_hist_member_mean", "metrics")
-            for t in _norm_tasks(fam.get("task_list", []) or [])
-        )
-        # If task list is empty/unspecified, default to not plot_only
-        if not (fam.get("task_list", None) and isinstance(fam.get("task_list", None), (list, tuple)) and len(fam.get("task_list", None)) > 0):
-            output_metrics = (not plot_only)
+        output_metrics = (not plot_only)
+    output_metrics = bool(output_metrics)
 
-    # --- Task list selection ---
+        # --- Task list selection ---
     selected_tasks = fam.get("task_list", None)
-    # If missing or empty, use defaults
+
     if not selected_tasks or (isinstance(selected_tasks, (list, tuple)) and len(selected_tasks) == 0):
-        # Build task list starting from defaults, add ensemble task(s) as needed
         selected_tasks = list(DEFAULT_TASKS_BASE)
+
         use_ensemble = bool(getattr(eval_cfg, "use_ensemble", False))
-        mode = str(getattr(eval_cfg, "dist_ensemble_pool_mode", "pool"))
+        mode = str(getattr(eval_cfg, "dist_ensemble_pool_mode", "pool")).lower()
         if use_ensemble:
             if mode == "pool":
-                selected_tasks.insert(2, "ensemble_hist_pool")
-            elif mode == "member_mean":
-                selected_tasks.insert(2, "ensemble_hist_member_mean")
+                selected_tasks.insert(2, "ensemble_pool")
+            elif mode in ("member_mean", "mean"):
+                selected_tasks.insert(2, "ensemble_member_mean")
     else:
         selected_tasks = _norm_tasks(selected_tasks)
-    # If both ensemble tasks are requested, both will be run
+
     _warn_unknown_tasks(selected_tasks)
+
+    # Ensure prerequisites: daily/ensemble/metrics/seasonal want pooled bins when computing
+    if any(t in selected_tasks for t in ("daily", "ensemble_pool", "ensemble_member_mean", "metrics", "seasonal")) and ("pooled" not in selected_tasks):
+        selected_tasks = ["pooled"] + [t for t in selected_tasks if t != "pooled"]
 
     # --- plot_only hard override ---
     # If plot_only True, skip all compute/metrics tasks, only execute plotting if requested.
     plot_tasks = {"plot_pooled", "plot_seasons"}
     if plot_only:
         if not output_plots:
-            logger.info("[prcp_distributions] plot_only=True but output_plots=False - skipping all plots.")
+            logger.info("[prcp_distributional] plot_only=True but output_plots=False -> skipping.")
             return
-        # Plot if *any* plot task is requested (call explicit plot functions)
-        if any(t in plot_tasks for t in selected_tasks):
-            do_pooled = ("plot_pooled" in selected_tasks)
-            do_seasons = ("plot_seasons" in selected_tasks)
-            if do_pooled:
-                plot_pooled_distribution(out_root, eval_cfg=eval_cfg)
-            if do_seasons:
-                plot_seasonal_distributions(out_root, eval_cfg=eval_cfg)
-            logger.info("[prcp_distributions] plot_only=True - done plotting.")
-        else:
-            logger.info("[prcp_distributions] plot_only=True but no plot tasks requested - nothing to do.")
+
+        # If user requests seasonal, render seasonal; if user requests pooled (or anything else), render pooled.
+        if "seasonal" in selected_tasks:
+            plot_seasonal_distributions(out_root, eval_cfg=eval_cfg)
+        if "pooled" in selected_tasks or any(t in selected_tasks for t in ("daily", "ensemble_pool", "ensemble_member_mean", "metrics")):
+            plot_pooled_distribution(out_root, eval_cfg=eval_cfg)
+
+        logger.info("[prcp_distributional] plot_only=True -> done.")
         return
 
     # --- Compute gating ---
     want_compute = output_metrics and (not plot_only)
-    want_plot = output_plots
 
     # --- Gather dates ---
     dates = list(resolver.list_dates())
@@ -229,7 +231,7 @@ def run_distributional(
     daily = None
     bins = None
     # --- Pooled histogram ---
-    if "pooled_hist" in selected_tasks and want_compute:
+    if "pooled" in selected_tasks and want_compute:
         pooled = collect_pooled_distributions(
             resolver=resolver,
             dates=dates,
@@ -272,7 +274,7 @@ def run_distributional(
             bins = None
 
     # --- Daily histogram ---
-    if "daily_hist" in selected_tasks and want_compute:
+    if "daily" in selected_tasks and want_compute:
         if bins is None:
             logger.warning("[prcp_distributions] Cannot build daily_hist - dist_bins.csv missing and pooled_hist not run.")
         else:
@@ -296,9 +298,9 @@ def run_distributional(
     if use_ensemble and bins is not None:
         # Only build if requested
         ens_modes_to_run = []
-        if "ensemble_hist_pool" in selected_tasks:
+        if "ensemble_pool" in selected_tasks:
             ens_modes_to_run.append("pool")
-        if "ensemble_hist_member_mean" in selected_tasks:
+        if "ensemble_member_mean" in selected_tasks:
             ens_modes_to_run.append("member_mean")
         # De-duplicate
         ens_modes_to_run = list(dict.fromkeys(ens_modes_to_run))
@@ -425,16 +427,15 @@ def run_distributional(
             logger.warning("[prcp_distributions] Ensemble plot requested but no ensemble histogram CSVs present. Run the relevant ensemble_hist_* task.")
         return missing
 
-    if want_plot:
+    if output_plots:
         deps_missing = _check_plot_deps()
         if deps_missing:
             logger.warning(f"[prcp_distributions] Plot(s) requested but missing required files: {deps_missing}")
         else:
-            if "plot_pooled" in selected_tasks or "plot_seasons" in selected_tasks:
-                do_pooled = ("plot_pooled" in selected_tasks)
-                do_seasons = ("plot_seasons" in selected_tasks)
-                if do_pooled:
+            try:
+                if "pooled" in selected_tasks or any(t in selected_tasks for t in ("daily", "ensemble_pool", "ensemble_member_mean", "metrics")):
                     plot_pooled_distribution(out_root, eval_cfg=eval_cfg)
-                if do_seasons:
+                if "seasonal" in selected_tasks:
                     plot_seasonal_distributions(out_root, eval_cfg=eval_cfg)
-                logger.info(f"[prcp_distributions] Plots saved to {figs_dir}")
+            except Exception as e:
+                logger.warning(f"[prcp_distributional] Plotting failed: {e}")                

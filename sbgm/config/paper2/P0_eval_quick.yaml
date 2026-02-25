@@ -381,12 +381,20 @@ full_gen_eval:
       enabled: true
       output_plots: true
       output_metrics: true
-      task_list: [pooled_hist, ensemble_hist_pool, daily_hist, ensemble_hist_member_mean, metrics, plot_seasons, plot_pooled] # Full task list: [pooled_hist, daily_hist, ensemble_hist_pool, ensemble_hist_member_mean, metrics, plot_pooled, plot_seasons]
+      task_list: [pooled, daily, ensemble_pool, ensemble_member_mean, metrics, seasonal] # Full task list: [pooled, daily, ensemble_pool, ensemble_member_mean, metrics, pooled, seasonal]
+      # - pooled:               builds global histogram bins (HR, GEN, PMM, LR) - must always be present. if output_plots: true, also plots pooled histograms with shared bins for HR, GEN, PMM, LR. Metrics include KL divergence and Wasserstein distance between GEN and HR distributions (and optionally PMM and LR).
+      # - daily:                Per-day histograms. Enables CI shading in pooled plot. If output_plots: true, adds CI shading to pooled histogram plot based on daily variability.
+      # - ensemble_pool:        Pooled histogram of all ensemble members. "all ensemble pixels treated as one giant distribution". If output_plots: true, adds histogram of all ensemble members (GEN) to pooled plot. 
+      # - ensemble_member_mean: Histogram per ensemble member. Represents average ensemble member distribution + spread. If output_plots: true, adds ensemble curve and 10-90%  shading band.
+      # - metrics:              Compute Wasserstein distance, KS stats, KL divergence between GEN (PMM)/ensemble/LR and HR. If output_plots: true adds metrics text boc to pooled plot.
+      # - seasonal:             Seasonally split distributions. If output_plots: true, calls plot_seasonal_distributions.
+      # If task_list: [metrics], automatically adds ["pooled"] because metrics require pooled histograms. If task_list includes any of the histogram-plotting tasks (e.g. "pooled", "ensemble_pool", "ensemble_member_mean"), then output_plots is set to true if not explicitly set.
+      # Same for daily, ensemble_pool, ensemble_member_mean, seasonal
     prcp_extremes:
       enabled: false
       output_plots: true
       output_metrics: true
-      task_list: [Percentiles] # Full task list:
+      task_list: [pot] # Full task list: [gev, pot, tails]
     prcp_spatial:
       enabled: false
       output_plots: true
@@ -401,9 +409,16 @@ full_gen_eval:
       enabled: false
       output_plots: true  
       output_metrics: true
-      task_list: [SAL] # Full task list:
+      task_list: [sal_ensemble] # Full task list:
+      # task_list meanings:
+      # - sal_ensemble: SAL computed per ensemble member vs HR; summarized as mean/std/q10/q90 (canonical GEN)
+      # - sal_pmm:      SAL computed for PMM vs HR (optional deterministic baseline)
+      # - sal_lr:       SAL computed for LR vs HR (optional)
+      # - by_year:      compute groups per year
+      # - by_season:    compute groups per season (DJF/MAM/JJA/SON)
+      # If neither by_year nor by_season is set -> compute only ALL (pooled over all dates)
     prcp_dates:
-      enabled: false
+      enabled: true
       output_plots: true  
       output_metrics: true  
       task_list: [DateScatter] # Full task list: 

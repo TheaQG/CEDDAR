@@ -9,10 +9,10 @@ from scipy.ndimage import gaussian_filter
 
 def compute_sal(hr: np.ndarray, gen: np.ndarray, lr: np.ndarray | None = None) -> Dict[str, Dict[str, float]]:
     """
-    Compute the Structure–Amplitude–Location (SAL) metrics per Wernli et al. (2008).
+    Compute the Structure-Amplitude-Location (SAL) metrics per Wernli et al. (2008).
 
     A and S are computed from pooled values; L (location) is computed only when
-    both inputs are 2D and have the same H×W shape. If L is undefined, SAL is
+    both inputs are 2D and have the same HxW shape. If L is undefined, SAL is
     formed from A and S only.
 
     Returns a dict with keys:
@@ -36,7 +36,7 @@ def compute_sal(hr: np.ndarray, gen: np.ndarray, lr: np.ndarray | None = None) -
         S_ref = float(np.nanstd(ref))
         S_tst = float(np.nanstd(test))
         S = 2.0 * (S_tst - S_ref) / (S_tst + S_ref + 1e-8)
-        # Location (L) – centroid distance normalized by domain diagonal
+        # Location (L) - centroid distance normalized by domain diagonal
         ref2 = _as_2d(ref)
         tst2 = _as_2d(test)
         if ref2 is not None and tst2 is not None and ref2.shape == tst2.shape:

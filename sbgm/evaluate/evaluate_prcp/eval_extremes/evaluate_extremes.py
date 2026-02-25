@@ -10,7 +10,8 @@ from sbgm.evaluate.evaluate_prcp.eval_extremes.metrics_extremes import (
     fit_gev_block_maxima_with_ci, fit_pot_gpd_with_ci,
     percentiles_and_wetfreq, SeriesBundle, pooled_pixel_percentiles_and_wetfreq,
     pooled_wet_hit_rate, build_daily_series_ensemble, pooled_pixel_percentiles_and_wetfreq_ens,
-    pooled_wet_hit_rate_ens, pooled_wet_hit_rate_ens_member_mean, percentiles_and_wetfreq_ens_member_mean
+    pooled_wet_hit_rate_ens, pooled_wet_hit_rate_ens_member_mean, percentiles_and_wetfreq_ens_member_mean,
+    _p_label
 )
 from sbgm.evaluate.evaluate_prcp.eval_extremes.plot_extremes import plot_extremes
 
@@ -27,6 +28,7 @@ def run_extremes(
     out_root: str | Path,
     *,
     plot_only: bool = False,
+    family_plan: dict | None = None,
 ) -> None:
     """
     Extremes block:
@@ -39,9 +41,79 @@ def run_extremes(
     tables = _ensure_dir(out_root / "tables")
     _ensure_dir(out_root / "figures")
 
+    # ------------------ family/task plan (Paper2 task-based evaluation) ------------------
+    # family_plan is preferred if passed explicitly; otherwise try eval_cfg.family_plans['prcp_extremes'].
+    if family_plan is None:
+        try:
+            _fps = getattr(eval_cfg, "family_plans", None)
+            if isinstance(_fps, dict):
+                family_plan = _fps.get("prcp_extremes", None)
+        except Exception:
+            family_plan = None
+
+    fam_enabled = True
+    output_plots = True
+    output_metrics = True
+    task_list = None
+
+    if isinstance(family_plan, dict):
+        fam_enabled = bool(family_plan.get("enabled", True))
+        output_plots = bool(family_plan.get("output_plots", True))
+        output_metrics = bool(family_plan.get("output_metrics", True))
+        _tl = family_plan.get("task_list", None)
+        if _tl is None:
+            _tl = family_plan.get("tasks", None)  # alias
+        if isinstance(_tl, (list, tuple)):
+            task_list = [str(t).strip().lower() for t in _tl if str(t).strip()]
+
+    if not fam_enabled:
+        logger.info("[extremes] family disabled via family_plan; skipping.")
+        return
+
+    # Canonical tasks for extremes
+    ALL_TASKS = ("series", "gev", "pot", "tails")
+    if task_list is None or len(task_list) == 0:
+        task_list = list(ALL_TASKS)
+
+    # Convenience aliases
+    alias = {
+        "rxk": "gev",
+        "rxk_gev": "gev",
+        "gev_rxk": "gev",
+        "return_levels": "gev",
+        "pot_gpd": "pot",
+        "gpd": "pot",
+        "tails_pooled": "tails",
+    }
+    task_list = [alias.get(t, t) for t in task_list]
+    task_list = [t for t in task_list if t in ALL_TASKS]
+
+    # Plot-only mode: only plot requested panels (if output_plots)
     if plot_only:
-        plot_extremes(out_root, eval_cfg=eval_cfg)
-        logger.info("[extremes] plot_only=True – plotted.")
+        if not output_plots:
+            logger.info("[extremes] plot_only=True but output_plots=False; skipping plots.")
+            return
+        plot_extremes(
+            out_root,
+            eval_cfg=eval_cfg,
+            do_plot_gev=("gev" in task_list),
+            do_plot_pot=("pot" in task_list),
+            do_plot_tails=("tails" in task_list),
+        )
+        logger.info("[extremes] plot_only=True – plotted requested tasks: %s", task_list)
+        return
+
+    if not output_metrics:
+        logger.info("[extremes] output_metrics=False; skipping metrics computation.")
+        # Still allow plots if requested and enabled
+        if output_plots:
+            plot_extremes(
+                out_root,
+                eval_cfg=eval_cfg,
+                do_plot_gev=("gev" in task_list),
+                do_plot_pot=("pot" in task_list),
+                do_plot_tails=("tails" in task_list),
+            )
         return
 
     # ------------------ config knobs ------------------
@@ -55,6 +127,21 @@ def run_extremes(
     days_per_year: float = float(getattr(eval_cfg, "ext_days_per_year", 365.25))
     wet_thr: float = float(getattr(eval_cfg, "ext_wet_threshold_mm", 1.0))
     include_lr: bool = bool(getattr(eval_cfg, "include_lr", True))
+    basis: str = str(getattr(eval_cfg, "ext_tails_basis", "domain_series")).lower()
+
+    # Persist meta so plotting can annotate figures without re-running metrics
+    try:
+        np.savez_compressed(
+            tables / "ext_meta.npz",
+            agg_kind=str(agg_kind),
+            blocks_per_year=float(blocks_per_year),
+            pot_thr_kind=str(pot_thr_kind),
+            pot_thr_val=float(pot_thr_val),
+            wet_thr_mm=float(wet_thr),
+            tails_basis=str(basis),
+        )
+    except Exception as e:
+        logger.warning("[extremes] Could not write ext_meta.npz: %s", e)
 
     # Tail percentiles for extremes tables and plots
     tail_ps: Sequence[float] = (95.0, 99.0, 99.9, 99.99) #, 99.999)
@@ -98,269 +185,279 @@ def run_extremes(
         logger.info("[extremes] No LR series available; skipping LR extremes.")
 
     # ------------------ RxK -> GEV ------------------
-    block_id = None
-    if blocks_per_year >= 1.5:  # treat as seasonal if ≥ ~2
-        block_id = seasonal_block_index(sb.dates)
+    if "gev" in task_list:
+        block_id = None
+        if blocks_per_year >= 1.5:  # treat as seasonal if ≥ ~2
+            block_id = seasonal_block_index(sb.dates)
 
-    gev_rows = ["which,k_days,n_blocks," +
-                ",".join([f"rl_{int(r)}y" for r in gev_rps]) + "," +
-                ",".join([f"rl_{int(r)}y_lo" for r in gev_rps]) + "," +
-                ",".join([f"rl_{int(r)}y_hi" for r in gev_rps])]
-    for which, series in series_list:
-        for k in rxks:
-            rx = rxk_from_series(series, k=k, block_id=block_id)
-            try:
-                fit = fit_gev_block_maxima_with_ci(
-                    rx, rps_years=gev_rps,
-                    blocks_per_year=(4.0 if block_id is not None else 1.0)
-                )
-                row = [which, str(int(k)), str(int(fit["n_blocks"]))] + \
-                      [f"{v:.6f}" for v in fit["rl"]] + \
-                      [f"{v:.6f}" for v in fit["rl_lo"]] + \
-                      [f"{v:.6f}" for v in fit["rl_hi"]]
-                gev_rows.append(",".join(row))
-            except Exception as e:
-                logger.warning(f"[extremes] GEV failed for {which} Rx{k}: {e}")
-    # ---- Save ensemble uncertainty bands for Rxk/GEV ----                
-    if ens_sb is not None:
-        # Accumulate ensemble stats for all k
-        gev_ens_stats: Dict[str, Any] = {
-            "rps_years": np.array(gev_rps, dtype=float),
-            "k_days": np.array([int(k) for k in rxks], dtype=int),
-        }
-        for k in rxks:
-            # per-member block maxima -> fit -> aggregate return levels
-            rls = []
-            try:
-                for mi in range(ens_sb.gen_members.shape[0]):
-                    rx = rxk_from_series(ens_sb.gen_members[mi], k=k, block_id=block_id)
+        gev_rows = ["which,k_days,n_blocks," +
+                    ",".join([f"rl_{int(r)}y" for r in gev_rps]) + "," +
+                    ",".join([f"rl_{int(r)}y_lo" for r in gev_rps]) + "," +
+                    ",".join([f"rl_{int(r)}y_hi" for r in gev_rps])]
+        for which, series in series_list:
+            for k in rxks:
+                rx = rxk_from_series(series, k=k, block_id=block_id)
+                try:
                     fit = fit_gev_block_maxima_with_ci(
                         rx, rps_years=gev_rps,
-                        blocks_per_year=(4.0 if block_id is not None else 1.0),
-                        n_boot=200,
+                        blocks_per_year=(4.0 if block_id is not None else 1.0)
                     )
+                    row = [which, str(int(k)), str(int(fit["n_blocks"]))] + \
+                        [f"{v:.6f}" for v in fit["rl"]] + \
+                        [f"{v:.6f}" for v in fit["rl_lo"]] + \
+                        [f"{v:.6f}" for v in fit["rl_hi"]]
+                    gev_rows.append(",".join(row))
+                except Exception as e:
+                    logger.warning(f"[extremes] GEV failed for {which} Rx{k}: {e}")
+        # ---- Save ensemble uncertainty bands for Rxk/GEV ----                
+        if ens_sb is not None:
+            # Accumulate ensemble stats for all k
+            gev_ens_stats: Dict[str, Any] = {
+                "rps_years": np.array(gev_rps, dtype=float),
+                "k_days": np.array([int(k) for k in rxks], dtype=int),
+            }
+            for k in rxks:
+                # per-member block maxima -> fit -> aggregate return levels
+                rls = []
+                try:
+                    for mi in range(ens_sb.gen_members.shape[0]):
+                        rx = rxk_from_series(ens_sb.gen_members[mi], k=k, block_id=block_id)
+                        fit = fit_gev_block_maxima_with_ci(
+                            rx, rps_years=gev_rps,
+                            blocks_per_year=(4.0 if block_id is not None else 1.0),
+                            n_boot=200,
+                        )
+                        rls.append(fit["rl"])  # [R]
+                    rls = np.stack(rls, axis=0)  # [M,R]
+                    rl_mean = np.nanmean(rls, axis=0)
+                    rl_lo  = np.nanpercentile(rls, 10, axis=0)
+                    rl_hi  = np.nanpercentile(rls, 90, axis=0)
+                    rl_std = np.nanstd(rls, axis=0, ddof=1) if rls.shape[0] > 1 else np.zeros_like(rl_mean)                
+                    nb = int(np.median([len(rxk_from_series(ens_sb.gen_members[mi], k=k, block_id=block_id)) for mi in range(ens_sb.gen_members.shape[0])]))
+                    row = ["GEN_ENS", str(int(k)), str(nb)] + \
+                        [f"{v:.6f}" for v in rl_mean] + \
+                        [f"{v:.6f}" for v in rl_lo] + \
+                        [f"{v:.6f}" for v in rl_hi]
+                    gev_rows.append(",".join(row))
+                    # store per-k stats (keyed by k)
+                    gev_ens_stats[f"rl_mean_rx{k}"] = np.array(rl_mean, dtype=float)
+                    gev_ens_stats[f"rl_p10_rx{k}"]  = np.array(rl_lo, dtype=float)
+                    gev_ens_stats[f"rl_p90_rx{k}"]  = np.array(rl_hi, dtype=float)
+                    gev_ens_stats[f"rl_std_rx{k}"]  = np.array(rl_std, dtype=float)
+                    gev_ens_stats[f"n_members_rx{k}"] = np.int64(rls.shape[0])
+                except Exception as e:
+                    logger.warning(f"[extremes] Ensemble GEV failed for Rx{k}: {e}")
+            # Save the ensemble stats dict to NPZ
+            try:
+                np.savez_compressed(tables / "ext_rxk_gev_ens_stats.npz", **gev_ens_stats)
+            except Exception as e:
+                logger.warning(f"[extremes] Could not save ext_rxk_gev_ens_stats.npz: {e}")
+        (tables / "ext_rxk_gev.csv").write_text("\n".join(gev_rows))
+    else:
+        logger.info("[extremes] Skipping GEV/RxK since 'gev' not in task_list.")
+
+    # ------------------ POT/GPD ------------------
+    if "pot" in task_list:
+        # --- choose POT threshold behavior ---
+        if pot_thr_kind == "hr_quantile":
+            u_hr = float(np.nanpercentile(series_list[0][1], pot_thr_val * 100.0))  # HR is first
+        else:
+            u_hr = None
+        pot_rows = ["which,u,xi,beta,k_exc,lambda_per_day," +
+                    ",".join([f"rl_{int(r)}y" for r in pot_rps]) + "," +
+                    ",".join([f"rl_{int(r)}y_lo" for r in pot_rps]) + "," +
+                    ",".join([f"rl_{int(r)}y_hi" for r in pot_rps])]
+        for which, series in series_list:
+            if pot_thr_kind == "quantile":
+                u = float(np.nanpercentile(series, pot_thr_val * 100.0))
+            elif pot_thr_kind == "hr_quantile":
+                if u_hr is None:
+                    raise ValueError("pot_thr_kind == 'hr_quantile' but u_hr was not set")
+                u = float(u_hr)
+            else:  # "value"
+                u = float(pot_thr_val)
+
+            try:
+                fit = fit_pot_gpd_with_ci(
+                    series, threshold=u, rps_years=pot_rps, days_per_year=days_per_year
+                )
+                row = [which, f"{fit['u']:.6f}", f"{fit['xi']:.6f}", f"{fit['beta']:.6f}",
+                    str(int(fit["k_exc"])), f"{fit['lambda_per_day']:.8f}"] + \
+                    [f"{v:.6f}" for v in fit["rl"]] + \
+                    [f"{v:.6f}" for v in fit["rl_lo"]] + \
+                    [f"{v:.6f}" for v in fit["rl_hi"]]
+                pot_rows.append(",".join(row))
+            except Exception as e:
+                logger.warning(f"[extremes] POT failed for {which}: {e}")
+        if ens_sb is not None:
+            try:
+                # choose u per-member if quantile, else fixed as configured or HR-quantile
+                for_medians_u = []
+                rls = []
+                for mi in range(ens_sb.gen_members.shape[0]):
+                    series = ens_sb.gen_members[mi]
+                    if pot_thr_kind == "quantile":
+                        u = float(np.nanpercentile(series, pot_thr_val * 100.0))
+                    elif pot_thr_kind == "hr_quantile":
+                        u = float(u_hr) if 'u_hr' in locals() and u_hr is not None else float(np.nanpercentile(sb.hr, pot_thr_val * 100.0))
+                    else:
+                        u = float(pot_thr_val)
+                    for_medians_u.append(u)
+                    fit = fit_pot_gpd_with_ci(series, threshold=u, rps_years=pot_rps, days_per_year=days_per_year, n_boot=200)
                     rls.append(fit["rl"])  # [R]
-                rls = np.stack(rls, axis=0)  # [M,R]
+                rls = np.stack(rls, axis=0)
                 rl_mean = np.nanmean(rls, axis=0)
                 rl_lo  = np.nanpercentile(rls, 10, axis=0)
                 rl_hi  = np.nanpercentile(rls, 90, axis=0)
-                rl_std = np.nanstd(rls, axis=0, ddof=1) if rls.shape[0] > 1 else np.zeros_like(rl_mean)                
-                nb = int(np.median([len(rxk_from_series(ens_sb.gen_members[mi], k=k, block_id=block_id)) for mi in range(ens_sb.gen_members.shape[0])]))
-                row = ["GEN_ENS", str(int(k)), str(nb)] + \
-                      [f"{v:.6f}" for v in rl_mean] + \
-                      [f"{v:.6f}" for v in rl_lo] + \
-                      [f"{v:.6f}" for v in rl_hi]
-                gev_rows.append(",".join(row))
-                # store per-k stats (keyed by k)
-                gev_ens_stats[f"rl_mean_rx{k}"] = np.array(rl_mean, dtype=float)
-                gev_ens_stats[f"rl_p10_rx{k}"]  = np.array(rl_lo, dtype=float)
-                gev_ens_stats[f"rl_p90_rx{k}"]  = np.array(rl_hi, dtype=float)
-                gev_ens_stats[f"rl_std_rx{k}"]  = np.array(rl_std, dtype=float)
-                gev_ens_stats[f"n_members_rx{k}"] = np.int64(rls.shape[0])
+                rl_std = np.nanstd(rls, axis=0, ddof=1) if rls.shape[0] > 1 else np.zeros_like(rl_mean)
+                u_med = float(np.nanmedian(np.array(for_medians_u)))
+                row = ["GEN_ENS", f"{u_med:.6f}", "nan", "nan",  # xi,beta not defined for aggregated
+                    "nan", "nan"] + \
+                    [f"{v:.6f}" for v in rl_mean] + \
+                    [f"{v:.6f}" for v in rl_lo] + \
+                    [f"{v:.6f}" for v in rl_hi]
+                pot_rows.append(",".join(row))
+                # Save ensemble stats for POT/GPD to NPZ
+                try:
+                    np.savez_compressed(
+                        tables / "ext_pot_gpd_ens_stats.npz",
+                        rps_years=np.array(pot_rps, dtype=float),
+                        rl_mean=np.array(rl_mean, dtype=float),
+                        rl_p10=np.array(rl_lo, dtype=float),
+                        rl_p90=np.array(rl_hi, dtype=float),
+                        rl_std=np.array(rl_std, dtype=float),
+                        n_members=np.int64(rls.shape[0]),
+                        u_median=np.float64(u_med),
+                        pot_thr_kind=str(pot_thr_kind),
+                        pot_thr_val=np.float64(pot_thr_val),
+                    )
+                except Exception as e_npz:
+                    logger.warning(f"[extremes] Could not save ext_pot_gpd_ens_stats.npz: {e_npz}")
             except Exception as e:
-                logger.warning(f"[extremes] Ensemble GEV failed for Rx{k}: {e}")
-        # Save the ensemble stats dict to NPZ
-        try:
-            np.savez_compressed(tables / "ext_rxk_gev_ens_stats.npz", **gev_ens_stats)
-        except Exception as e:
-            logger.warning(f"[extremes] Could not save ext_rxk_gev_ens_stats.npz: {e}")
-    (tables / "ext_rxk_gev.csv").write_text("\n".join(gev_rows))
-
-    # ------------------ POT/GPD ------------------
-    # --- choose POT threshold behavior ---
-    if pot_thr_kind == "hr_quantile":
-        u_hr = float(np.nanpercentile(series_list[0][1], pot_thr_val * 100.0))  # HR is first
+                logger.warning(f"[extremes] Ensemble POT failed: {e}")
+        (tables / "ext_pot_gpd.csv").write_text("\n".join(pot_rows))
     else:
-        u_hr = None
-    pot_rows = ["which,u,xi,beta,k_exc,lambda_per_day," +
-                ",".join([f"rl_{int(r)}y" for r in pot_rps]) + "," +
-                ",".join([f"rl_{int(r)}y_lo" for r in pot_rps]) + "," +
-                ",".join([f"rl_{int(r)}y_hi" for r in pot_rps])]
-    for which, series in series_list:
-        if pot_thr_kind == "quantile":
-            u = float(np.nanpercentile(series, pot_thr_val * 100.0))
-        elif pot_thr_kind == "hr_quantile":
-            if u_hr is None:
-                raise ValueError("pot_thr_kind == 'hr_quantile' but u_hr was not set")
-            u = float(u_hr)
-        else:  # "value"
-            u = float(pot_thr_val)
+        logger.info("[extremes] Skipping POT/GPD since 'pot' not in task_list.")
 
-        try:
-            fit = fit_pot_gpd_with_ci(
-                series, threshold=u, rps_years=pot_rps, days_per_year=days_per_year
-            )
-            row = [which, f"{fit['u']:.6f}", f"{fit['xi']:.6f}", f"{fit['beta']:.6f}",
-                   str(int(fit["k_exc"])), f"{fit['lambda_per_day']:.8f}"] + \
-                  [f"{v:.6f}" for v in fit["rl"]] + \
-                  [f"{v:.6f}" for v in fit["rl_lo"]] + \
-                  [f"{v:.6f}" for v in fit["rl_hi"]]
-            pot_rows.append(",".join(row))
-        except Exception as e:
-            logger.warning(f"[extremes] POT failed for {which}: {e}")
-    if ens_sb is not None:
-        try:
-            # choose u per-member if quantile, else fixed as configured or HR-quantile
-            for_medians_u = []
-            rls = []
-            for mi in range(ens_sb.gen_members.shape[0]):
-                series = ens_sb.gen_members[mi]
-                if pot_thr_kind == "quantile":
-                    u = float(np.nanpercentile(series, pot_thr_val * 100.0))
-                elif pot_thr_kind == "hr_quantile":
-                    u = float(u_hr) if 'u_hr' in locals() and u_hr is not None else float(np.nanpercentile(sb.hr, pot_thr_val * 100.0))
-                else:
-                    u = float(pot_thr_val)
-                for_medians_u.append(u)
-                fit = fit_pot_gpd_with_ci(series, threshold=u, rps_years=pot_rps, days_per_year=days_per_year, n_boot=200)
-                rls.append(fit["rl"])  # [R]
-            rls = np.stack(rls, axis=0)
-            rl_mean = np.nanmean(rls, axis=0)
-            rl_lo  = np.nanpercentile(rls, 10, axis=0)
-            rl_hi  = np.nanpercentile(rls, 90, axis=0)
-            rl_std = np.nanstd(rls, axis=0, ddof=1) if rls.shape[0] > 1 else np.zeros_like(rl_mean)
-            u_med = float(np.nanmedian(np.array(for_medians_u)))
-            row = ["GEN_ENS", f"{u_med:.6f}", "nan", "nan",  # xi,beta not defined for aggregated
-                   "nan", "nan"] + \
-                  [f"{v:.6f}" for v in rl_mean] + \
-                  [f"{v:.6f}" for v in rl_lo] + \
-                  [f"{v:.6f}" for v in rl_hi]
-            pot_rows.append(",".join(row))
-            # Save ensemble stats for POT/GPD to NPZ
-            try:
-                np.savez_compressed(
-                    tables / "ext_pot_gpd_ens_stats.npz",
-                    rps_years=np.array(pot_rps, dtype=float),
-                    rl_mean=np.array(rl_mean, dtype=float),
-                    rl_p10=np.array(rl_lo, dtype=float),
-                    rl_p90=np.array(rl_hi, dtype=float),
-                    rl_std=np.array(rl_std, dtype=float),
-                    n_members=np.int64(rls.shape[0]),
-                    u_median=np.float64(u_med),
-                    pot_thr_kind=str(pot_thr_kind),
-                    pot_thr_val=np.float64(pot_thr_val),
-                )
-            except Exception as e_npz:
-                logger.warning(f"[extremes] Could not save ext_pot_gpd_ens_stats.npz: {e_npz}")
-        except Exception as e:
-            logger.warning(f"[extremes] Ensemble POT failed: {e}")
-    (tables / "ext_pot_gpd.csv").write_text("\n".join(pot_rows))
+    # ------------------ Tails ------------------
+    if "tails" in task_list:
+        # Percentile labels for tails CSV
+        p_labels = [_p_label(p) for p in tail_ps]
+        tails_header = "which," + ",".join(p_labels) + ",wet_freq,wet_hit_rate,n_days"
+        tails_rows = [tails_header]
 
-    # Percentile labels for tails CSV
-    from sbgm.evaluate.evaluate_prcp.eval_extremes.metrics_extremes import _p_label
-    p_labels = [_p_label(p) for p in tail_ps]
-    tails_header = "which," + ",".join(p_labels) + ",wet_freq,wet_hit_rate,n_days"
-    tails_rows = [tails_header]
-    basis = getattr(eval_cfg, "ext_tails_basis", "domain_series").lower()
+        # Optional uncertainty table for ablation comparisons (kept separate to avoid breaking ext_tails.csv parsing)
+        tails_uq_header = "which," + ",".join([f"{lab}_std" for lab in p_labels]) + ",wet_freq_std,wet_hit_rate_std,n_members"
+        tails_uq_rows = [tails_uq_header]
 
-    # Optional uncertainty table for ablation comparisons (kept separate to avoid breaking ext_tails.csv parsing)
-    tails_uq_header = "which," + ",".join([f"{lab}_std" for lab in p_labels]) + ",wet_freq_std,wet_hit_rate_std,n_members"
-    tails_uq_rows = [tails_uq_header]
-
-    if basis == "pooled_pixels":
-        pooled = pooled_pixel_percentiles_and_wetfreq(
-            resolver, dates, mask_hw=resolver.load_mask(dates[0]),
-            wet_thr=wet_thr, p_list=tail_ps, include_lr=include_lr)
-
-        # Proper pooled wet-day hit-rate: average over all HR-wet pixels across all days
-        hits = pooled_wet_hit_rate(
-            resolver, dates, mask_hw=resolver.load_mask(dates[0]),
-            wet_thr=wet_thr, include_lr=include_lr
-        )
-
-        for which in ["HR", "GEN", "LR"]:
-            if which not in pooled:
-                continue
-            if which == "HR":
-                wet_hit = 1.0
-            elif which == "GEN":
-                wet_hit = float(hits.get("GEN", float("nan")))
-            else:  # LR
-                wet_hit = float(hits.get("LR", float("nan")))
-            perc_vals = [f"{pooled[which][label]:.6f}" for label in p_labels]
-            tails_rows.append(",".join(
-                [which] + perc_vals + [
-                    f"{pooled[which]['wet_freq']:.6f}",
-                    f"{wet_hit:.6f}",
-                    str(int(pooled[which]['n_points']))
-                ]
-            ))
-        if ens_sb is not None:
-            ens_pool = percentiles_and_wetfreq_ens_member_mean(
+        if basis == "pooled_pixels":
+            pooled = pooled_pixel_percentiles_and_wetfreq(
                 resolver, dates, mask_hw=resolver.load_mask(dates[0]),
-                wet_thr=wet_thr, p_list=tail_ps,
-                n_members=getattr(eval_cfg, "ensemble_n_members", None),
-                seed=int(getattr(eval_cfg, "ensemble_member_seed", 1234)),
-            )
-            ens_hit = pooled_wet_hit_rate_ens_member_mean(
+                wet_thr=wet_thr, p_list=tail_ps, include_lr=include_lr)
+
+            # Proper pooled wet-day hit-rate: average over all HR-wet pixels across all days
+            hits = pooled_wet_hit_rate(
                 resolver, dates, mask_hw=resolver.load_mask(dates[0]),
-                wet_thr=wet_thr,
-                n_members=getattr(eval_cfg, "ensemble_n_members", None),
-                seed=int(getattr(eval_cfg, "ensemble_member_seed", 1234)),
+                wet_thr=wet_thr, include_lr=include_lr
             )
-            if ens_pool is not None and np.isfinite(ens_hit):
-                perc_vals_ens = [f"{ens_pool[label]:.6f}" for label in p_labels if label in ens_pool]
+
+            for which in ["HR", "GEN", "LR"]:
+                if which not in pooled:
+                    continue
+                if which == "HR":
+                    wet_hit = 1.0
+                elif which == "GEN":
+                    wet_hit = float(hits.get("GEN", float("nan")))
+                else:  # LR
+                    wet_hit = float(hits.get("LR", float("nan")))
+                perc_vals = [f"{pooled[which][label]:.6f}" for label in p_labels]
                 tails_rows.append(",".join(
-                    ["GEN_ENS"] + perc_vals_ens + [
-                        f"{ens_pool['wet_freq']:.6f}", f"{ens_hit:.6f}", str(int(ens_pool['n_points']))
+                    [which] + perc_vals + [
+                        f"{pooled[which]['wet_freq']:.6f}",
+                        f"{wet_hit:.6f}",
+                        str(int(pooled[which]['n_points']))
                     ]
                 ))
-                # Also compute std for hit-rate and persist stds for plotting error bars
-                from sbgm.evaluate.evaluate_prcp.eval_extremes.metrics_extremes import pooled_wet_hit_rate_ens_member_stats
-                hit_mean, hit_std = pooled_wet_hit_rate_ens_member_stats(
+            if ens_sb is not None:
+                ens_pool = percentiles_and_wetfreq_ens_member_mean(
+                    resolver, dates, mask_hw=resolver.load_mask(dates[0]),
+                    wet_thr=wet_thr, p_list=tail_ps,
+                    n_members=getattr(eval_cfg, "ensemble_n_members", None),
+                    seed=int(getattr(eval_cfg, "ensemble_member_seed", 1234)),
+                )
+                ens_hit = pooled_wet_hit_rate_ens_member_mean(
                     resolver, dates, mask_hw=resolver.load_mask(dates[0]),
                     wet_thr=wet_thr,
                     n_members=getattr(eval_cfg, "ensemble_n_members", None),
                     seed=int(getattr(eval_cfg, "ensemble_member_seed", 1234)),
                 )
-                # Write uncertainty row for ablation summaries (std across members)
-                try:
-                    std_vals = [ens_pool.get(f"{lab}_std", np.nan) for lab in p_labels]
-                    wet_std = ens_pool.get("wet_freq_std", np.nan)
-                    nm = int(getattr(ens_sb, "gen_members").shape[0])
-                    tails_uq_rows.append(",".join(
-                        ["GEN_ENS"] +
-                        [f"{float(v):.6f}" if np.isfinite(v) else "" for v in std_vals] +
-                        [
-                            (f"{float(wet_std):.6f}" if np.isfinite(wet_std) else ""),
-                            (f"{float(hit_std):.6f}" if np.isfinite(hit_std) else ""),
-                            str(nm),
+                if ens_pool is not None and np.isfinite(ens_hit):
+                    perc_vals_ens = [f"{ens_pool[label]:.6f}" for label in p_labels if label in ens_pool]
+                    tails_rows.append(",".join(
+                        ["GEN_ENS"] + perc_vals_ens + [
+                            f"{ens_pool['wet_freq']:.6f}", f"{ens_hit:.6f}", str(int(ens_pool['n_points']))
                         ]
                     ))
-                except Exception as e_uq:
-                    logger.warning(f"[extremes] Could not append tails uncertainty row: {e_uq}")
-                try:                    
-                    std_kwargs = {
-                        f"{label}_std": np.float64(ens_pool.get(f"{label}_std", np.nan))
-                        for label in p_labels
-                    }
-                    std_kwargs["wet_freq_std"] = np.float64(ens_pool.get("wet_freq_std", np.nan))
-                    std_kwargs["hit_std"] = np.float64(hit_std)                    
-                    np.savez_compressed(
-                        tables / "ext_tails_ens_bands.npz",
-                        **std_kwargs,
+                    # Also compute std for hit-rate and persist stds for plotting error bars
+                    from sbgm.evaluate.evaluate_prcp.eval_extremes.metrics_extremes import pooled_wet_hit_rate_ens_member_stats
+                    hit_mean, hit_std = pooled_wet_hit_rate_ens_member_stats(
+                        resolver, dates, mask_hw=resolver.load_mask(dates[0]),
+                        wet_thr=wet_thr,
+                        n_members=getattr(eval_cfg, "ensemble_n_members", None),
+                        seed=int(getattr(eval_cfg, "ensemble_member_seed", 1234)),
                     )
-                except Exception:
-                    pass
+                    # Write uncertainty row for ablation summaries (std across members)
+                    try:
+                        std_vals = [ens_pool.get(f"{lab}_std", np.nan) for lab in p_labels]
+                        wet_std = ens_pool.get("wet_freq_std", np.nan)
+                        nm = int(getattr(ens_sb, "gen_members").shape[0])
+                        tails_uq_rows.append(",".join(
+                            ["GEN_ENS"] +
+                            [f"{float(v):.6f}" if np.isfinite(v) else "" for v in std_vals] +
+                            [
+                                (f"{float(wet_std):.6f}" if np.isfinite(wet_std) else ""),
+                                (f"{float(hit_std):.6f}" if np.isfinite(hit_std) else ""),
+                                str(nm),
+                            ]
+                        ))
+                    except Exception as e_uq:
+                        logger.warning(f"[extremes] Could not append tails uncertainty row: {e_uq}")
+                    try:                    
+                        std_kwargs = {
+                            f"{label}_std": np.float64(ens_pool.get(f"{label}_std", np.nan))
+                            for label in p_labels
+                        }
+                        std_kwargs["wet_freq_std"] = np.float64(ens_pool.get("wet_freq_std", np.nan))
+                        std_kwargs["hit_std"] = np.float64(hit_std)                    
+                        np.savez_compressed(
+                            tables / "ext_tails_ens_bands.npz",
+                            **std_kwargs,
+                        )
+                    except Exception:
+                        pass
+
+        else:
+            # current domain-series logic
+            hr_is_wet = (series_list[0][1] > wet_thr).astype(bool)
+            for which, series in series_list:
+                t = percentiles_and_wetfreq(series, wet_thr=wet_thr, p_list=tail_ps)
+                is_wet = (series > wet_thr).astype(bool)
+                denom = hr_is_wet.sum()
+                wet_hit = float(((is_wet & hr_is_wet).sum()) / denom) if denom > 0 else float("nan")
+                perc_vals = [f"{t[label]:.6f}" for label in p_labels]
+                tails_rows.append(",".join(
+                    [which] + perc_vals + [
+                        f"{t['wet_freq']:.6f}", f"{wet_hit:.6f}", str(int(t['n_days']))
+                    ]
+                ))
+        (tables / "ext_tails.csv").write_text("\n".join(tails_rows))
+        # Write uncertainty CSV for ensemble tails if any rows
+        if len(tails_uq_rows) > 1:
+            (tables / "ext_tails_uncertainty.csv").write_text("\n".join(tails_uq_rows))
     else:
-        # current domain-series logic
-        hr_is_wet = (series_list[0][1] > wet_thr).astype(bool)
-        for which, series in series_list:
-            t = percentiles_and_wetfreq(series, wet_thr=wet_thr, p_list=tail_ps)
-            is_wet = (series > wet_thr).astype(bool)
-            denom = hr_is_wet.sum()
-            wet_hit = float(((is_wet & hr_is_wet).sum()) / denom) if denom > 0 else float("nan")
-            perc_vals = [f"{t[label]:.6f}" for label in p_labels]
-            tails_rows.append(",".join(
-                [which] + perc_vals + [
-                    f"{t['wet_freq']:.6f}", f"{wet_hit:.6f}", str(int(t['n_days']))
-                ]
-            ))
-    (tables / "ext_tails.csv").write_text("\n".join(tails_rows))
-    # Write uncertainty CSV for ensemble tails if any rows
-    if len(tails_uq_rows) > 1:
-        (tables / "ext_tails_uncertainty.csv").write_text("\n".join(tails_uq_rows))
-        
+        logger.info("[extremes] Skipping tails since 'tails' not in task_list.")
+
+
     # Save meta so plots can annotate the actual threshold and configuration
     meta_kwargs = {
         "wet_thr_mm": np.float64(wet_thr),
@@ -379,9 +476,13 @@ def run_extremes(
     np.savez_compressed(tables / "ext_meta.npz", **meta_kwargs)
 
     # ------------------ plots ------------------
-    try:
-        plot_extremes(out_root, eval_cfg=eval_cfg)
-    except Exception as e:
-        logger.warning(f"[extremes] Plotting failed: {e}")
+    if output_plots:
+        plot_extremes(
+            out_root,
+            eval_cfg=eval_cfg,
+            do_plot_gev=("gev" in task_list),
+            do_plot_pot=("pot" in task_list),
+            do_plot_tails=("tails" in task_list),
+        )
 
     logger.info(f"[extremes] Done. Outputs at: {out_root}")

@@ -238,6 +238,7 @@ class EvaluationRunner:
 
             # 1) Precipitation probabilistic evaluation
             if task_norm in ("prcp_probabilistic", "prcp_prob", "prob", "probabilistic"):
+                logger.info(f"\n[EvaluationRunner] Starting precipitation probabilistic evaluation\n")
                 out_dir = self.out_root / "prcp" / "probabilistic"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
@@ -251,6 +252,7 @@ class EvaluationRunner:
 
             # 2) Precipitation scale evaluation
             if task_norm in ("prcp_scale", "scale", "prcp_psd", "scale_dependent"):
+                logger.info(f"\n[EvaluationRunner] Starting precipitation scale evaluation\n")
                 out_dir = self.out_root / "prcp" / "scale"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
@@ -294,6 +296,7 @@ class EvaluationRunner:
 
             # 3) Precipitation distributional evaluation
             if task_norm in ("prcp_distributional", "prcp_distributions", "prcp_dist", "distributional", "dist"):
+                logger.info(f"\n[EvaluationRunner] Starting precipitation distributional evaluation\n")
                 out_dir = self.out_root / "prcp" / "distributional"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
@@ -308,6 +311,7 @@ class EvaluationRunner:
 
             # 4) Precipitation extremes evaluation
             if task_norm in ("prcp_extremes", "prcp_ext", "extremes", "ext"):
+                logger.info(f"\n[EvaluationRunner] Starting precipitation extremes evaluation\n")
                 out_dir = self.out_root / "prcp" / "extremes"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
@@ -321,6 +325,7 @@ class EvaluationRunner:
                 continue
             # 5) Precipitation spatial structure evaluation
             if task_norm in ("prcp_spatial", "spatial", "spatial_maps"):
+                logger.info(f"\n[EvaluationRunner] Starting precipitation spatial structure evaluation\n")
                 out_dir = self.out_root / "prcp" / "spatial"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
@@ -340,6 +345,7 @@ class EvaluationRunner:
 
             # 6) Precipitation temporal evaluation
             if task_norm in ("prcp_temporal", "temporal", "time", "timeseries"):
+                logger.info(f"\n[EvaluationRunner] Starting precipitation temporal evaluation\n")
                 out_dir = self.out_root / "prcp" / "temporal"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
@@ -355,6 +361,7 @@ class EvaluationRunner:
 
             # 7) Precipitation feature/object-based evaluation (SAL)
             if task_norm in ("prcp_features", "features", "objects", "sal"):
+                logger.info(f"\n[EvaluationRunner] Starting precipitation feature/object-based evaluation\n")
                 out_dir = self.out_root / "prcp" / "features"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
@@ -373,6 +380,7 @@ class EvaluationRunner:
 
             # 8) Precipitation per-date evaluation (pure plotting)
             if task_norm in ("prcp_dates", "dates", "per_date", "eval_dates"):
+                logger.info(f"\n[EvaluationRunner] Starting precipitation per-date evaluation\n")
                 out_dir = self.out_root / "prcp" / "dates"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"[EvaluationRunner] Running task '{task}' -> {out_dir}")
