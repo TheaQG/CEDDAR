@@ -103,5 +103,4 @@ __pycache__/
 .vscode/
 .idea/
 
-# local/HPC build artifacts
-lumi_cont/
+
