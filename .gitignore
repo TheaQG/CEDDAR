@@ -104,4 +104,4 @@ __pycache__/
 .idea/
 
 # local/HPC build artifacts
-LUMI_build/
+lumi_cont/
