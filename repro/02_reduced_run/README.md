@@ -52,7 +52,7 @@ The run is designed to complete well under 1 hour on any of these environments.
 
 From repository root:
 ```bash 
-pip install -e .
+pip install -r requirements.txt
 ```
 
 ### 2. Download the dataset 

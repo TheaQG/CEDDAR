@@ -20,7 +20,6 @@ This test is not meant to reproduce paper-quality skills or results, only to ver
 1) Install dependencies:
 ```bash
 pip install -r requirements.txt
-pip install -e .  # Install CEDDAR in editable mode to ensure the CLI is available
 ```
 
 2) Download Data_DiffMod_small from Zenodo: ___INSERT LINK___ and place it **next to** the CEDDAR/ repository folder:

@@ -41,7 +41,6 @@ The reduced reproducibility run (repro/02_reduced_run) generates figures similar
 Install locally:
 ```bash
 pip install -r requirements.txt
-pip install -e .
 ```
 
 Download `Data_DiffMod_small` from Zenodo (link to be added) and place it next to the repository:
