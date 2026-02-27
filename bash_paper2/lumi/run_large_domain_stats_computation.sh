@@ -5,7 +5,7 @@
 #SBATCH --account=project_465002493
 #SBATCH --partition=standard
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=128
+#SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
 #SBATCH --time=2:00:00
 

@@ -9,7 +9,57 @@
 #SBATCH --mem=16G
 #SBATCH --time=02:00:00
 
+
 set -euo pipefail
+set -x
+
+# --- Safeguards / diagnostics ---
+# Print a helpful message on any error (exit code, line, command)
+trap 'ec=$?; echo "[ERROR] ExitCode=${ec} at line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+
+# Refuse to ever delete outside ROOT
+is_safe_path() {
+  local p="$1"
+  [[ -n "${p}" ]] || return 1
+  # Normalize by stripping trailing slash
+  p="${p%/}"
+  [[ "$p" == "$ROOT"* ]]
+}
+
+# Check writability (best-effort; inodes can be full and still allow writes sometimes)
+is_writable_dir() {
+  local d="$1"
+  [[ -d "$d" ]] || return 1
+  [[ -w "$d" ]] && [[ -x "$d" ]]
+}
+
+# Run a command, optionally allowing failure (so a single permission issue doesn't kill the whole job)
+run_cmd_allow_fail() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "DRY-RUN: $*"
+    return 0
+  fi
+  "$@" || {
+    local ec=$?
+    echo "[WARN] Command failed (exit ${ec}): $*" >&2
+    return 0
+  }
+}
+
+# Safe rm -rf wrapper: only inside ROOT and never on empty path
+safe_rm_rf() {
+  local target="$1"
+  if ! is_safe_path "$target"; then
+    echo "[WARN] Refusing to rm outside ROOT: $target" >&2
+    return 0
+  fi
+  # Extra guardrails
+  if [[ -z "${target}" || "${target}" == "/" || "${target}" == "/scratch" || "${target}" == "/scratch/project_465002493" ]]; then
+    echo "[WARN] Refusing to rm dangerous path: $target" >&2
+    return 0
+  fi
+  run_cmd_allow_fail rm -rf "$target"
+}
 
 echo "=== Job start: $(date) ==="
 echo "Host: $(hostname)"
@@ -62,6 +112,7 @@ ZARR_LEGACY_NAMES=("eval.zarr" "valid2.zarr" "train2.zarr" "test2.zarr")
 
 # Never delete these zarr stores (critical)
 ZARR_PROTECTED=("train.zarr" "valid.zarr" "test.zarr")
+
 
 ########################################
 # Utility functions
@@ -140,6 +191,12 @@ archive_and_remove_subdir() {
 
   run_cmd mkdir -p "$archive_dir"
 
+  # If we cannot write archives here, skip this target rather than failing mid-run
+  if [ "$DRY_RUN" -eq 0 ] && ! is_writable_dir "$archive_dir"; then
+    echo "  [WARN] Cannot write to archive dir: $archive_dir (permission?). Skipping archive of $subdir_name." >&2
+    return
+  fi
+
   if [ -f "$out" ]; then
     echo "  Archive already exists: $out (skipping tar)"
   else
@@ -148,14 +205,14 @@ archive_and_remove_subdir() {
     if [ "$DRY_RUN" -eq 0 ]; then
       echo "  Archive created: $(ls -lh "$out")"
       echo "  Sanity check (first entries):"
-      tar -tf "$out" | head -n 5
+      tar -tf "$out" | head -n 5 || true # Don't fail if tar -tf fails (e.g. due to permissions), just print a warning
     fi
   fi
 
   # Remove the subdir after successful archive (not in DRY_RUN)
   if [ "$DRY_RUN" -eq 0 ] && [ -f "$out" ]; then
     echo "  Removing $subdir_path"
-    run_cmd rm -rf "$subdir_path"
+    safe_rm_rf "$subdir_path"
   elif [ "$DRY_RUN" -eq 1 ]; then
     echo "  DRY-RUN: Would remove $subdir_path"
   fi
@@ -180,7 +237,7 @@ cleanup_legacy_zarr() {
     done
     if [ -e "$target" ]; then
       echo "  Removing legacy zarr: $target"
-      run_cmd rm -rf "$target"
+      safe_rm_rf "$target"
     fi
   done
 
@@ -194,7 +251,7 @@ cleanup_legacy_zarr() {
       fi
     done
     echo "  Removing legacy zarr: $legacy"
-    run_cmd rm -rf "$legacy"
+    safe_rm_rf "$legacy"
   done
 }
 
@@ -221,7 +278,7 @@ cleanup_redundant_zarr() {
     done
     if [ "$keep" -eq 0 ]; then
       echo "  Removing redundant zarr store: $z"
-      run_cmd rm -rf "$z"
+      safe_rm_rf "$z"
     fi
   done
 }
@@ -233,7 +290,7 @@ remove_subdirs() {
     local subdir_path="$base_dir/$subdir"
     if [ -d "$subdir_path" ]; then
       echo "  Removing $subdir_path"
-      run_cmd rm -rf "$subdir_path"
+      safe_rm_rf "$subdir_path"
     fi
   done
 }
@@ -245,7 +302,7 @@ remove_empty_subdirs() {
     local subdir_path="$base_dir/$subdir"
     if [ -d "$subdir_path" ] && is_empty_dir "$subdir_path"; then
       echo "  Removing empty legacy dir: $subdir_path"
-      run_cmd rm -rf "$subdir_path"
+      safe_rm_rf "$subdir_path"
     fi
   done
 }
@@ -257,6 +314,24 @@ process_target() {
   print_dir_summary "$base_dir"
   echo ""
   echo "---- PLAN for $base_dir ----"
+
+  # Sanity: only touch directories under ROOT
+  if ! is_safe_path "$base_dir"; then
+    echo "[WARN] Skipping non-ROOT target: $base_dir" >&2
+    return
+  fi
+
+  if [ ! -d "$base_dir" ]; then
+    echo "[WARN] Skipping missing target: $base_dir" >&2
+    return
+  fi
+
+  # If base_dir itself isn't traversable/writable, still allow summary, but skip destructive actions
+  local base_writable=1
+  if [ "$DRY_RUN" -eq 0 ] && ! is_writable_dir "$base_dir"; then
+    base_writable=0
+    echo "[WARN] Base dir not writable: $base_dir. Will only print summaries and skip removals." >&2
+  fi
 
   # Plan: which ARCHIVE_SUBDIRS exist and are non-empty
   local to_archive=()
@@ -369,16 +444,20 @@ process_target() {
   echo "-----------------------------"
 
   # Actions
-  for subdir in "${ARCHIVE_SUBDIRS[@]}"; do
-    archive_and_remove_subdir "$base_dir" "$subdir"
-  done
-  remove_subdirs "$base_dir"
-  remove_empty_subdirs "$base_dir"
-  if [ "$CLEAN_LEGACY_ZARR" -eq 1 ]; then
-    cleanup_legacy_zarr "$base_dir"
-  fi
-  if [ "$CLEAN_REDUNDANT_ZARR" -eq 1 ]; then
-    cleanup_redundant_zarr "$base_dir"
+  if [ "$base_writable" -eq 1 ]; then
+    for subdir in "${ARCHIVE_SUBDIRS[@]}"; do
+      archive_and_remove_subdir "$base_dir" "$subdir"
+    done
+    remove_subdirs "$base_dir"
+    remove_empty_subdirs "$base_dir"
+    if [ "$CLEAN_LEGACY_ZARR" -eq 1 ]; then
+      cleanup_legacy_zarr "$base_dir"
+    fi
+    if [ "$CLEAN_REDUNDANT_ZARR" -eq 1 ]; then
+      cleanup_redundant_zarr "$base_dir"
+    fi
+  else
+    echo "  [SKIP] Destructive actions skipped due to permissions on base_dir." >&2
   fi
 
   print_dir_summary "$base_dir"
