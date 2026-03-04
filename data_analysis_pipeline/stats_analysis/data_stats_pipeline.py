@@ -121,8 +121,53 @@ def run_data_statistics(cfg):
             crop_region=var_cfg.get("crop_region", []),
             verbose=cfg.get("data", {}).get("verbose", False),
         )
-        raw_data = loader.load()
-        logger.info(f"Loaded {len(raw_data['cutouts'])} cutouts for {variable}")
+        use_streaming = bool(cfg.get("statistics", {}).get("streaming", False))
+        expected_shape = loader.get_expected_shape()
+
+        if use_streaming:
+            raw_data = {"loader": loader, "entries_iter": loader.iter_entries(), "expected_shape": expected_shape}
+        else:
+            raw_data = loader.load()
+
+        if use_streaming:
+            logger.info(f"Initialized streaming stats for {variable} (no full cutout list kept in memory)")
+        else:
+            logger.info(f"Loaded {len(raw_data['cutouts'])} cutouts for {variable}")
+
+        # In streaming mode, raw_data has no 'cutouts'. Build a small plotting subset when needed.
+        def _get_plot_data():
+            """Return a dict with 'cutouts' (+ optional 'timestamps') suitable for plotting."""
+            plotting_cfg = cfg.get("plotting", {})
+            ex_date = plotting_cfg.get("example_date", None)
+
+            # 1) Prefer a deterministic example day if provided
+            if ex_date:
+                try:
+                    d = loader.load_single_day(str(ex_date))  # YYYYMMDD
+
+                    # normalize timestamps
+                    ts = d.get("timestamps", None)
+                    if ts is not None and not isinstance(ts, list):
+                        d["timestamps"] = [ts]
+                    # normalize shape: cutouts must be a list
+                    if isinstance(d.get("cutouts", None), np.ndarray):
+                        d["cutouts"] = [d["cutouts"]]
+                    if not isinstance(d.get("cutouts", None), list):
+                        d["cutouts"] = list(d["cutouts"])  # best-effort
+                    return d
+                except Exception as e:
+                    logger.warning(
+                        f"[stats] Failed to load example_date={ex_date} for plotting: {e}. Falling back to random samples."
+                    )
+
+            # 2) Otherwise, load a small random sample for plotting
+            n = int(plotting_cfg.get("n_plot_samples", 8))
+            d = loader.load_multi(n)
+            if isinstance(d.get("cutouts", None), np.ndarray):
+                d["cutouts"] = [d["cutouts"]]
+            if not isinstance(d.get("cutouts", None), list):
+                d["cutouts"] = list(d["cutouts"])  # best-effort
+            return d
 
         # === Basic Statistics ===
         if cfg.get("statistics", {}).get("save_global_pixel_stats", True):
@@ -133,7 +178,7 @@ def run_data_statistics(cfg):
             logger.info(f"Not saving global statistics for {variable}")
 
         global_stats, cutout_stats, time_series_stats = compute_statistics(
-                                                                                                                            raw_data,
+                                                            raw_data,
                                                             print_stats=True,
                                                             return_all=True,
                                                             save_glob_stats=save_glob_stats,
@@ -148,6 +193,7 @@ def run_data_statistics(cfg):
                                                             pool_pixels=True,
                                                             small_data_batch=small_data_batch,
                                                             save_full_stats_npz=cfg.get("statistics", {}).get("save_full_stats_npz", True),
+                                                            streaming=use_streaming,
                                                         )
         all_results[f"{level}__{variable}"] = {
             "global": global_stats,
@@ -159,11 +205,13 @@ def run_data_statistics(cfg):
             current_fig_save_path = os.path.join(fig_save_dir, var_cfg.get("model", ""), variable, split)
             bounds = var_cfg.get("crop_region", [])
             logger.warning(f"Saving cutout example for variable {variable}, cutout region: {bounds}")
-            plot_cutout_example(raw_data, variable, cfg, current_fig_save_path, bounds=bounds)
+            plot_data = _get_plot_data() if use_streaming else raw_data
+            plot_cutout_example(plot_data, variable, cfg, current_fig_save_path, bounds=bounds)
 
         if cfg.get("plotting", {}).get("visualize_data", False):
             current_fig_save_path = os.path.join(fig_save_dir, var_cfg.get("model", ""), variable, split)
             logger.info(f"Generating raw data visualizations at {current_fig_save_path}")
+            plot_data = _get_plot_data() if use_streaming else raw_data
             if variable in ['temp', 'ewvf', 'nwvf', 'msl', 'z_pl_1000', 'z_pl_250', 'z_pl_500', 'z_pl_850']:
                 transforms = ['zscore']
                 log_scale = False
@@ -171,7 +219,7 @@ def run_data_statistics(cfg):
                 transforms = ['log', 'log_zscore']
                 log_scale = True
                 # Make sure all data is positive for log plots
-                raw_data['cutouts'] = [np.where(c <= 0, 1e-8, c) for c in raw_data['cutouts']]
+                plot_data['cutouts'] = [np.where(c <= 0, 1e-8, c) for c in plot_data['cutouts']]
             else:
                 transforms = ['zscore']
                 log_scale = False
@@ -179,7 +227,7 @@ def run_data_statistics(cfg):
                          
             visualize_statistics(
                 variable,
-                raw_data,
+                plot_data,
                 {
                     "global": global_stats,
                     "cutout": cutout_stats,
@@ -230,6 +278,7 @@ def run_data_statistics(cfg):
             if cfg.get("plotting", {}).get("visualize_aggregated", False):
                 current_fig_save_path = os.path.join(fig_save_dir, var_cfg.get("model", ""), variable, split)
                 logger.info(f"Generating aggregated data visualizations at {current_fig_save_path}")
+                plot_data = _get_plot_data() if use_streaming else raw_data
                 if variable in ['temp', 'ewvf', 'nwvf', 'msl', 'z_pl_1000', 'z_pl_250', 'z_pl_500', 'z_pl_850']:
                     transforms = ['zscore']
                     log_scale = False
@@ -237,7 +286,7 @@ def run_data_statistics(cfg):
                     transforms = ['log', 'log_zscore']
                     log_scale = True
                     # Make sure all data is positive for log plots
-                    raw_data['cutouts'] = [np.where(c <= 0, 1e-8, c) for c in raw_data['cutouts']]
+                    plot_data['cutouts'] = [np.where(c <= 0, 1e-8, c) for c in plot_data['cutouts']]
                 else:
                     transforms = ['zscore']
                     log_scale = False
@@ -245,7 +294,7 @@ def run_data_statistics(cfg):
                 
                 visualize_statistics(
                     variable,
-                    raw_data,
+                    plot_data,
                     {
                         "global": global_stats,
                         "cutout": cutout_stats,

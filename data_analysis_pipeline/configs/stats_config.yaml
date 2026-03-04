@@ -13,9 +13,10 @@ plotting:
   zero_floor_mm_day: 0.001
 
 statistics:
+  streaming: true # Whether to use streaming statistics computation (True) or load all data into memory (False)
   save_global_pixel_stats: true
   stats_save_dir: ${env:STATS_SAVE_DIR}
-  aggregate: true
+  aggregate: false
   print_results: ["global"]
   save_full_stats_npz: true
 
@@ -37,11 +38,11 @@ highres:
   variables: ['prcp'] #'temp', 
   agg_methods: ['sum'] #'mean', 
   domain_size: [589, 789]
-  crop_region: [0, 789, 0, 589]
+  crop_region: [0, 589, 0, 789]
 
 lowres:
   model: ERA5
   condition_variables: ['prcp', 'ewvf', 'nwvf', 'cape', 'msl', 'z_pl_1000', 'z_pl_250', 'z_pl_500', 'z_pl_850'] # ['prcp', 'temp', 'ewvf', 'nwvf', 'cape', ....] (ERA5 variables) 'temp', 
   agg_methods: ['sum', 'mean', 'mean', 'mean', 'mean', 'mean', 'mean', 'mean', 'mean'] # 'mean', 
   domain_size: [589, 789]
-  crop_region: [0, 789, 0, 589]
+  crop_region: [0, 589, 0, 789]

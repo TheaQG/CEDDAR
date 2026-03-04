@@ -19,6 +19,34 @@ formatter = logging.Formatter("[%(levelname)s] %(message)s")
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
+def _normalize_crop_region(crop_region, domain_size):
+    """
+    Normalize crop_region ordering to [y0, y1, x0, x1] (rows first).
+
+    Some configs use [x0, x1, y0, y1]. We detect common swapped cases
+    using domain_size=(H,W).
+    """
+    if crop_region is None:
+        return None
+    if not isinstance(crop_region, (list, tuple)) or len(crop_region) != 4:
+        return list(crop_region)
+
+    if not domain_size or len(domain_size) != 2:
+        return [int(crop_region[0]), int(crop_region[1]), int(crop_region[2]), int(crop_region[3])]
+
+    H, W = int(domain_size[0]), int(domain_size[1])
+
+    # Interpret as [y0,y1,x0,x1]
+    y0, y1, x0, x1 = map(int, crop_region)
+
+    # Detect the common swapped pattern: [0, W, 0, H]
+    # Example: [0,789,0,589] with H=589,W=789
+    if (y1 == W and x1 == H) or (y1 > H and x1 <= W):
+        x0_, x1_, y0_, y1_ = map(int, crop_region)  # provided as [x0,x1,y0,y1]
+        return [y0_, y1_, x0_, x1_]
+
+    return [y0, y1, x0, x1]
+
 def _open_zarr_group(root: str):
     """
         Opens a Zarr group from the given root path.
@@ -163,7 +191,7 @@ class DataLoader:
         self.var_name_short = get_var_name_short(variable, model)
         
         self.domain_size = domain_size
-        self.crop_region = crop_region
+        self.crop_region = _normalize_crop_region(crop_region, domain_size)
         self.split = split
         self.zarr = self.split in ["train", "valid", "val", "test"]
 
@@ -212,6 +240,26 @@ class DataLoader:
     def _process_wrapper(self, file_path):
         cutout, timestamp = process_single_file(file_path, self.variable, self.model_type, self.var_name_short, self.crop_region)
         return cutout, timestamp
+
+    def iter_entries(self):
+        """Yield (cutout, timestamp) pairs without materializing everything in RAM."""
+        file_list = self._get_file_list()
+        logger.info(f"[DataLoader] Streaming {len(file_list)} files for variable '{self.variable}' (model:{self.model_type}, split:{self.split})")
+        if not file_list:
+            raise FileNotFoundError(
+                f"No input files found in {self.data_dir} for variable {self.variable} with short name {self.var_name_short}"
+            )
+
+        # Stream sequentially to avoid buffering results in memory.
+        for i, f in enumerate(file_list, 1):
+            yield self._process_wrapper(f)
+            if i % 500 == 0 or i == len(file_list):
+                logger.info(f"[DataLoader] Streamed {i}/{len(file_list)} files for {self.variable}...")
+
+    def get_expected_shape(self):
+        if self.domain_size and len(self.domain_size) == 2:
+            return (int(self.domain_size[0]), int(self.domain_size[1]))
+        return None
 
     def load(self):
         file_list = self._get_file_list()
@@ -263,9 +311,6 @@ class DataLoader:
             "timestamps": list(timestamps)
         }
     def load_single_day(self, date_str: str):
-        """
-            Load data for a single specified date (YYYYMMDD)
-        """
         file_list = self._get_file_list()
         match_file = None
         for f in file_list:
@@ -277,8 +322,8 @@ class DataLoader:
 
         data, timestamp = self._process_wrapper(match_file)
         return {
-            "cutouts": data,
-            "timestamps": timestamp
+            "cutouts": [data],
+            "timestamps": [timestamp],
         }
 
     def load_multi(self, dates_or_n):

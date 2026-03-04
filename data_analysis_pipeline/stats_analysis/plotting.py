@@ -35,6 +35,11 @@ def plot_cutout_example(data,
     cutouts = data["cutouts"]
     timestamps = data.get("timestamps", None)
 
+    if isinstance(cutouts, np.ndarray):
+        cutouts = [cutouts]
+    if timestamps is not None and not isinstance(timestamps, list):
+        timestamps = [timestamps]
+
     # === Select index ===
     specific_date = cfg.get("plotting", {}).get("example_date", None)
     if specific_date:
@@ -145,7 +150,11 @@ def visualize_statistics(variable,
         raise ValueError("Unexpected data format. Provide a dict with 'cutouts' key or a list of cutouts.")
 
     stack = np.stack(cutouts)  # Shape: (T, H, W)
-    flat = stack.flatten() # Shape: (T * H * W,)
+    flat = stack.flatten()
+    flat = flat[np.isfinite(flat)]
+    if flat.size == 0:
+        logger.warning(f"All pixel values are non-finite for {model}/{variable}/{split}. Skipping histogram plots.")
+        return
 
 
     # === 1. Time series plots ===
@@ -260,20 +269,23 @@ def visualize_statistics(variable,
                 if global_stats is None:
                     logger.info(f"No global stats available for transformation {transform}. Skipping.")
                     continue
-                
+
                 transformed = transform_from_stats(flat, transform, cfg, global_stats)
                 # Transformed is torch.Tensor, convert to numpy
                 if transformed is not None:
-                    transformed = transformed.numpy()
-                
-                if transformed is not None:
+                    transformed = np.asarray(transformed)
+                    transformed = transformed[np.isfinite(transformed)]
+                    if transformed.size == 0:
+                        logger.warning(f"Transformed data '{transform}' is all non-finite for {model}/{variable}/{split}. Skipping this transform in histograms.")
+                        continue
+
                     # Plot alongside original
                     ax1.hist(transformed, bins=100, color=colors[transform], alpha=0.5, label=labels[transform])
+                    ax1.axvline(np.mean(transformed), color=colors[transform], linestyle='--', linewidth=1)
 
-                    ax1.axvline(np.mean(transformed), color=colors[transform], linestyle='--', linewidth=1)#, label=f'{labels[transform]} Mean')
                     # Plot alongside zoomed inset
                     ax2.hist(transformed, bins=100, alpha=0.7, label=labels[transform], color=colors[transform])
-                    ax2.axvline(np.mean(transformed), color=colors[transform], linestyle='--', linewidth=1)#, label=f'{labels[transform]} Mean')
+                    ax2.axvline(np.mean(transformed), color=colors[transform], linestyle='--', linewidth=1)
 
         if log_scale:
             ax1.set_yscale('log')
