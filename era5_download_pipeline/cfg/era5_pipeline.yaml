@@ -1,5 +1,5 @@
 # cfg/era5_pipeline.yaml
-area: [60, -80, 40, 40]        # N,W,S,E  (edit!)
+area: [70, -20, 45, 35]        # N,W,S,E  (edit!)
 dataset: reanalysis-era5-single-levels
 format: netcdf
 variables:
@@ -33,7 +33,7 @@ weights_file: ${env:ERA5_TMP_DIR}/weights/ERA5_to_DANRA_bil_weights_new.nc
 # grid_file: /Users/au728490/OneDrive - Aarhus universitet/PhD_AU/Python_Scripts/Data/mygrid_danra_small
 # weights_file: /Users/au728490/OneDrive - Aarhus universitet/PhD_AU/Python_Scripts/Data/ERA5_to_DANRA_bil_weights_new.nc
 lumi:
-  user:  lumi_user
+  user:  quistgaa
   host:  lumi.csc.fi
   raw_dir:   ${env:ERA5_TMP_DIR}/raw/{var}/{plev}
   daily_dir: ${env:ERA5_TMP_DIR}/daily/{var}/

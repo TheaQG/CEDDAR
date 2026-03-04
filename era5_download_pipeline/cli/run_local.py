@@ -7,6 +7,7 @@ import pathlib
 import shutil
 import logging
 import yaml
+import os
 
 from era5_download_pipeline.pipeline import download, transfer, stream
 from era5_download_pipeline.utils.logging_utils import setup_logging
@@ -40,7 +41,9 @@ if args.mode == "bulk":
     for var_long, vinfo in cfg['variables'].items():
         vshort = vinfo['short']
         tmp_dir = pathlib.Path(cfg['tmp_dir']) / vshort
-        remote_dir = cfg['lumi']['raw_dir'].format(var=vshort)
+        raw_dir_tmpl = cfg["lumi"]["raw_dir"]
+        raw_dir_tmpl = raw_dir_tmpl.replace("${env:ERA5_TMP_DIR}", os.environ.get("ERA5_TMP_DIR", ""))
+        remote_dir = raw_dir_tmpl.format(var=vshort, plev="").rstrip("/")
         transfer.rsync_push(tmp_dir, remote_dir, cfg)
         shutil.rmtree(tmp_dir)
 elif args.mode == "stream":

@@ -16,7 +16,7 @@ tmp_dir: /tmp/era5_downloads
 grid_file: ${env:ERA5_TMP_DIR}/grid/mygrid_danra_small
 weights_file: ${env:ERA5_TMP_DIR}/weights/ERA5_to_DANRA_bil_weights_new.nc
 lumi:
-  user:  lumi_user
+  user:  quistgaa
   host:  lumi.csc.fi
   raw_dir:   ${env:ERA5_TMP_DIR}/raw/{var}/{plev}
   daily_dir: ${env:ERA5_TMP_DIR}/daily/{var}/

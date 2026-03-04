@@ -5,6 +5,7 @@
 
 import pathlib # For file paths
 import logging
+import os
 import concurrent.futures # For parallel execution
 from . import download, transfer # Import download and transfer functions
 from .remote_utils import remote_years_present # Import utility to check remote years
@@ -21,7 +22,9 @@ def _job(args):
     tmp_dir.mkdir(parents=True, exist_ok=True)  # Ensure the temporary directory exists
 
     out_nc = tmp_dir / f"{vshort}_{yr}.nc"
-    remote_dir = cfg['lumi']['raw_dir'].format(var=vshort)
+    raw_dir_tmpl = cfg["lumi"]["raw_dir"]
+    raw_dir_tmpl = raw_dir_tmpl.replace("${env:ERA5_TMP_DIR}", os.environ.get("ERA5_TMP_DIR", ""))
+    remote_dir = raw_dir_tmpl.format(var=vshort, plev="").rstrip("/")
 
     logger.info("Starting job for %s %s to %s", var_long, yr, out_nc)
     # 1) Download
@@ -55,7 +58,9 @@ def _job_pressure(args):
     tmp_dir.mkdir(parents=True, exist_ok=True)  # Ensure the temporary directory exists
 
     out_nc = tmp_dir / f"{vshort}_{pressure_level}_{yr}.nc"
-    remote_dir = cfg['lumi']['raw_dir'].format(var=vshort, plev=pressure_level)
+    raw_dir_tmpl = cfg["lumi"]["raw_dir"]
+    raw_dir_tmpl = raw_dir_tmpl.replace("${env:ERA5_TMP_DIR}", os.environ.get("ERA5_TMP_DIR", ""))
+    remote_dir = raw_dir_tmpl.format(var=vshort, plev=pressure_level)
 
     logger.info("Starting job for %s %s at %s hPa to %s", var_long, yr, pressure_level, out_nc)
     # 1) Download
@@ -92,9 +97,9 @@ def download_transfer_delete(cfg, n_workers=2):
     # Check if pressure levels are specified
     pressure_levels = cfg.get('pressure_levels')            # None --> Single level run (empty list)
     
-    jobs = []
 
     for var_long, vinfo in cfg['variables'].items():
+        jobs = []
         vshort = vinfo['short']
         
         if pressure_levels:                                 # --- Pressure level case
@@ -131,10 +136,10 @@ def download_transfer_delete(cfg, n_workers=2):
             # Every worker builds its own cdsapi.Client instance, so no cross-thread sharing
             if pressure_levels:
                 # Use _job_pressure for pressure level data
-                executor.map(_job_pressure, jobs)
+                list(executor.map(_job_pressure, jobs))
             else:
                 # Use _job for single-level data
-                executor.map(_job, jobs)
+                list(executor.map(_job, jobs))
             # Log the number of jobs processed
             logger.info("Processed %d jobs for variable %s", len(jobs), vshort)
 
