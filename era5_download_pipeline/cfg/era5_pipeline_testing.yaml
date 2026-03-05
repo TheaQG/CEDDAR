@@ -2,7 +2,7 @@
 
 # This is a testing configuration for the ERA5 download pipeline, smaller in scope
 
-area: [60, -80, 40, 40]        # N,W,S,E  (edit!)
+area: [70, -20, 45, 35]        # N,W,S,E  (edit!)
 dataset: reanalysis-era5-single-levels
 format: netcdf
 variables:

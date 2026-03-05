@@ -3,9 +3,9 @@ area: [70, -20, 45, 35]        # N,W,S,E  (edit!)
 dataset: reanalysis-era5-single-levels
 format: netcdf
 variables:
-  2m_temperature:
-    short: t2m
-    daily_stat: daymean
+  # 2m_temperature:
+  #   short: t2m
+  #   daily_stat: daymean
   total_precipitation:
     short: tp
     daily_stat: daysum

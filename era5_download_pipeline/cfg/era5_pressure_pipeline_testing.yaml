@@ -1,5 +1,5 @@
 # cfg/era5_pipeline.yaml
-area: [60, -80, 40, 40]        # N,W,S,E  (edit!)
+area: [70, -20, 45, 35]        # N,W,S,E  (edit!)
 dataset: reanalysis-era5-pressure-levels
 format: netcdf
 variables:
