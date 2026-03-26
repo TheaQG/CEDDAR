@@ -6,21 +6,21 @@ variables:
   # 2m_temperature:
   #   short: t2m
   #   daily_stat: daymean
-  total_precipitation:
-    short: tp
-    daily_stat: daysum
-  potential_evaporation:
-    short: pev
-    daily_stat: daymean
-  convective_available_potential_energy:
-    short: cape
-    daily_stat: daymax
-  vertical_integral_of_northward_water_vapour_flux:
-    short: wvf_north
-    daily_stat: daymean
-  vertical_integral_of_eastward_water_vapour_flux:
-    short: wvf_east
-    daily_stat: daymean
+  # total_precipitation:
+  #   short: tp
+  #   daily_stat: daysum
+  # potential_evaporation:
+  #   short: pev
+  #   daily_stat: daymean
+  # convective_available_potential_energy:
+  #   short: cape
+  #   daily_stat: daymax
+  # vertical_integral_of_northward_water_vapour_flux:
+  #   short: wvf_north
+  #   daily_stat: daymean
+  # vertical_integral_of_eastward_water_vapour_flux:
+  #   short: wvf_east
+  #   daily_stat: daymean
   mean_sea_level_pressure:
     short: msl
     daily_stat: daymean

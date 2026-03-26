@@ -56,10 +56,14 @@ def get_units(cfg):
              "nwvf": "m/s",
              "ewvf": "m/s",
              "msl": "hPa",
+             "pev": "m",
              "z_pl_250": "m",
              "z_pl_500": "m",
              "z_pl_850": "m",
              "z_pl_1000": "m",
+             "t_pl_850": r"$^\circ$C",
+             "q_pl_850": "kg/kg",
+             "thetae_pl_850": r"$^\circ$C",
              }
 
 
@@ -86,10 +90,14 @@ def get_unit_for_variable(variable: str):
         "nwvf": "m/s",
         "ewvf": "m/s",
         "msl": "hPa",
+        "pev": "m",
         "z_pl_250": "m",
         "z_pl_500": "m",
         "z_pl_850": "m",
         "z_pl_1000": "m",
+        "t_pl_850": r"$^\circ$C",
+        "q_pl_850": "kg/kg",
+        "thetae_pl_850": r"$^\circ$C",
     }
 
     if variable not in units:
@@ -102,25 +110,31 @@ def correct_variable_units(var_name, model, data):
     Apply basic unit corrections to known variables.
     E.g., convert temperature from K to C, precipitation from m to mm.
     """
-    if var_name in ["temp", "t2m"]:
+    if var_name in ["temp", "t2m", "t_pl_850"]:
+        data = data - 273.15
+    elif var_name in ["thetae_pl_850"]:
+        # theta-e is stored in Kelvin for ERA5-derived products; convert to Celsius-style plotting units
         data = data - 273.15
     elif var_name in ["prcp", "tp"] and model in ["DANRA"]:
         # Make sure no negative values (set <0 to 1e-10)
         data[data < 0] = 1e-10
-    elif var_name in ["prcp"] and model in ["ERA5"]:
+    elif var_name in ["prcp", "tp"] and model in ["ERA5"]:
         data = data * 1000  # from m to mm
         # Make sure no negative values after conversion (set <0 to 1e-10)
         data[data < 0] = 1e-10
     elif var_name in ["cape"] and model in ["ERA5"]:
-        data = data / 1000  # from J/kg to kJ/kg
-        # Also ensure no negative CAPE values
+        # Keep CAPE in J/kg; just avoid negative numerical artefacts
         data[data < 0] = 1e-10
     elif var_name in ["msl"] and model in ["ERA5"]:
         data = data / 100  # from Pa to hPa
     elif var_name in ["pev"] and model in ["ERA5"]:
-        data = data / 1000  # from Pa to hPa
+        # ERA5 potential evaporation is stored in meters of water equivalent; keep as meters
+        pass
     elif var_name in ["z_pl_1000", "z_pl_250", "z_pl_500", "z_pl_850"] and model in ["ERA5"]:
         data = data / 9.81  # from geopotential to geopotential height in meters
+    elif var_name in ["q_pl_850"] and model in ["ERA5"]:
+        # Specific humidity is already in kg/kg
+        pass
         
     return data
 
@@ -151,6 +165,9 @@ def get_var_name_short(varname, model, domain_size=[589, 789]):
             "pev": f"pev_{domain_size_str}",
             "prcp": f"tp_{domain_size_str}",
             "temp": f"t2m_{domain_size_str}",
+            "t_pl_850": f"t_pl_850_hPa_{domain_size_str}",
+            "q_pl_850": f"q_pl_850_hPa_{domain_size_str}",
+            "thetae_pl_850": f"thetae_pl_850_hPa_{domain_size_str}",
             "z_pl_1000": f"z_pl_1000_hPa_{domain_size_str}",
             "z_pl_250": f"z_pl_250_hPa_{domain_size_str}",
             "z_pl_500": f"z_pl_500_hPa_{domain_size_str}",
@@ -177,7 +194,10 @@ def get_color_for_variable(variable: str, model: str):
             "z_pl_250": "pink",
             "z_pl_500": "chocolate",
             "z_pl_850": "orange", 
-            "z_pl_1000": "royalblue"
+            "z_pl_1000": "royalblue",
+            "t_pl_850": "salmon",
+            "q_pl_850": "mediumpurple",
+            "thetae_pl_850": "yellowgreen",
         }
     elif model.lower() == "era5":
         colors = {
@@ -190,7 +210,10 @@ def get_color_for_variable(variable: str, model: str):
             "z_pl_250": "orchid",
             "z_pl_500": "coral",
             "z_pl_850": "tan",
-            "z_pl_1000": "midnightblue"
+            "z_pl_1000": "midnightblue",
+            "t_pl_850": "tomato",
+            "q_pl_850": "royalblue",
+            "thetae_pl_850": "limegreen",
         }
     else:
         # Default colors if model is unknown
@@ -204,7 +227,10 @@ def get_color_for_variable(variable: str, model: str):
             "z_pl_250": "pink",
             "z_pl_500": "chocolate",
             "z_pl_850": "orange", 
-            "z_pl_1000": "royalblue"
+            "z_pl_1000": "royalblue",
+            "t_pl_850": "salmon",
+            "q_pl_850": "mediumpurple",
+            "thetae_pl_850": "yellowgreen",
         }
 
     if variable not in colors:
@@ -225,10 +251,14 @@ def get_cmaps(cfg):
              "nwvf": "cividis",
              "ewvf": "magma",
              "msl": "coolwarm",
+             "pev": "BrBG",
              "z_pl_250": "coolwarm",
              "z_pl_500": "coolwarm",
              "z_pl_850": "coolwarm",
              "z_pl_1000": "coolwarm",
+             "t_pl_850": "plasma",
+             "q_pl_850": "viridis",
+             "thetae_pl_850": "plasma",
              }
     
 
@@ -253,10 +283,14 @@ def get_cmap_for_variable(variable: str):
              "nwvf": "cividis",
              "ewvf": "magma",
              "msl": "coolwarm",
+             "pev": "BrBG",
              "z_pl_250": "coolwarm",
              "z_pl_500": "coolwarm",
              "z_pl_850": "coolwarm",
              "z_pl_1000": "coolwarm",
+             "t_pl_850": "plasma",
+             "q_pl_850": "viridis",
+             "thetae_pl_850": "plasma",
              }
 
     if variable not in cmaps:

@@ -5,8 +5,8 @@
 
 import pathlib # For file paths
 import logging
-import os
 import concurrent.futures # For parallel execution
+import threading
 from . import download, transfer # Import download and transfer functions
 from .remote_utils import remote_years_present # Import utility to check remote years
 
@@ -17,13 +17,12 @@ def _job(args):
     """
     Worker function to download and transfer data for a specific variable and year.
     """
-    var_long, vshort, yr, cfg = args
+    var_long, vshort, yr, cfg, transfer_semaphore = args
     tmp_dir = pathlib.Path(cfg['tmp_dir']) / vshort
     tmp_dir.mkdir(parents=True, exist_ok=True)  # Ensure the temporary directory exists
 
     out_nc = tmp_dir / f"{vshort}_{yr}.nc"
     raw_dir_tmpl = cfg["lumi"]["raw_dir"]
-    raw_dir_tmpl = raw_dir_tmpl.replace("${env:ERA5_TMP_DIR}", os.environ.get("ERA5_TMP_DIR", ""))
     remote_dir = raw_dir_tmpl.format(var=vshort, plev="").rstrip("/")
 
     logger.info("Starting job for %s %s to %s", var_long, yr, out_nc)
@@ -34,32 +33,28 @@ def _job(args):
     # 2) Transfer and auto-delete
     logger.info("Transferring %s to %s", out_nc, remote_dir)
     try:
-        transfer.rsync_push(out_nc, remote_dir, cfg)
+        with transfer_semaphore:
+            transfer.rsync_push(out_nc, remote_dir, cfg)
     except Exception as e:
         logger.error("Failed to transfer %s to %s: %s", out_nc, remote_dir, e)
         raise
-    # transfer.rsync_push(out_nc, remote_dir, cfg)
     logger.info("Transferred %s to %s", out_nc, remote_dir)
 
     # 3) Extra safety: Remove the local file after transfer
     if out_nc.exists():
         out_nc.unlink()
 
-    # Remove empty directory if it exists
-    if not any(tmp_dir.iterdir()):
-        tmp_dir.rmdir()
 
 def _job_pressure(args):
     """
     Worker function to download and transfer data for a specific variable, year, and pressure level.
     """
-    var_long, vshort, yr, pressure_level, cfg = args
+    var_long, vshort, yr, pressure_level, cfg, transfer_semaphore = args
     tmp_dir = pathlib.Path(cfg['tmp_dir']) / vshort
     tmp_dir.mkdir(parents=True, exist_ok=True)  # Ensure the temporary directory exists
 
     out_nc = tmp_dir / f"{vshort}_{pressure_level}_{yr}.nc"
     raw_dir_tmpl = cfg["lumi"]["raw_dir"]
-    raw_dir_tmpl = raw_dir_tmpl.replace("${env:ERA5_TMP_DIR}", os.environ.get("ERA5_TMP_DIR", ""))
     remote_dir = raw_dir_tmpl.format(var=vshort, plev=pressure_level)
 
     logger.info("Starting job for %s %s at %s hPa to %s", var_long, yr, pressure_level, out_nc)
@@ -70,7 +65,8 @@ def _job_pressure(args):
     # 2) Transfer and auto-delete
     logger.info("Transferring %s to %s", out_nc, remote_dir)
     try:
-        transfer.rsync_push(out_nc, remote_dir, cfg)
+        with transfer_semaphore:
+            transfer.rsync_push(out_nc, remote_dir, cfg)
     except Exception as e:
         logger.error("Failed to transfer %s to %s: %s", out_nc, remote_dir, e)
         raise
@@ -81,26 +77,25 @@ def _job_pressure(args):
     if out_nc.exists():
         out_nc.unlink()
 
-    # Remove empty directory if it exists
-    if not any(tmp_dir.iterdir()):
-        tmp_dir.rmdir()
 
 
-def download_transfer_delete(cfg, n_workers=2):
+def download_transfer_delete(cfg, n_workers=2, rsync_workers=1):
     """
     Download ERA5 data, transfer it to LUMI, and delete the local copy.
     
     Args:
         cfg (dict): Configuration dictionary containing settings for download and transfer.
         n_workers (int): Number of parallel workers to use for downloading and transferring data.
+        rsync_workers (int): Number of parallel rsync transfers to allow.        
     """
     # Check if pressure levels are specified
     pressure_levels = cfg.get('pressure_levels')            # None --> Single level run (empty list)
-    
+    transfer_semaphore = threading.Semaphore(max(1, rsync_workers))    
 
     for var_long, vinfo in cfg['variables'].items():
         jobs = []
         vshort = vinfo['short']
+        tmp_dir = pathlib.Path(cfg['tmp_dir']) / vshort
         
         if pressure_levels:                                 # --- Pressure level case
             for plev in pressure_levels:
@@ -114,7 +109,7 @@ def download_transfer_delete(cfg, n_workers=2):
                         logger.info("Skipping %s for %s at %s hPa as it is already present remotely.", 
                                     vshort, year, plev)
                         continue
-                    jobs.append((var_long, vshort, year, plev, cfg))
+                    jobs.append((var_long, vshort, year, plev, cfg, transfer_semaphore))
                     logger.info("Scheduled job for %s %s at %s hPa for year %s",
                                 var_long, vshort, plev, year)
         else:                                               # --- Single level case
@@ -125,7 +120,7 @@ def download_transfer_delete(cfg, n_workers=2):
                 if year in done and year != max(done):
                     logger.info("Skipping %s for %d as it is already present remotely.", vshort, year)
                     continue
-                jobs.append((var_long, vshort, year, cfg))
+                jobs.append((var_long, vshort, year, cfg, transfer_semaphore))
 
         if not jobs:
             logger.info("No jobs to process for %s. All requested data is already present remotely.", vshort)
@@ -142,5 +137,8 @@ def download_transfer_delete(cfg, n_workers=2):
                 list(executor.map(_job, jobs))
             # Log the number of jobs processed
             logger.info("Processed %d jobs for variable %s", len(jobs), vshort)
+        # Clean up shared variable temp directory only after all jobs for this variable are done.
+        if tmp_dir.exists() and not any(tmp_dir.iterdir()):
+            tmp_dir.rmdir()
 
         logger.info("All downloads and transfers completed for variable %s.", vshort)
