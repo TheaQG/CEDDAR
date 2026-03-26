@@ -51,7 +51,7 @@ def main():
     parser.add_argument(
         "--mode",
         choices=[
-            "train", "generate", "evaluate", "full_pipeline",
+            "train", "generate", "evaluate", "eval2", "full_pipeline",
             "data_splits", "quicklook", "baseline", "baseline_eval",
             "sigma_star_generation", "sigma_star_evaluation",
             "sampler_grid_generation", "sampler_grid_evaluation",  # <-- add these
@@ -98,7 +98,7 @@ def main():
     run_name = make_run_name(cfg.experiment.name, h)
     run_dir = ensure_run_dir(cfg.paths.log_dir, model_name)
 
-    make_plots = args.make_plots or (args.mode in ['evaluate', 'full_pipeline'] and not args.skip_evaluation)
+    make_plots = args.make_plots or (args.mode in ['evaluate', 'eval2', 'full_pipeline'] and not args.skip_evaluation)
 
     # === Logging + manifest ===
     cfg_py = OmegaConf.to_container(cfg, resolve=True) # Convert to plain dict for logging
@@ -157,6 +157,11 @@ def main():
         #     raise RuntimeError(f"Cannot evaluate: generated samples not found in {gen_dir}")
         launch_evaluation.run_evaluation(cfg_run, make_plots=make_plots)
         log_banner("EVALUATION DONE")
+
+    elif args.mode == "eval2":
+        log_banner("EVALUATION (EVAL2) START")
+        launch_evaluation.run_evaluation(cfg_run, make_plots=make_plots, force_eval2=True)
+        log_banner("EVALUATION (EVAL2) DONE")
 
     elif args.mode == "quicklook":
         log_banner("QUICKLOOK START")

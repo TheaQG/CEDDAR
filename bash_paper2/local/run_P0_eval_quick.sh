@@ -110,7 +110,7 @@ echo "=== EVALUATE ==="
 
 set +e
 
-python -m sbgm.cli.main_app --mode evaluate --config_path "$CONFIG_PATH"
+python -m sbgm.cli.main_app --mode eval2 --config_path "$CONFIG_PATH"
 RC=$?
 
 set -e
