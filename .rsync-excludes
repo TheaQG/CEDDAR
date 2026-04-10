@@ -2,6 +2,7 @@
 models_and_samples/
 data_examples/
 data_analysis_pipeline/saved/
+data_analysis_pipeline_private/saved/
 runs/
 figures/
 repro/
@@ -12,6 +13,8 @@ bash_paper1/
 logs/
 era5_download_pipeline/era5_logs/
 era5_download_pipeline/slurm/era5_logs/
+era5_download_pipeline_private/era5_logs/
+era5_download_pipeline_private/slurm/era5_logs/
 sbgm/logs/
 
 # optional: misc
