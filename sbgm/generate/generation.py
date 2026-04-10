@@ -20,7 +20,56 @@ import torch
 from tqdm import tqdm
 
 from sbgm.special_transforms import build_back_transforms_from_stats, lr_baseline_to_hr_zspace
-from sbgm.utils import extract_samples, get_model_string
+from sbgm.utils import extract_samples, get_model_string, crop_bounds_to_stats_str
+
+
+# --- Helper for resolving stats regions for transforms ---
+def _resolve_generation_stats_regions(cfg: dict):
+    """Resolve effective HR/LR stats regions for generation.
+
+    Mirrors the Paper2 spatial-context conventions used in training/data loading:
+      - large_domain: LR stats use the full LR domain, serialized in xxyy order.
+      - colocated:   LR stats follow the HR/co-located cutout convention.
+      - otherwise:   LR stats use lowres.cutout_domains in xxyy order.
+
+    Returns a dict with domain strings, effective bounds, and serialized crop strings.
+    """
+    hr_full = cfg['highres'].get('full_domain_dims', None)
+    lr_full = cfg['lowres'].get('full_domain_dims', None)
+
+    hr_domain_str = f"{hr_full[0]}x{hr_full[1]}" if hr_full is not None else "full_domain"
+    lr_domain_str = f"{lr_full[0]}x{lr_full[1]}" if lr_full is not None else "full_domain"
+
+    hr_bounds = cfg['highres'].get('cutout_domains', None)
+    lr_bounds_cfg = cfg['lowres'].get('cutout_domains', None)
+
+    paper2 = (cfg.get('paper2', {}) or {})
+    spatial = (paper2.get('spatial_context', {}) or {})
+    spatial_mode = str(spatial.get('mode', '')).lower()
+
+    hr_crop_str = crop_bounds_to_stats_str(hr_bounds, order="yyxx") if hr_bounds is not None else 'no_crop'
+
+    if spatial_mode == 'large_domain' and (lr_full is not None):
+        # Internal effective LR bounds are [x1, x2, y1, y2]
+        lr_bounds_eff = [0, lr_full[1], 0, lr_full[0]]
+        lr_crop_str = crop_bounds_to_stats_str(lr_bounds_eff, order="xxyy")
+    elif spatial_mode == 'colocated':
+        # Co-located mode should use the HR-aligned crop convention
+        lr_bounds_eff = hr_bounds
+        lr_crop_str = crop_bounds_to_stats_str(hr_bounds, order="yyxx") if hr_bounds is not None else 'no_crop'
+    else:
+        # Legacy/non-paper2 path: config cutout_domains are stored as [y1, y2, x1, x2]
+        lr_bounds_eff = lr_bounds_cfg
+        lr_crop_str = crop_bounds_to_stats_str(lr_bounds_eff, order="yyxx") if lr_bounds_eff is not None else 'no_crop'
+    return {
+        'spatial_mode': spatial_mode,
+        'hr_domain_str': hr_domain_str,
+        'lr_domain_str': lr_domain_str,
+        'hr_bounds_eff': hr_bounds,
+        'lr_bounds_eff': lr_bounds_eff,
+        'hr_crop_str': hr_crop_str,
+        'lr_crop_str': lr_crop_str,
+    }
 from sbgm.score_sampling import edm_sampler
 from sbgm.monitoring import (
     report_precip_extremes,
@@ -90,15 +139,16 @@ def _repeat_to_M(x, M: int):
     return x1.repeat(*reps)
 
 def _build_back_transforms(cfg: dict):
-    full_domain_dims_hr = cfg['highres'].get('full_domain_dims', None)
-    full_domain_dims_str_hr = f"{full_domain_dims_hr[0]}x{full_domain_dims_hr[1]}" if full_domain_dims_hr is not None else "full_domain"
-    crop_region_hr = cfg['highres'].get('cutout_domains', None)
-    crop_region_hr_str = '_'.join(map(str, crop_region_hr)) if crop_region_hr is not None else 'no_crop'
+    stats_regions = _resolve_generation_stats_regions(cfg)
 
-    full_domain_dims_lr = cfg['lowres'].get('full_domain_dims', None)
-    full_domain_dims_str_lr = f"{full_domain_dims_lr[0]}x{full_domain_dims_lr[1]}" if full_domain_dims_lr is not None else "full_domain"
-    crop_region_lr = cfg['lowres'].get('cutout_domains', None)
-    crop_region_lr_str = '_'.join(map(str, crop_region_lr)) if crop_region_lr is not None else 'no_crop'
+    full_domain_dims_str_hr = stats_regions['hr_domain_str']
+    crop_region_hr_str = stats_regions['hr_crop_str']
+    full_domain_dims_str_lr = stats_regions['lr_domain_str']
+    crop_region_lr_str = stats_regions['lr_crop_str']
+
+    logger.info("[generation] _build_back_transforms spatial_mode: %s", stats_regions['spatial_mode'])
+    logger.info("[generation] _build_back_transforms HR stats crop string: %s", crop_region_hr_str)
+    logger.info("[generation] _build_back_transforms LR stats crop string: %s", crop_region_lr_str)
 
     return build_back_transforms_from_stats(
         hr_var=cfg['highres']['variable'],
@@ -151,9 +201,19 @@ class GenerationRunner:
         # Cache strings for stats lookups
         self._dom_hr_str = f"{self.full_domain_dims_hr[0]}x{self.full_domain_dims_hr[1]}" if self.full_domain_dims_hr is not None else "full_domain"
         self._dom_lr_str = f"{self.full_domain_dims_lr[0]}x{self.full_domain_dims_lr[1]}" if self.full_domain_dims_lr is not None else "full_domain"
-        self._crop_hr_str = '_'.join(map(str, self.crop_region_hr)) if self.crop_region_hr is not None else "no_crop"
-        self._crop_lr_str = '_'.join(map(str, self.crop_region_lr)) if self.crop_region_lr is not None else "no_crop"
+        self._crop_hr_str = crop_bounds_to_stats_str(self.crop_region_hr, order="yyxx") if self.crop_region_hr is not None else "no_crop"
+
+        stats_regions = _resolve_generation_stats_regions(cfg)
+        self._spatial_mode = stats_regions['spatial_mode']
+        self._crop_hr_bounds_eff = stats_regions['hr_bounds_eff']
+        self._crop_lr_bounds_eff = stats_regions['lr_bounds_eff']
+        self._crop_hr_str = stats_regions['hr_crop_str']
+        self._crop_lr_str = stats_regions['lr_crop_str']
         self._stats_root = self.cfg['paths']['stats_load_dir']
+
+        logger.info("[generation] spatial_mode: %s", self._spatial_mode)
+        logger.info("[generation] Cached HR stats crop string: %s", self._crop_hr_str)
+        logger.info("[generation] Cached LR stats crop string: %s", self._crop_lr_str)
         self._hr_method_for_target = self.hr_scaling_method
         # Assume LR scaling methods is a list aligned with lr_vars; get method for the target variable
         if self.hr_var in self.lr_vars:
@@ -540,11 +600,13 @@ class GenerationRunner:
                 )
 
             logger.info(
-                "[generation] lr_ups baseline: converting LR-space -> HR-space via lr_baseline_to_hr_zspace "
-                "(baseline_space='%s').",
-                baseline_space,
+                "[generation] LR->HR baseline conversion stats: spatial_mode=%s | lr_domain=%s | lr_crop=%s | hr_domain=%s | hr_crop=%s",
+                getattr(self, '_spatial_mode', 'unknown'),
+                self._dom_lr_str,
+                self._crop_lr_str,
+                self._dom_hr_str,
+                self._crop_hr_str,
             )
-
             lr_in_hr_space = lr_baseline_to_hr_zspace(
                 lr_chan_norm=lrspace_chan,
                 # LR meta
@@ -727,6 +789,14 @@ class GenerationRunner:
 
                 # Convert LR baseline into HR z-space if needed (mirrors training intent)
                 try:
+                    logger.info(
+                        "[generation] run(): LR->HR baseline conversion stats: spatial_mode=%s | lr_domain=%s | lr_crop=%s | hr_domain=%s | hr_crop=%s",
+                        getattr(self, '_spatial_mode', 'unknown'),
+                        self._dom_lr_str,
+                        self._crop_lr_str,
+                        self._dom_hr_str,
+                        self._crop_hr_str,
+                    )
                     lr_ups_baseline = lr_baseline_to_hr_zspace(
                         lr_local,
                         hr_scaling_method=self._hr_method_for_target,

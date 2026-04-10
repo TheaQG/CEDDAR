@@ -139,7 +139,12 @@ def load_global_stats(variable, model, domain_str, crop_region_str, split, dir_l
     stats_load_path = os.path.join(stats_load_dir, f"global_stats__{model}__{domain_str}__crop__{crop_region_str}__{variable}__{split}.json")
     
     if not os.path.exists(stats_load_path):
-        logger.warning(f"Stats file not found: {stats_load_path}")
+        # logger.warning(f"Stats file not found: {stats_load_path}")
+        logger.warning(
+            f"Stats file not found: {stats_load_path} "
+            f"(dir_load={dir_load}, model={model}, variable={variable}, split={split}, "
+            f"domain_str={domain_str}, crop_region_str={crop_region_str})"
+        )
         return None
     if verbose:
         logger.info(f"Loading stats from {stats_load_path}")
@@ -177,7 +182,12 @@ def get_transforms_from_stats(variable: str,
 
     if stats is None and stats_file_path:
         if not os.path.exists(stats_file_path):
-            raise ValueError(f"Stats file not found: {stats_file_path}")
+            # raise ValueError(f"Stats file not found: {stats_file_path}")
+            raise ValueError(
+                f"Stats file not found: {stats_file_path} "
+                f"(variable={variable}, model={model}, domain_str={domain_str}, crop_region_str={crop_region_str}, "
+                f"scaling_split={scaling_split}, stats_file_path={stats_file_path})"
+            )
         stats = load_global_stats(variable, model, domain_str, crop_region_str, scaling_split, stats_file_path, verbose=True)
     if stats is None:
         raise ValueError(f"Failed to load stats from {stats_file_path}")
@@ -226,7 +236,11 @@ def get_backtransforms_from_stats(variable: str,
 
     if stats is None and stats_file_path:
         if not os.path.exists(stats_file_path):
-            raise ValueError(f"Stats file not found: {stats_file_path}")
+            raise ValueError(
+                f"Stats file not found: {stats_file_path} "
+                f"(variable={variable}, model={model}, domain_str={domain_str}, crop_region_str={crop_region_str}, "
+                f"scaling_split={scaling_split}, stats_file_path={stats_file_path})"
+            )
         stats = load_global_stats(variable, model, domain_str, crop_region_str, scaling_split, stats_file_path)
     if stats is None:
         raise ValueError(f"Failed to load stats from {stats_file_path}")

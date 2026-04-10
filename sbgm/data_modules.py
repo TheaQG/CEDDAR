@@ -32,7 +32,10 @@ from torchvision.transforms import InterpolationMode
 from scipy.ndimage import distance_transform_edt as distance
 
 from sbgm.special_transforms import Scale, get_transforms_from_stats
+
 from sbgm.variable_utils import correct_variable_units
+
+from sbgm.utils import crop_bounds_to_stats_str
 
 # Set logging
 logger = logging.getLogger(__name__)
@@ -440,7 +443,22 @@ def _extract_2d_from_zarr_entry(zgroup: zarr.Group, file_key: str, var_name: str
             continue
     raise KeyError(f"Could not find a suitable data array in zarr entry '{file_key}' for variable '{var_name}'. Tried keys: {candidates} and all members.")
 
+def _open_zarr_group_any(path: str):
+    """
+    Open either a directory-backed Zarr group or a ZIP-backed Zarr group.
 
+    Returns:
+        (group, store_handle)
+        - group: zarr.Group
+        - store_handle: underlying ZipStore to keep alive, or None for directory-backed Zarr
+    """
+    p = str(path)
+    if p.endswith('.zip') or p.endswith('.zarr.zip'):
+        store = zarr.storage.ZipStore(p, mode='r')
+        group = zarr.open_group(store=store, mode='r')
+        return group, store
+    group = zarr.open_group(p, mode='r')
+    return group, None
 class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
     '''
         Class for setting the DANRA dataset with option for random cutouts from specified domains.
@@ -551,6 +569,16 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
         # Specify target LR size (if different from HR size)
         self.target_lr_size = self.lr_data_size if self.lr_data_size is not None else self.hr_data_size
 
+        # Full-domain dimensions (H, W) used for mapping global crop coordinates
+        # between HR and LR grids. These must describe the full native domains,
+        # not the local crop sizes like hr_data_size=(128,128).
+        self.hr_full_domain_dims = tuple(
+            cfg['highres'].get('full_domain_dims', self.hr_data_size)
+        ) if cfg is not None else tuple(self.hr_data_size)
+        self.lr_full_domain_dims = tuple(
+            cfg['lowres'].get('full_domain_dims', self.target_lr_size)
+        ) if cfg is not None else tuple(self.target_lr_size)
+
         # ------------------------------------------------------------
         # Paper2: spatial context flags
         # ------------------------------------------------------------
@@ -582,14 +610,16 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
         # lr_cond_dirs_zarr is a dict mapping each condition to its own zarr directory path
         self.lr_cond_dirs_zarr = lr_cond_dirs_zarr
         # Open each LR condition's zarr group and list its files
-        self.lr_cond_zarr_dict = {} 
+        self.lr_cond_zarr_dict = {}
+        self.lr_cond_store_dict = {}
         self.lr_cond_files_dict = {}
         if self.lr_cond_dirs_zarr is not None:
             for cond in self.lr_cond_dirs_zarr:
                 logger.info(f'Loading zarr group for condition {cond}')
                 # logger.info(f'Path to zarr group: {self.lr_cond_dirs_zarr[cond]}')
-                group = zarr.open_group(self.lr_cond_dirs_zarr[cond], mode='r')
+                group, store = _open_zarr_group_any(self.lr_cond_dirs_zarr[cond])
                 self.lr_cond_zarr_dict[cond] = group
+                self.lr_cond_store_dict[cond] = store
                 self.lr_cond_files_dict[cond] = list(group.keys())
         else:
             raise ValueError('LR condition directories (lr_cond_dirs_zarr) must be provided as a dictionary.')
@@ -714,7 +744,7 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
 
         # Build file maps based on the date in the file name      
         # Open main (HR) zarr group, and get HR file keys (pure filenames)
-        self.zarr_group_img = zarr.open_group(hr_variable_dir_zarr, mode='r')
+        self.zarr_group_img, self.hr_zarr_store = _open_zarr_group_any(hr_variable_dir_zarr)
         hr_files_all = list(self.zarr_group_img.keys())
         self.hr_file_map = {}
         for file in hr_files_all:
@@ -803,12 +833,27 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
         if self.scale:
             # 1. Set condition transforms
             self.lr_transforms_dict = {}
+
+            # Paper2 spatial-context mode must be resolved before crop/stat strings are built.
+            paper2_cfg = (cfg or {}).get('paper2', {}) or {}
+            spatial_cfg = paper2_cfg.get('spatial_context', {}) or {}
+            spatial_mode = str(spatial_cfg.get('mode', '')).lower()
+            allow_legacy_stats_fallback = (spatial_mode == 'large_domain')
+
             domain_str_hr = f"{cfg['highres']['full_domain_dims'][0]}x{cfg['highres']['full_domain_dims'][1]}" if cfg is not None else f"{self.hr_data_size[0]}x{self.hr_data_size[1]}"
             domain_str_lr = f"{cfg['lowres']['full_domain_dims'][0]}x{cfg['lowres']['full_domain_dims'][1]}" if cfg is not None else f"{self.target_lr_size[0]}x{self.target_lr_size[1]}"
+
             crop_region_hr = cfg['highres']['cutout_domains'] if (cfg is not None and self.cutouts and self.hr_cutout_domains is not None) else "full"
-            crop_region_hr_str = '_'.join(map(str, crop_region_hr)) # if (cfg is not None and self.cutouts and self.hr_cutout_domains is not None) else "full"
+            crop_region_hr_str = crop_bounds_to_stats_str(crop_region_hr, order="yyxx")
+
             crop_region_lr = self.lr_cutout_domains if (cfg is not None and self.cutouts and self.lr_cutout_domains is not None) else "full"
-            crop_region_lr_str = '_'.join(map(str, crop_region_lr)) # if (cfg is not None and self.cutouts and self.lr_cutout_domains is not None) else "full"
+
+            # For colocated Paper2 mode, LR stat-string format should follow the HR convention.
+            if spatial_mode == "colocated":
+                crop_region_lr_str = crop_bounds_to_stats_str(crop_region_lr, order="yyxx")
+            else:
+                crop_region_lr_str = crop_bounds_to_stats_str(crop_region_lr, order="xxyy")
+
             scaling_split = self.scaling_split
             stats_load_dir = cfg['paths']['stats_load_dir'] if cfg is not None else './stats'
             self.hr_buffer_frac = cfg['highres'].get('buffer_frac', 0.00) if cfg is not None and 'highres' in cfg else 0.00
@@ -822,20 +867,27 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
             # NOTE: This is NOT scientifically correct normalization for large-domain
             # training; compute full-domain stats before running real experiments.
             # ------------------------------------------------------------
-            paper2_cfg = (cfg or {}).get('paper2', {}) or {}
-            spatial_cfg = paper2_cfg.get('spatial_context', {}) or {}
-            spatial_mode = spatial_cfg.get('mode', None)
-            allow_legacy_stats_fallback = (spatial_mode == 'large_domain')
-
             legacy_lr_crop = None
             legacy_lr_crop_str = None
             try:
                 legacy_lr_crop = (cfg or {}).get('lowres', {}).get('cutout_domains', None)
                 if legacy_lr_crop is not None:
-                    legacy_lr_crop_str = '_'.join(map(str, legacy_lr_crop))
+                    if spatial_mode == "colocated":
+                        legacy_lr_crop_str = crop_bounds_to_stats_str(legacy_lr_crop, order="yyxx")
+                    else:
+                        legacy_lr_crop_str = crop_bounds_to_stats_str(legacy_lr_crop, order="xxyy")
             except Exception:
                 legacy_lr_crop = None
                 legacy_lr_crop_str = None
+
+            logger.info(
+                "[stats] crop string summary: spatial_mode=%s | HR crop=%s -> %s | LR crop=%s -> %s",
+                spatial_mode or "none",
+                crop_region_hr,
+                crop_region_hr_str,
+                crop_region_lr,
+                crop_region_lr_str,
+            )
 
             def _get_tf_from_stats_safe(*, variable: str, model: str, domain_str: str, crop_region_str: str,
                                        scaling_split: str, transform_type: str, buffer_frac: float,
@@ -857,8 +909,8 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                 except Exception as e1:
                     if allow_legacy_stats_fallback and fallback_crop_region_str is not None and fallback_crop_region_str != crop_region_str:
                         logger.warning(
-                            "[stats] Missing stats for %s/%s crop=%s domain=%s. Falling back to legacy crop=%s (Paper2 large_domain dev only). err=%s",
-                            model, variable, crop_region_str, domain_str, fallback_crop_region_str, str(e1)
+                            "[stats] Missing stats for %s/%s crop=%s domain=%s. Falling back to legacy crop=%s (Paper2 %s fallback). err=%s",
+                            model, variable, crop_region_str, domain_str, fallback_crop_region_str, spatial_mode or "unknown", str(e1)
                         )
                         return get_transforms_from_stats(
                             variable=variable,
@@ -1302,7 +1354,37 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
         x1 = int(round(point[2] * sx))
         x2 = int(round(point[3] * sx))
         return [y1, y2, x1, x2]
-    
+
+    @staticmethod
+    def _full_domain_point(size_hw):
+        """
+            Return full-domain bounds in the dataset point convention [y1, y2, x1, x2]
+            for a native grid of size (H, W).
+        """
+        return [0, int(size_hw[0]), 0, int(size_hw[1])]
+
+    @staticmethod
+    def _map_global_point_between_domains(point, src_full_size, dst_full_size):
+        """
+            Map a global crop point [y1, y2, x1, x2] between full-domain grids.
+
+            IMPORTANT:
+            - `point` must be expressed in the coordinate system of the full source domain.
+            - `src_full_size` and `dst_full_size` are full native domain sizes (H, W),
+              not local crop sizes like (128, 128).
+        """
+        if src_full_size == dst_full_size:
+            return [int(v) for v in point]
+
+        sy = dst_full_size[0] / float(src_full_size[0])
+        sx = dst_full_size[1] / float(src_full_size[1])
+
+        y1 = int(round(point[0] * sy))
+        y2 = int(round(point[1] * sy))
+        x1 = int(round(point[2] * sx))
+        x2 = int(round(point[3] * sx))
+        return [y1, y2, x1, x2]
+
     @staticmethod
     def _valid_bounds(b):
         return (b is not None) and hasattr(b, '__len__') and (len(b) == 4) 
@@ -1319,7 +1401,10 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
             Priority:
             1) If fixed_cutout_hr==True and fixed_hr_bounds valid:
                 hr_point = fixed_hr_bounds
-                lr_point = (fixed_lr_bounds if fixed_cutout_lr and valid) else map HR→LR (or same if no lr_data_size)
+                lr_point =
+                    - full LR domain if Paper2 large-domain context is enabled
+                    - else fixed_lr_bounds if fixed_cutout_lr and valid
+                    - else global HR→LR mapping using full native domain sizes
                 return
             2) Else if fixed_cutout_lr==True and fixed_lr_bounds valid:
                 lr_point = fixed_lr_bounds
@@ -1330,22 +1415,31 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                 return (None, None)
             4) Else (random HR crop):
                 hr_point = random from HR cutout domain
-                lr_point = map HR→LR if LR domain equivalent/unspecified, else random from LR domain
+                lr_point =
+                    - full LR domain if Paper2 large-domain context is enabled
+                    - else global HR→LR mapping if LR domain equivalent/unspecified
+                    - else random from LR domain
                 return
         """
         # ----- Case 1: HR is fixed (authoritative), LR follows
         if self.fixed_cutout_hr and self._valid_bounds(self.fixed_hr_bounds):
-            hr_point = [int(v) for v in self.fixed_hr_bounds]  # authoritative HR ROI # type: ignore
+            hr_point = [int(v) for v in self.fixed_hr_bounds]  # authoritative HR ROI
 
             # LR decision
             if self.lr_data_size is None:
                 lr_point = hr_point  # same indices if LR uses HR grid/size
             else:
-                if self.fixed_cutout_lr and self._valid_bounds(self.fixed_lr_bounds):
-                    lr_point = [int(v) for v in self.fixed_lr_bounds] # authoritative LR ROI # type: ignore
+                # Paper2 large-domain context: LR context should be the full LR domain,
+                # not a mapped version of the local/fixed HR crop.
+                if getattr(self, "_paper2_large_domain", False):
+                    lr_point = self._full_domain_point(self.lr_full_domain_dims)
+                elif self.fixed_cutout_lr and self._valid_bounds(self.fixed_lr_bounds):
+                    lr_point = [int(v) for v in self.fixed_lr_bounds]  # authoritative LR ROI
                 else:
-                    # co-locate LR by mapping HR→LR
-                    lr_point = self._map_point_to_size(hr_point, self.hr_data_size, self.target_lr_size)
+                    # Map global HR coordinates to global LR coordinates using FULL domain sizes.
+                    lr_point = self._map_global_point_between_domains(
+                        hr_point, self.hr_full_domain_dims, self.lr_full_domain_dims
+                    )
             return hr_point, lr_point
 
         # Warn once if HR was requested fixed but bounds invalid
@@ -1355,14 +1449,16 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
 
         # ----- Case 2: LR is fixed (authoritative), HR follows
         if self.fixed_cutout_lr and self._valid_bounds(self.fixed_lr_bounds):
-            lr_point = [int(v) for v in self.fixed_lr_bounds]  # authoritative LR ROI # type: ignore
+            lr_point = [int(v) for v in self.fixed_lr_bounds]  # authoritative LR ROI #
 
             # Prefer to co-locate HR by mapping LR→HR when domains are equivalent/unspecified.
-            # If LR domain is clearly unrelated to HR domain, fall back to HR random (to avoid nonsense mapping).
+            # If LR domain is clearly unrelated to HR domain, fall back to HR random 
             domains_same = self._domains_equivalent(self.lr_cutout_domains, self.hr_cutout_domains,
                                                     self.lr_cutout_name, self.hr_cutout_name)
             if domains_same or (self.lr_cutout_domains is None):
-                hr_point = self._map_point_to_size(lr_point, self.target_lr_size, self.hr_data_size)
+                hr_point = self._map_global_point_between_domains(
+                    lr_point, self.lr_full_domain_dims, self.hr_full_domain_dims
+                )
             else:
                 # HR domain differs materially; choose a valid HR crop instead of blind mapping
                 if not self.cutouts:
@@ -1390,8 +1486,15 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
         else:
             domains_same = self._domains_equivalent(self.lr_cutout_domains, self.hr_cutout_domains,
                                                     self.lr_cutout_name, self.hr_cutout_name)
-            if (self.lr_cutout_domains is None) or domains_same:
-                lr_point = self._map_point_to_size(hr_point, self.hr_data_size, self.target_lr_size)
+
+            # Paper2 large-domain context: always expose the full LR domain as context.
+            if getattr(self, "_paper2_large_domain", False):
+                lr_point = self._full_domain_point(self.lr_full_domain_dims)
+            elif (self.lr_cutout_domains is None) or domains_same:
+                # Map global HR coordinates to global LR coordinates using FULL domain sizes.
+                lr_point = self._map_global_point_between_domains(
+                    hr_point, self.hr_full_domain_dims, self.lr_full_domain_dims
+                )
             else:
                 crop_w_h = (int(self.target_lr_size[1]), int(self.target_lr_size[0]))  # (W, H)
                 x1, x2, y1, y2 = find_rand_points(self.lr_cutout_domains, crop_w_h)
@@ -1494,6 +1597,38 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
         self._validate_season_y(y, use_sincos=False, where=" /dataset-build")
         return y
 
+    def _safe_slice_hw(self, arr, rect, rect_name="rect"):
+        """
+        Canonical rect convention: [x1, x2, y1, y2]
+        Actual slicing: arr[y1:y2, x1:x2]
+        """
+        if rect is None:
+            return arr
+
+        if not (isinstance(rect, (list, tuple)) and len(rect) == 4):
+            raise ValueError(f"[{rect_name}] Expected 4-element rect, got: {rect}")
+
+        x1, x2, y1, y2 = [int(v) for v in rect]
+        out = arr[y1:y2, x1:x2]
+
+        if out.shape[-2] > 0 and out.shape[-1] > 0:
+            return out
+
+        # Fallback for legacy ordering [y1, y2, x1, x2]
+        y1_alt, y2_alt, x1_alt, x2_alt = [int(v) for v in rect]
+        alt = arr[y1_alt:y2_alt, x1_alt:x2_alt]
+
+        if alt.shape[-2] > 0 and alt.shape[-1] > 0:
+            logger.warning(
+                "[data] Falling back to legacy crop ordering for %s. rect=%s arr_shape=%s alt_shape=%s",
+                rect_name, rect, getattr(arr, "shape", None), getattr(alt, "shape", None)
+            )
+            return alt
+
+        raise ValueError(
+            f"[{rect_name}] Empty crop under both conventions. rect={rect}, arr_shape={getattr(arr, 'shape', None)}"
+        )
+
     def __getitem__(self, idx:int):
         '''
             For each sample:
@@ -1525,6 +1660,8 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
 
         # Look up LR files for each condition using the common date
         for cond in self.lr_conditions_ordered:
+            data = None
+            data_local = None
             lr_file_name = self.lr_file_map[cond][date]
             # Load LR condition data from its own zarr group
             try:
@@ -1538,9 +1675,8 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
             # Crop LR data using lr_point if cutouts are enabled and lr_point is not None
             if self.cutouts and data is not None and lr_point is not None:
                 # lr_point is [y1, y2, x1, x2]; numpy slicing is [y1:y2, x1:x2]
-                data = data[lr_point[0]:lr_point[1], lr_point[2]:lr_point[3]]
+                data_lr = data[lr_point[0]:lr_point[1], lr_point[2]:lr_point[3]]
                 # Paper2 large_domain: also extract a co-located local LR crop using the HR ROI bounds
-                data_local = None
                 if getattr(self, "_paper2_large_domain", False) and getattr(self, "_paper2_use_local", False) and data is not None and hr_point is not None:
                     try:
                         data_local = data[hr_point[0]:hr_point[1], hr_point[2]:hr_point[3]]
@@ -1556,8 +1692,13 @@ class DANRA_Dataset_cutouts_ERA5_Zarr(Dataset):
                     sample_dict[f"{cond}_lr_local_original"] = data_local.copy() if data_local is not None else None
 
             # Apply specified transform for context-sized LR (stored as *_lr)
-            data_ctx_t = data
+            data_ctx_t = data_lr
             if data_ctx_t is not None and self.lr_transforms_dict.get(cond, None) is not None:
+                if int(data_ctx_t.shape[-2]) == 0 or int(data_ctx_t.shape[-1]) == 0:
+                    raise ValueError(
+                        f"[ctx-before-transform] Empty LR context crop for cond={cond}, idx={idx}, "
+                        f"lr_point={lr_point}, hr_point={hr_point}, shape={getattr(data_ctx_t, 'shape', None)}"
+                    )
                 data_ctx_t = self.lr_transforms_dict[cond](data_ctx_t)
             sample_dict[f"{cond}_lr"] = data_ctx_t
 

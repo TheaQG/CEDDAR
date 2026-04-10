@@ -1,5 +1,6 @@
 import os
 import torch
+import gc
 import torch.nn as nn 
 import zarr
 import logging
@@ -8,6 +9,7 @@ import numpy as np
 
 
 from torch.utils.data import DataLoader, Subset, SequentialSampler
+from torch.utils.data.distributed import DistributedSampler
 from torch.optim import Adam, SGD, AdamW
 from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau, CosineAnnealingLR
 from functools import partial
@@ -15,7 +17,7 @@ from functools import partial
 from sbgm.data_modules import DANRA_Dataset_cutouts_ERA5_Zarr
 from sbgm.score_unet import ScoreNet, Encoder, Decoder, EDMPrecondUNet, marginal_prob_std
 from sbgm.losses import EDMLoss, DSMLoss
-from sbgm.utils import build_data_path, get_model_string
+from sbgm.utils import build_data_path, get_model_string, crop_bounds_to_stats_str
 from sbgm.variable_utils import get_units
 from sbgm.special_transforms import build_back_transforms_from_stats
 # from sbgm.evaluation.evaluation import evaluate_model
@@ -49,6 +51,17 @@ def _get(cfg, path, default=None):
         node = node[k]
     return node
 
+
+# --- DDP runtime config helper ---
+def _runtime_from_cfg(cfg: dict) -> dict:
+    runtime = cfg.get('runtime', {}) if isinstance(cfg, dict) else {}
+    return {
+        'distributed': bool(runtime.get('distributed', False)),
+        'rank': int(runtime.get('rank', 0)),
+        'world_size': int(runtime.get('world_size', 1)),
+        'is_main_process': bool(runtime.get('is_main_process', runtime.get('rank', 0) == 0)),
+    }
+
 def get_loss_fn(cfg, marginal_prob_std_fn_in=None):
     edm_cfg = cfg.get('edm', {})
 
@@ -60,7 +73,7 @@ def get_loss_fn(cfg, marginal_prob_std_fn_in=None):
 
         use_sdf         = bool(_get(cfg, 'stationary_conditions.geographic_conditions.sample_w_sdf', False))
         max_land_w      = float(_get(cfg, 'stationary_conditions.geographic_conditions.max_land_weight', 1.0))
-        min_sea_w       = float(_get(cfg, 'stationary_conditions.geographic_conditions.min_sea_weight', 0.5))
+        min_sea_w       = float(_get(cfg, 'stationary_conditions.geographic_conditions.min_ocean_weight', 0.5))
 
 
         return EDMLoss(
@@ -118,7 +131,7 @@ def _resolve_paper2_lr_geometry(cfg, verbose: bool = False):
         if verbose:
             logger.info(
                 f"\n[paper2][spatial_context] mode=large_domain -> LR context size={lr_data_size_use}, "
-                f"LR cutout domain={lr_cutout_domains_eff}"
+                f"LR cutout domain[x1,x2,y1,y2]={lr_cutout_domains_eff}"
             )
     else:
         # colocated / legacy behavior
@@ -135,6 +148,7 @@ def _resolve_paper2_lr_geometry(cfg, verbose: bool = False):
         "spatial_mode": spatial_mode,
     }
 
+
 def get_dataloader(cfg, verbose=True):
     '''
         Get the dataloader for training and validation datasets based on the configuration.
@@ -146,6 +160,16 @@ def get_dataloader(cfg, verbose=True):
             val_loader (DataLoader): DataLoader for the validation dataset.
             gen_loader (DataLoader): DataLoader for the generation dataset.
     '''
+    runtime = _runtime_from_cfg(cfg)
+    distributed = runtime['distributed']
+    rank = runtime['rank']
+    world_size = runtime['world_size']
+
+    # IMPORTANT: each DataLoader worker gets its own Dataset instance.
+    # Any in-memory Dataset cache is therefore replicated across workers and can
+    # easily OOM for large full-domain LR fields.
+    raw_workers = int(cfg['data_handling'].get('num_workers', 0) or 0)
+
     # Print information about data types
     hr_unit, lr_units = get_units(cfg)
     logger.info(f"\nUsing HR data type: {cfg['highres']['model']} {cfg['highres']['variable']} [{hr_unit}]")
@@ -166,13 +190,6 @@ def get_dataloader(cfg, verbose=True):
         lr_data_size_use = (lr_data_size_use[0] // cfg['lowres']['resize_factor'], lr_data_size_use[1] // cfg['lowres']['resize_factor'])
     else:
         hr_data_size_use = hr_data_size
-    if verbose:
-        logger.info(f"\n\nHigh-resolution data size: {hr_data_size_use}")
-        if cfg['lowres']['resize_factor'] > 1:
-            logger.info(f"\tHigh-resolution data size after resize: {hr_data_size_use}")
-        logger.info(f"Low-resolution data size: {lr_data_size_use}")
-        if cfg['lowres']['resize_factor'] > 1:
-            logger.info(f"\tLow-resolution data size after resize: {lr_data_size_use}")
 
     # Set full domain size 
     full_domain_dims = tuple(cfg['highres']['full_domain_dims']) if cfg['highres']['full_domain_dims'] is not None else None
@@ -197,9 +214,31 @@ def get_dataloader(cfg, verbose=True):
     full_domain_dims_str_hr = f"{full_domain_dims[0]}x{full_domain_dims[1]}" if full_domain_dims is not None else "full_domain"
     full_domain_dims_str_lr = f"{full_domain_dims[0]}x{full_domain_dims[1]}" if full_domain_dims is not None else "full_domain"
     crop_region_hr = cfg['highres']['cutout_domains'] if cfg['highres']['cutout_domains'] is not None else "full_region"
-    crop_region_hr_str = '_'.join(map(str, crop_region_hr)) #if isinstance(crop_region_hr, (list, tuple)) else crop_region_hr
+    crop_region_hr_str = crop_bounds_to_stats_str(crop_region_hr, order="yyxx")
     crop_region_lr = lr_cutout_domains_eff if lr_cutout_domains_eff is not None else (cfg['lowres']['cutout_domains'] if cfg['lowres']['cutout_domains'] is not None else "full_region")
-    crop_region_lr_str = '_'.join(map(str, crop_region_lr))
+
+    # Build stats-file crop strings strictly via the shared helper.
+    # HR config cutouts are stored as [y1, y2, x1, x2] -> order="yyxx"
+    # Effective/internal LR bounds are stored as [x1, x2, y1, y2] -> order="xxyy"
+    if str(spatial_mode).lower() == 'colocated':
+        # In co-located mode, LR stats must follow the HR-aligned crop convention.
+        crop_region_lr_stat_str = crop_bounds_to_stats_str(crop_region_hr, order="yyxx")
+    else:
+        # large_domain LR context and resolved LR bounds are internal [x1,x2,y1,y2]
+        crop_region_lr_stat_str = crop_bounds_to_stats_str(crop_region_lr, order="xxyy")
+
+    if verbose:
+        logger.info(f"\n\nHigh-resolution data size: {hr_data_size_use}")
+        if cfg['lowres']['resize_factor'] > 1:
+            logger.info(f"\tHigh-resolution data size after resize: {hr_data_size_use}")
+        logger.info(f"Low-resolution data size: {lr_data_size_use}")
+        if cfg['lowres']['resize_factor'] > 1:
+            logger.info(f"\tLow-resolution data size after resize: {lr_data_size_use}")
+
+        logger.info(
+            f"[geometry] LR crop rect [x1,x2,y1,y2]: {lr_cutout_domains_eff} | "
+            f"stats crop string [y1_y2_x1_x2]: {crop_region_lr_stat_str} | spatial_mode={spatial_mode}"
+        )
 
     # NOTE: Maybe remove? Should be handled in dataset class
     # Back-transforms are only needed for visualization/back-conversion.
@@ -218,7 +257,7 @@ def get_dataloader(cfg, verbose=True):
                             lr_vars             = cfg['lowres']['condition_variables'],
                             lr_model            = cfg['lowres']['model'],
                             domain_str_lr       = full_domain_dims_str_lr,
-                            crop_region_str_lr  = crop_region_lr_str,
+                            crop_region_str_lr  = crop_region_lr_stat_str,
                             lr_scaling_methods  = cfg['lowres']['scaling_methods'],
                             lr_buffer_frac      = cfg['lowres']['buffer_frac'] if 'buffer_frac' in cfg['lowres'] else 0.0,
                             split               = cfg['transforms']['scaling_split'] if 'scaling_split' in cfg['transforms'] else 'train',
@@ -229,13 +268,16 @@ def get_dataloader(cfg, verbose=True):
         # Common during Paper2 large-domain context tests: LR crop stats for full domain not computed yet.
         logger.warning(
             "[stats] Back-transform stats not found for crop_region_lr_str='%s'. Will try legacy LR cutout_domains stats. (err=%s)",
-            crop_region_lr_str,
+            crop_region_lr_stat_str,
             str(e),
         )
         try:
             legacy_lr_crop = cfg['lowres']['cutout_domains'] if cfg['lowres'].get('cutout_domains', None) is not None else None
             if legacy_lr_crop is not None:
-                legacy_lr_crop_str = '_'.join(map(str, legacy_lr_crop))
+                if str(spatial_mode).lower() == 'large_domain':
+                    legacy_lr_crop_str = crop_bounds_to_stats_str(legacy_lr_crop, order="yyxx")
+                else:
+                    legacy_lr_crop_str = crop_region_hr_str
                 back_transforms = build_back_transforms_from_stats(
                                     hr_var              = cfg['highres']['variable'],
                                     hr_model            = cfg['highres']['model'],
@@ -418,19 +460,28 @@ def get_dataloader(cfg, verbose=True):
     n_samples_gen = len(list(data_gen_zarr.keys()))
 
     # Setup cache
+    cache_size_train = int(cfg['data_handling'].get('cache_size_train', cfg['data_handling'].get('cache_size', 0)) or 0)
+    cache_size_valid = int(cfg['data_handling'].get('cache_size_valid', cfg['data_handling'].get('cache_size', 0)) or 0)
+    cache_size_gen = int(cfg['data_handling'].get('cache_size_gen', cfg['data_handling'].get('cache_size', 0)) or 0)
 
-    if cfg['data_handling']['cache_size'] == 0:
-        cache_size_train = n_samples_train//2
-        cache_size_valid = n_samples_valid//2
-    else:
-        cache_size_train = cfg['data_handling']['cache_size']
-        cache_size_valid = cfg['data_handling']['cache_size']
+    if raw_workers > 0:
+        if (cache_size_train > 0) or (cache_size_valid > 0) or (cache_size_gen > 0):
+            logger.warning(
+                "[dataloader] num_workers=%s with dataset caching requested (train=%s, valid=%s, gen=%s). "
+                "Disabling dataset caches to avoid per-worker RAM duplication / OOM.",
+                raw_workers, cache_size_train, cache_size_valid, cache_size_gen,
+            )
+        cache_size_train = 0
+        cache_size_valid = 0
+        cache_size_gen = 0
 
     if verbose:
         logger.info(f"\n\n\nNumber of training samples: {n_samples_train}")
         logger.info(f"Number of validation samples: {n_samples_valid}")
+        logger.info(f"Number of generation samples: {n_samples_gen}")
         logger.info(f"Cache size for training: {cache_size_train}")
-        logger.info(f"Cache size for validation: {cache_size_valid}\n\n\n")
+        logger.info(f"Cache size for validation: {cache_size_valid}")
+        logger.info(f"Cache size for generation: {cache_size_gen}\n\n\n")
 
 
     # Setup datasets
@@ -517,7 +568,7 @@ def get_dataloader(cfg, verbose=True):
                             hr_variable_dir_zarr=hr_data_dir_gen,
                             hr_data_size=hr_data_size_use,
                             n_samples=n_samples_gen,
-                            cache_size=cfg['data_handling']['cache_size'],
+                            cache_size=cache_size_gen,
                             hr_variable=cfg['highres']['variable'],
                             hr_model=cfg['highres']['model'],
                             hr_scaling_method=cfg['highres']['scaling_method'],
@@ -560,24 +611,42 @@ def get_dataloader(cfg, verbose=True):
     )
 
     # Setup dataloaders
-    raw_workers = int(cfg['data_handling'].get('num_workers', 0) or 0)
-    pin = bool(cfg['data_handling'].get('pin_memory', torch.cuda.is_available())) and torch.cuda.is_available()
+    pin = bool(cfg['data_handling'].get('pin_memory', False)) and torch.cuda.is_available()
     persist = raw_workers > 0
+
+    # Setup distributed sampler for the train dataset when running under DDP.
+    train_sampler = None
+    if distributed:
+        train_sampler = DistributedSampler(
+            train_dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=True,
+            drop_last=True,
+        )
+        logger.info(
+            "[dataloader] Using DistributedSampler for train dataset: rank=%s world_size=%s drop_last=True",
+            rank, world_size,
+        )
+    else:
+        logger.info("[dataloader] Using standard shuffled train DataLoader (non-distributed)")
 
     train_kwargs = dict(
         batch_size=int(cfg['training']['batch_size']),
-        shuffle=True,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
         num_workers=int(raw_workers),
         pin_memory=bool(pin),
         persistent_workers=bool(persist),
         drop_last=True)
-    
+
     if persist:
-        train_kwargs['prefetch_factor'] = 4  # Each worker preloads 4 batches
+        train_kwargs['prefetch_factor'] = 1
 
     train_loader = DataLoader(train_dataset, **train_kwargs) # type: ignore
 
 
+    logger.info("[dataloader] Validation loader remains single-process for now; validation should run on rank 0 only.")
     val_kwargs = dict(
         batch_size=int(cfg['training']['batch_size']),
         shuffle=False,
@@ -587,10 +656,11 @@ def get_dataloader(cfg, verbose=True):
         drop_last=(len(val_dataset) % cfg['training']['batch_size']) != 0)
     
     if persist:
-        val_kwargs['prefetch_factor'] = 2  # Each worker preloads 2 batches
+        val_kwargs['prefetch_factor'] = 1
     val_loader = DataLoader(val_dataset, **val_kwargs) # type: ignore
 
 
+    logger.info("[dataloader] Generation loader remains single-process for now; generation should run on rank 0 only.")
     gen_bs = int(cfg['data_handling']['n_gen_samples'])
     # Take the first gen_bs samples deterministically
     fixed_ids = list(range(min(gen_bs, len(gen_dataset))))
@@ -612,13 +682,20 @@ def get_dataloader(cfg, verbose=True):
 
 
     # Print dataset information
-    # if verbose:
     logger.info(f"\nTraining dataset: {len(train_dataset)} samples")
     logger.info(f"Validation dataset: {len(val_dataset)} samples")
     logger.info(f"Generation dataset: {len(gen_dataset)} samples\n")
     logger.info(f"Batch size: {cfg['training']['batch_size']}")
     logger.info(f"Number of workers: {int(cfg['data_handling']['num_workers'])}\n")
-    
+
+    logger.info(
+        "[dataloader] Summary: distributed=%s | train_sampler=%s | train_batches=%s | val_batches=%s | gen_batches=%s",
+        distributed,
+        type(train_sampler).__name__ if train_sampler is not None else 'None',
+        len(train_loader),
+        len(val_loader),
+        len(gen_loader),
+    )
     # Return the dataloaders
     return train_loader, val_loader, gen_loader
 
@@ -705,9 +782,14 @@ def get_final_gen_dataloader(
     full_domain_dims_str_hr = f"{full_domain_dims[0]}x{full_domain_dims[1]}" if full_domain_dims is not None else "full_domain"
     full_domain_dims_str_lr = f"{full_domain_dims[0]}x{full_domain_dims[1]}" if full_domain_dims is not None else "full_domain"
     crop_region_hr = cfg['highres']['cutout_domains'] if cfg['highres']['cutout_domains'] is not None else "full_region"
-    crop_region_lr = cfg['lowres']['cutout_domains'] if cfg['lowres']['cutout_domains'] is not None else "full_region"
-    crop_region_hr_str = '_'.join(map(str, crop_region_hr))
-    crop_region_lr_str = '_'.join(map(str, crop_region_lr))
+    crop_region_lr = lr_cutout_domains_eff if lr_cutout_domains_eff is not None else (cfg['lowres']['cutout_domains'] if cfg['lowres']['cutout_domains'] is not None else "full_region")
+    crop_region_hr_str = crop_bounds_to_stats_str(crop_region_hr, order="yyxx")
+    if str(spatial_mode).lower() == 'large_domain':
+        crop_region_lr_str = crop_bounds_to_stats_str(crop_region_lr, order="yyxx")
+    else:
+        crop_region_lr_str = crop_region_hr_str
+
+    
 
     # Back transforms (kept for completeness; dataset may use them)
     _ = build_back_transforms_from_stats(
@@ -879,16 +961,33 @@ def get_final_gen_dataloader(
     data_zarr = zarr.open_group(hr_dir, mode='r')
     n_samples_full = len(list(data_zarr.keys()))
 
+    # Worker / cache settings for final generation.
+    if num_workers is None:
+        num_workers = int(cfg.get("data_handling", {}).get("num_workers", 0) or 0)
+    else:
+        num_workers = int(num_workers)
+
+    if pin_memory is None:
+        pin_memory = bool(cfg.get("data_handling", {}).get("pin_memory", False))
+
     # Cache size for final generation: prefer cache_size_gen, else cache_size, else 0
     cache_size_gen = cfg['data_handling'].get('cache_size_gen', None)
     if cache_size_gen is None:
         cache_size_gen = cfg['data_handling'].get('cache_size', 0)
-    cache_size_gen = int(cache_size_gen)
+    cache_size_gen = int(cache_size_gen or 0)
+
+    if num_workers > 0 and cache_size_gen > 0:
+        logger.warning(
+            "[get_final_gen_dataloader] num_workers=%s with cache_size_gen=%s requested. "
+            "Disabling dataset cache to avoid per-worker RAM duplication / OOM.",
+            num_workers, cache_size_gen,
+        )
+        cache_size_gen = 0
 
     if verbose:
         logger.info(
-            f"[get_final_gen_dataloader] Split='{split_norm}', raw HR samples={n_samples_full}, "
-            f"cache_size_gen={cache_size_gen}"
+            "[get_final_gen_dataloader] Split='%s', raw HR samples=%d, cache_size_gen=%d, num_workers=%d, pin_memory=%s",
+            split_norm, n_samples_full, cache_size_gen, int(num_workers), bool(pin_memory),
         )
 
     # --- Build dataset for this split ---
@@ -958,21 +1057,23 @@ def get_final_gen_dataloader(
     gen_subset = Subset(gen_dataset, subset_idx)
     sampler = SequentialSampler(gen_subset)
 
-    if num_workers is None:
-        num_workers = int(cfg.get("data_handling", {}).get("num_workers", 0) or 0)
-    if pin_memory is None:
-        pin_memory = bool(cfg.get("data_handling", {}).get("pin_memory", False))
+    persist = int(num_workers) > 0
 
-    gen_loader = DataLoader(
-        gen_subset,
+    gen_kwargs = dict(
         batch_size=int(batch_size),
         shuffle=False,
         sampler=sampler,
         num_workers=int(num_workers),
         pin_memory=bool(pin_memory),
+        persistent_workers=bool(persist),
         worker_init_fn=_worker_init_fn,
         drop_last=False,
     )
+
+    if persist:
+        gen_kwargs["prefetch_factor"] = 1
+
+    gen_loader = DataLoader(gen_subset, **gen_kwargs)
 
     return gen_loader
 
@@ -1007,6 +1108,39 @@ def infer_in_channels(cfg: dict) -> int:
             n_geo = len(geo_variables)
     return n_lr + n_geo
 
+def _move_module_to_device_incrementally(module: nn.Module, device: str, log_prefix: str = "model") -> nn.Module:
+    """
+    Move a module to device child-by-child with logging.
+    This is mainly to isolate native ROCm/CUDA crashes that can occur during a
+    single recursive `module.to(device)` call.
+    """
+    if str(device).lower() == "cpu":
+        logger.info("[%s] Using CPU; skipping incremental GPU move.", log_prefix)
+        return module.to("cpu")
+
+    logger.info("[%s] Starting incremental move to device=%s", log_prefix, device)
+
+    for child_name, child in module.named_children():
+        logger.info("[%s] Moving child module '%s' (%s) to %s",
+                    log_prefix, child_name, child.__class__.__name__, device)
+        child.to(device)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+    has_root_params = any(True for _ in module.named_parameters(recurse=False))
+    has_root_buffers = any(True for _ in module.named_buffers(recurse=False))
+
+    if has_root_params or has_root_buffers:
+        logger.info("[%s] Moving root-level params/buffers to %s", log_prefix, device)
+        module.to(device)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+    else:
+        logger.info("[%s] No root-level params/buffers to move; skipping root .to(%s)", log_prefix, device)
+
+    logger.info("[%s] Incremental device move complete", log_prefix)
+    return module
+
 def get_model(cfg):
     '''
         Get the model based on the configuration.
@@ -1035,6 +1169,7 @@ def get_model(cfg):
     spatial = paper2.get("spatial_context", {}) or {}
     enc_cfg = spatial.get("encoder", {}) or {}
     use_ctx = bool(enc_cfg.get("enabled", False))
+    logger.info(f"[MODEL][paper2][DEBUG] Spatial ContextEncoder enabled: {use_ctx}")
 
     context_encoder = None
     if use_ctx:
@@ -1060,7 +1195,15 @@ def get_model(cfg):
             base_channels=base_ch,
             depth=depth,
             target_size=hr_size,
-        ).to(device)
+        )
+        logger.info("[MODEL][paper2] Built ContextEncoder on CPU. About to move to device=%s", device)
+        gc.collect()
+        if torch.cuda.is_available() and str(device).startswith("cuda"):
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+        context_encoder = _move_module_to_device_incrementally(context_encoder, device, log_prefix="context_encoder")
 
         logger.info(
             "[MODEL][paper2] ContextEncoder enabled: n_vars=%d, c_out=%d, depth=%d, base_channels=%d, target_size=%s",
@@ -1124,7 +1267,16 @@ def get_model(cfg):
             sigma_data=sigma_data,
             predict_residual=predict_residual,
             cfg=cfg,
-        ).to(device)
+        )
+        logger.info("[model] Built model on CPU. About to move to device=%s", device)
+        gc.collect()
+        if torch.cuda.is_available() and str(device).startswith("cuda"):
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        score_model = _move_module_to_device_incrementally(score_model, device, log_prefix="model")
     else:
         sigma = float(cfg.get('ve_dsm', {}).get('sigma', 25.0))
         mprob = partial(marginal_prob_std, sigma=sigma)
@@ -1140,7 +1292,6 @@ def get_model(cfg):
 
         # Provide a consistent method name used by TrainingPipeline_general._build_cond_img
         if not hasattr(score_model, "encode_spatial_context"):
-            import torch  # ensure torch is in scope for typing
             def _encode_spatial_context(x_ctx: torch.Tensor, var_ids: torch.Tensor | None = None) -> torch.Tensor:
                 return score_model.context_encoder(x_ctx, var_ids=var_ids)
             score_model.encode_spatial_context = _encode_spatial_context  # type: ignore
@@ -1333,117 +1484,3 @@ def apply_cfg_dropout(
 
     return cond_images, lsm_cond, topo_cond, y, lr_ups, info
 
-
-# def apply_cfg_dropout(
-#         cond_images: torch.Tensor | None,
-#         lsm: torch.Tensor | None,
-#         topo: torch.Tensor | None,
-#         seasons: torch.Tensor | None,
-#         lr_ups: torch.Tensor | None,
-#         cfg_guidance: dict | None
-# ):
-#     """
-#     Classifier-free guidance style dropout for conditioning signals.
-#     - Supports separate drop probabilities for LR dynamic conditions and geo/static conditions 
-#     - Drops all LR channels per sample together, using Bernoulli masks (good for CFG)
-#     - Drops lsm and topo together per sample (so "geo off" really means no geography)
-#     - Handles seasons whther it is categorical (LongTensor labels) or continuous scalars (e.g. cos/sin day-of-year),
-#       using null_label_id or null_scalar_value from cfg_guidance respectively.
-#     - Works with any tensor shapes by broadcasting the per-sample mask to [B, 1, ...] as needed.
-
-#     Args:
-#         cond_images: Low-res dynamic conditions [B, C_lr, H, W] (already upsampled/aligned to model grid).
-#         lsm:         Land-sea mask or static mask(s)         [B, C_geo1, H, W] or [B,1,H,W] (may be None).
-#         topo:        Topography/static feature(s)            [B, C_geo2, H, W] or [B,1,H,W] (may be None).
-#         seasons:     Seasonal condition. Can be:
-#                      - Long tensor of class indices [B] or [B, 1]
-#                      - Float tensor of scalar(s)   [B] or [B, 1] (e.g., cos(day), sin(day))
-#         lr_ups:      Low-res conditions upsampled to high-res grid [B, C_lr, H_hr, W_hr] (may be None).
-#         cfg_guidance: Dict with keys:
-#             {
-#               'enabled': bool,
-#               'drop_prob_lr': float,     # drop probability for LR dynamic conditions (+ seasons)
-#               'drop_prob_geo': float,    # drop probability for geo/static conditions
-#               'null_label_id': int,      # category id for "null" label (for long seasons)
-#               'null_scalar_value': float # value to use when dropping scalar seasons
-#             }
-
-#     Returns:
-#         Tuple[cond_images, lsm, topo, seasons, lr_ups] with per-sample drops applied.
-#     """
-#     if not cfg_guidance or not cfg_guidance.get('enabled', False):
-#         return cond_images, lsm, topo, seasons, lr_ups # Always return 5 
-    
-#     # Resolve per-group drop probabilities
-#     p_cond = float(cfg_guidance.get('drop_prob_lr', 0.1))
-#     p_geo = float(cfg_guidance.get('drop_prob_geo', 0.1))
-#     null_label_id = int(cfg_guidance.get('null_label_id', 0))
-#     null_scalar = float(cfg_guidance.get('null_scalar_value', 0.0))
-
-    
-#     # Choose a reference tensor to get B/device
-#     ref = None
-#     for t in (cond_images, lsm, topo, seasons):
-#         if t is not None:
-#             ref = t
-#             break
-
-#     if ref is None:
-#         # No drop possible
-#         return cond_images, lsm, topo, seasons
-#     B = ref.shape[0]
-#     device = ref.device
-    
-#     # === Build per-sample Bernoulli masks ===
-#     # LR dynamic (and seasons share p_cond)
-#     mask_cond = (torch.rand(B, device=device) < p_cond)  # True -> drop this sample's LR (+season)
-#     # Geo/static (drop lsm/topo together per sample)
-#     mask_geo  = (torch.rand(B, device=device) < p_geo)   # True -> drop this sample's geo
-
-#     # Helper to expand [B] -> broadcast shape of a target tensor
-#     def _expand_mask(m: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-#         # Target can be [B, ...]. We want mask shaped [B,1,1,1] or [B,1] etc. to broadcast.
-#         view_shape = [B] + [1] * (target.dim() - 1)
-#         return m.view(*view_shape)
-
-#     # === Apply to LR dynamic conditions ===
-#     if cond_images is not None:
-#         m = _expand_mask(mask_cond, cond_images)
-#         # Zero is a sensible "null" for continuous LR channels
-#         cond_images = torch.where(m, torch.zeros_like(cond_images), cond_images)
-    
-#     predict_residual = bool(cfg_guidance.get('predict_residual', False))
-#     if lr_ups is not None and not predict_residual:
-#         m = _expand_mask(mask_cond, lr_ups)
-#         lr_ups = torch.where(m, torch.zeros_like(lr_ups), lr_ups)
-
-#     # === Apply to static geo (drop together) ===
-#     if lsm is not None:
-#         m_geo = _expand_mask(mask_geo, lsm)
-#         lsm = torch.where(m_geo, torch.zeros_like(lsm), lsm)
-#     if topo is not None:
-#         m_geo = _expand_mask(mask_geo, topo)
-#         topo = torch.where(m_geo, torch.zeros_like(topo), topo)
-
-#     # === Apply to seasonal condition (shares LR mask) ===
-#     if seasons is not None:
-#         # Accept [B], [B,1], or more
-#         if seasons.dtype in (torch.long, torch.int64, torch.int32):
-#             # categorical labels
-#             if seasons.dim() == 1:
-#                 seasons = seasons.clone()
-#                 seasons[mask_cond] = null_label_id
-#             else:
-#                 # e.g., [B,1]
-#                 m = _expand_mask(mask_cond, seasons)
-#                 seasons = torch.where(m, torch.full_like(seasons, null_label_id), seasons)
-#         else:
-#             # float scalar(s)
-#             fill_val = null_scalar
-#             if seasons.dim() == 1:
-#                 m = mask_cond
-#             else:
-#                 m = _expand_mask(mask_cond, seasons)
-#             seasons = torch.where(m, torch.full_like(seasons, fill_val), seasons)
-
-#     return cond_images, lsm, topo, seasons, lr_ups

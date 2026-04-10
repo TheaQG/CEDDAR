@@ -32,10 +32,8 @@ import logging
 
 import netCDF4 as nc
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-from typing import Optional, Union
+
+from pathlib import Path
 from omegaconf import OmegaConf, DictConfig, ListConfig
 
 # --------------------------------------------------------------------------------
@@ -54,6 +52,61 @@ def _squeeze_geo_value(arr, key):
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+def open_zarr_store_for_write(zarr_path: str):
+    """
+    Open a Zarr group for writing.
+    Supports both directory-backed stores (*.zarr) and ZIP-backed stores (*.zip / *.zarr.zip).
+
+    Returns:
+        (group, store_handle)
+        - group: opened zarr group
+        - store_handle: underlying store object to keep alive, or None for directory stores
+    """
+    path = str(zarr_path)
+    if path.endswith('.zip') or path.endswith('.zarr.zip'):
+        parent = Path(path).parent
+        parent.mkdir(parents=True, exist_ok=True)
+        store = zarr.storage.ZipStore(path, mode='w')
+        group = zarr.open_group(store=store, mode='w')
+        return group, store
+    else:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        group = zarr.open_group(path, mode='w')
+        return group, None
+
+def crop_bounds_to_stats_str(bounds, order="xxyy"):
+    """
+    Convert crop bounds to the statistics-file naming convention 'y1_y2_x1_x2'.
+
+    Parameters
+    ----------
+    bounds : list | tuple | str | None
+        Crop bounds.
+    order : str
+        - "xxyy": bounds are [x1, x2, y1, y2]
+        - "yyxx": bounds are [y1, y2, x1, x2]
+
+    Returns
+    -------
+    str
+        Crop-region string in stats-file convention.
+    """
+    if bounds is None:
+        return "full"
+    if isinstance(bounds, str):
+        return bounds
+    if not isinstance(bounds, (list, tuple)) or len(bounds) != 4:
+        return str(bounds)
+
+    if order == "xxyy":
+        x1, x2, y1, y2 = bounds
+    elif order == "yyxx":
+        y1, y2, x1, x2 = bounds
+    else:
+        raise ValueError(f"Unsupported crop bound order '{order}'. Expected 'xxyy' or 'yyxx'.")
+
+    return '_'.join(map(str, [y1, y2, x1, x2]))
 
 def crop_bounds_to_str(bounds, order: str = "yx") -> str:
     """
@@ -127,7 +180,7 @@ def convert_npz_to_zarr(npz_directory, zarr_file, VERBOSE=False):
     logger.info(f'\n\nConverting {len(os.listdir(npz_directory))} .npz files to zarr file...')
 
     # Create zarr group (equivalent to a directory) 
-    zarr_group = zarr.open_group(zarr_file, mode='w')
+    zarr_group, zarr_store = open_zarr_store_for_write(zarr_file)
     
     # Make iterator to keep track of progress
     i = 0
@@ -155,6 +208,9 @@ def convert_npz_to_zarr(npz_directory, zarr_file, VERBOSE=False):
                 logger.info(f'Converted {i+1} files...')
             i += 1
 
+    if zarr_store is not None:
+        zarr_store.close()
+
 
 def create_concatenated_data_files(data_dir_all:list, data_dir_concatenated:str, variables:list, n_images:int=4):
     '''
@@ -176,7 +232,7 @@ def create_concatenated_data_files(data_dir_all:list, data_dir_concatenated:str,
     logger.info(f'\n\nCreating concatenated data files from {len(data_dir_all)} directories...')
 
     # Create zarr group (equivalent to a directory)
-    zarr_group = zarr.open_group(data_dir_concatenated, mode='w')
+    zarr_group, zarr_store = open_zarr_store_for_write(data_dir_concatenated)
 
     # Loop through all directories in the data_dir_all list
     for data_dir in data_dir_all:
@@ -192,6 +248,9 @@ def create_concatenated_data_files(data_dir_all:list, data_dir_concatenated:str,
                     data = npz_data[var][:n_images]
                     # Save the data as a zarr array
                     zarr_group.array(data_file.replace('.npz', '') + '/' + var, data, chunks=True, dtype=np.float32)
+    
+    if zarr_store is not None:
+        zarr_store.close()
     
     logger.info(f'Concatenated data saved to {data_dir_concatenated}...')
 
@@ -230,7 +289,7 @@ class data_preperation():
         logger.info(f'\n\nCreating concatenated data files from {len(data_dir_all)} directories...')
 
         # Create zarr group (equivalent to a directory)
-        zarr_group = zarr.open_group(data_dir_concatenated, mode='w')
+        zarr_group, zarr_store = open_zarr_store_for_write(data_dir_concatenated)
 
         # Loop through all directories in the data_dir_all list
         for data_dir in data_dir_all:
@@ -246,6 +305,9 @@ class data_preperation():
                         data = npz_data[var][:n_images]
                         # Save the data as a zarr array
                         zarr_group.array(data_file.replace('.npz', '') + '/' + var, data, chunks=True, dtype=np.float32)
+        
+        if zarr_store is not None:
+            zarr_store.close()
         
         logger.info(f'Concatenated data saved to {data_dir_concatenated}...')
 
@@ -310,7 +372,7 @@ def convert_nc_to_zarr(nc_directory, zarr_file, VERBOSE=False):
     '''
     logger.info(f'Converting {len(os.listdir(nc_directory))} .nc files to zarr file...')
     # Create zarr group (equivalent to a directory)
-    zarr_group = zarr.open_group(zarr_file, mode='w')
+    zarr_group, zarr_store = open_zarr_store_for_write(zarr_file)
     
     # Loop through all .nc files in the .nc directory 
     for nc_file in os.listdir(nc_directory):
@@ -326,6 +388,9 @@ def convert_nc_to_zarr(nc_directory, zarr_file, VERBOSE=False):
                 data = nc_data[var][:]
                 # Save the data as a zarr array
                 zarr_group.array(nc_file.replace('.nc', '') + '/' + var, data, chunks=True, dtype=np.float32)
+
+    if zarr_store is not None:
+        zarr_store.close()
 
 def extract_samples(samples, device=None):
     """
@@ -467,16 +532,34 @@ def get_first_sample_dict(samples: dict) -> dict:
 
 def build_data_path(base_path, model, var, full_domain_dims, split, zarr_file=True):
     """
-    Construct a path for high-resolution data.
-    Example: base_path + 'data_DANRA/size_589x789/temp_589x789/zarr_files/train.zarr'
-    
+    Construct a path for high-resolution or low-resolution data.
+    Prefer ZIP-backed Zarr if present, otherwise fall back to directory-backed Zarr.
+
+    When `zarr_file=False` and `split` is empty/None, return the variable base directory
+    instead of accidentally appending `/`, which would collapse the full path to the
+    filesystem root.
     """
+    base_dir = os.path.join(
+        base_path,
+        f"data_{model}",
+        f"size_{full_domain_dims[0]}x{full_domain_dims[1]}",
+        f"{var}_{full_domain_dims[0]}x{full_domain_dims[1]}",
+    )
     if zarr_file:
-        data_path = os.path.join(base_path, f"data_{model}", f"size_{full_domain_dims[0]}x{full_domain_dims[1]}", f"{var}_{full_domain_dims[0]}x{full_domain_dims[1]}", "zarr_files", f"{split}.zarr")
+        zarr_dir = os.path.join(base_dir, "zarr_files")
+        zip_path = os.path.join(zarr_dir, f"{split}.zarr.zip")
+        dir_path = os.path.join(zarr_dir, f"{split}.zarr")
+        if os.path.exists(zip_path):
+            logger.info(f"Using ZIP-backed Zarr for {model} {var} {split}: {zip_path}")
+        elif os.path.exists(dir_path):
+            logger.info(f"Using directory-backed Zarr for {model} {var} {split}: {dir_path}")
+        else:
+            logger.warning(f"No Zarr file found for {model} {var} {split}. Expected either {zip_path} or {dir_path}.")
+        return zip_path if os.path.exists(zip_path) else dir_path
     else:
-        data_path = os.path.join(base_path, f"data_{model}", f"size_{full_domain_dims[0]}x{full_domain_dims[1]}", f"{var}_{full_domain_dims[0]}x{full_domain_dims[1]}", f"{split}/")
-    
-    return data_path
+        if split is None or str(split).strip() == "":
+            return base_dir
+        return os.path.join(base_dir, str(split))
 
 
 
