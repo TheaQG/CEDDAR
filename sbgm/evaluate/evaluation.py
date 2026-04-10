@@ -206,7 +206,8 @@ class EvaluationRunner:
                 "dist": "prcp_distributional",
             }
             t = aliases.get(task_norm, task_norm)
-            return dict(self.family_plans.get(t, {}))
+            plans = self.family_plans or {}
+            return dict(plans.get(t, {}))
 
         def _task_plot_only(task_norm: str) -> bool:
             plan = _plan_for(task_norm)
