@@ -334,7 +334,7 @@ def _load_dk_lsm_outline(
         a = np.flipud(a)  # flip vertically if needed
         a = a[y0:y1, x0:x1]
         m = (a >= 0.5)
-        m = np.flipud(m)  # flip back to original orientation
+        # m = np.flipud(m)  # flip back to original orientation
 
         logger.info("[DEBUG] DK LSM outline loaded with shape %s", str(m.shape))
         return m.astype(bool, copy=False)
@@ -1662,6 +1662,236 @@ def plot_samples_and_generated(
 
     return fig, axs
 
+def plot_training_monitor_generated(
+        sample,
+        generated_members,
+        cfg,
+        *,
+        date: Optional[str] = None,
+        transform_back_bf_plot: bool = False,
+        back_transforms=None,
+        figsize=(16, 4.8),
+):
+    """
+    Lightweight training-monitor plot for one case:
+      [local LR | HR truth | ensemble member 1 | ... | ensemble member N | summary]
+
+    The summary panel shows min / mean / max over the ensemble and a small text block
+    with extrema for LR, HR and ensemble aggregate.
+    """
+    hr_model = cfg['highres']['model']
+    lr_model = cfg['lowres']['model']
+    var = cfg['highres']['variable']
+    hr_units, lr_units = get_units(cfg)
+    hr_cmap, lr_cmap_dict = get_cmaps(cfg)
+    cfg_vis = cfg.get('visualization', {})
+    show_ocean = bool(cfg_vis.get('show_ocean', False))
+    plot_dual_lr_channel = int(cfg_vis.get('plot_dual_lr_channel', 0) or 0)
+
+    def to_numpy(x):
+        if torch.is_tensor(x):
+            return x.detach().cpu().numpy()
+        return np.asarray(x)
+
+    def _lr_base_name_from_key(k: str) -> str:
+        if k.endswith('_lr_original'):
+            return k[:-12]
+        if k.endswith('_lr'):
+            return k[:-3]
+        return k
+
+    def maybe_inverse(k, arr):
+        if transform_back_bf_plot and back_transforms and k in back_transforms:
+            return back_transforms[k](arr)
+        return arr
+
+    def maybe_inverse_dual_lr(key: str, arr, prefer_channel: int = 0):
+        if not (transform_back_bf_plot and back_transforms):
+            return arr
+        if not (key.endswith('_lr') or key.endswith('_lr_original')):
+            return maybe_inverse(key, arr)
+
+        a = to_numpy(arr)
+        if a.ndim == 3 and a.shape[0] == 2:
+            ch = 0 if prefer_channel not in (0, 1) else int(prefer_channel)
+            a2 = a[ch, :, :]
+            base = _lr_base_name_from_key(key)
+            dual_lr = bool(cfg.get('lowres', {}).get('dual_lr', False))
+            lr_main_scale = str(cfg.get('lowres', {}).get('lr_main_var_scale', 'LR')).upper()
+
+            if dual_lr:
+                if ch == 0 and lr_main_scale == 'HR':
+                    inv_key_candidates = [f"{base}_lr_hrspace", f"{base}_lrspace", f"{base}_lr", key]
+                else:
+                    inv_key_candidates = [f"{base}_lr_lrspace", f"{base}_lrspace", f"{base}_lr", key]
+            else:
+                inv_key_candidates = [f"{base}_lr", key]
+
+            for kk in inv_key_candidates:
+                if kk in back_transforms and callable(back_transforms[kk]):
+                    return back_transforms[kk](a2)
+            return a2
+
+        return maybe_inverse(key, a)
+
+    def _apply_land_mask(arr, mask):
+        if mask is None:
+            return arr
+        m = to_numpy(mask).squeeze()
+        a = np.asarray(arr)
+        if a.shape == m.shape:
+            return np.where(m >= 0.5, a, np.nan)
+        return a
+
+    def _finite_minmax(arrs):
+        vals = []
+        for a in arrs:
+            if a is None:
+                continue
+            a = np.asarray(a)
+            af = a[np.isfinite(a)]
+            if af.size:
+                vals.append(af)
+        if not vals:
+            return None, None
+        all_vals = np.concatenate(vals)
+        return float(np.nanmin(all_vals)), float(np.nanmax(all_vals))
+
+    def _stats_text(name, arr):
+        a = np.asarray(arr)
+        af = a[np.isfinite(a)]
+        if af.size == 0:
+            return f"{name}: no finite values"
+        return (
+            f"{name}:\n"
+            f"  min={np.nanmin(af):.3f}\n"
+            f"  mean={np.nanmean(af):.3f}\n"
+            f"  max={np.nanmax(af):.3f}"
+        )
+
+    hr_key = f"{var}_hr"
+    lr_key = f"{var}_lr_local" if f"{var}_lr_local" in sample else f"{var}_lr"
+
+    lr_arr = to_numpy(sample[lr_key]).squeeze()
+    hr_arr = to_numpy(sample[hr_key]).squeeze()
+    lr_arr = _squeeze_geo_value(lr_arr, lr_key)
+    hr_arr = _squeeze_geo_value(hr_arr, hr_key)
+    lr_arr = maybe_inverse_dual_lr(lr_key, lr_arr, prefer_channel=plot_dual_lr_channel)
+    hr_arr = maybe_inverse(hr_key, hr_arr)
+
+    gen_np = to_numpy(generated_members)
+    if gen_np.ndim == 4 and gen_np.shape[1] == 1:
+        gen_np = gen_np[:, 0, :, :]
+    elif gen_np.ndim == 3:
+        pass
+    else:
+        raise ValueError(f"Unexpected generated_members shape: {gen_np.shape}")
+
+    gen_np = np.asarray([maybe_inverse('generated', g) for g in gen_np])
+
+    lsm_mask = None
+    if 'lsm_hr' in sample and sample['lsm_hr'] is not None:
+        lsm_mask = sample['lsm_hr']
+    elif 'lsm' in sample and sample['lsm'] is not None:
+        lsm_mask = sample['lsm']
+
+    if not show_ocean:
+        hr_arr = _apply_land_mask(hr_arr, lsm_mask)
+        gen_np = np.asarray([_apply_land_mask(g, lsm_mask) for g in gen_np])
+
+    ens_mean = np.nanmean(gen_np, axis=0)
+    ens_min = np.nanmin(gen_np, axis=0)
+    ens_max = np.nanmax(gen_np, axis=0)
+
+    vmin, vmax = _finite_minmax([lr_arr, hr_arr, ens_mean, ens_min, ens_max, *list(gen_np)])
+    if vmin is None or vmax is None:
+        vmin, vmax = np.nanmin(hr_arr), np.nanmax(hr_arr)
+
+    n_members = int(gen_np.shape[0])
+    n_cols = 2 + n_members + 1
+    fig, axs = plt.subplots(1, n_cols, figsize=figsize)
+    if not isinstance(axs, np.ndarray):
+        axs = np.asarray([axs])
+
+    if date is not None:
+        fig.suptitle(f"Training monitor – {var} – {date}")
+    else:
+        fig.suptitle(f"Training monitor – {var}")
+
+    panels = [
+        ('Local LR', lr_arr, (lr_cmap_dict or {}).get(var, 'viridis')),
+        (f'HR {hr_model}', hr_arr, hr_cmap),
+    ]
+    for i in range(n_members):
+        panels.append((f'Gen m{i+1}', gen_np[i], hr_cmap))
+
+    for ax, (title, arr, cmap) in zip(axs[:-1], panels):
+        img2d, _ = _to_imshow_image(arr, prefer_channel=plot_dual_lr_channel)
+        lsm_for_plot = None
+        if lsm_mask is not None:
+            lsm_for_plot = to_numpy(lsm_mask).squeeze()
+        is_lr_panel = title.startswith('Local LR')
+        im = imshow_variable(
+            ax,
+            img2d,
+            variable=(lr_key if is_lr_panel else var),
+            vmin=vmin,
+            vmax=vmax,
+            cmap=cmap,
+            add_outline=not is_lr_panel,
+            show_ocean=(True if is_lr_panel else show_ocean),
+            lsm_mask=lsm_for_plot,
+            cfg=cfg,
+        )
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title(title, fontsize=9)
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes('right', size='5%', pad=0.08)
+        fig.colorbar(im, cax=cax, orientation='vertical')
+
+    ax_sum = axs[-1]
+    summary_img = ens_mean
+    img2d, _ = _to_imshow_image(summary_img, prefer_channel=plot_dual_lr_channel)
+    lsm_for_plot = to_numpy(lsm_mask).squeeze() if lsm_mask is not None else None
+    im = imshow_variable(
+        ax_sum,
+        img2d,
+        variable=var,
+        vmin=vmin,
+        vmax=vmax,
+        cmap=hr_cmap,
+        add_outline=True,
+        show_ocean=show_ocean,
+        lsm_mask=lsm_for_plot,
+        cfg=cfg,
+    )
+    ax_sum.set_xticks([])
+    ax_sum.set_yticks([])
+    ax_sum.set_title('Ensemble mean', fontsize=9)
+    divider = make_axes_locatable(ax_sum)
+    cax = divider.append_axes('right', size='5%', pad=0.08)
+    fig.colorbar(im, cax=cax, orientation='vertical')
+
+    stats_lines = [
+        _stats_text('LR', lr_arr),
+        _stats_text('HR', hr_arr),
+        _stats_text('Ens mean', ens_mean),
+        _stats_text('Ens min', ens_min),
+        _stats_text('Ens max', ens_max),
+    ]
+    ax_sum.text(
+        1.22, 0.5,
+        "\n\n".join(stats_lines),
+        transform=ax_sum.transAxes,
+        va='center',
+        ha='left',
+        fontsize=8,
+        family='monospace',
+    )
+
+    fig.tight_layout()
+    return fig, axs
 
 # ===============================
 # Metrics plotting helpers
