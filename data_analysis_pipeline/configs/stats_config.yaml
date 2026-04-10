@@ -1,5 +1,5 @@
 global:
-  plot_only: true
+  plot_only: false
 
 plotting:
   save_cutout_example: true
@@ -11,14 +11,22 @@ plotting:
   visualize_aggregated: true
   plot_stats: [mean, std, min, max] # Which statistics to plot
   zero_floor_mm_day: 0.001
+  title_fontsize: 18
+  subtitle_fontsize: 14
+  label_fontsize: 13
+  tick_fontsize: 11
+  legend_fontsize: 11
+  plot_monthly_from_daily: true
 
 statistics:
-  streaming: true # Whether to use streaming statistics computation (True) or load all data into memory (False)
   save_global_pixel_stats: true
   stats_save_dir: ${env:STATS_SAVE_DIR}
-  aggregate: false
+  aggregate: true
   print_results: ["global"]
   save_full_stats_npz: true
+  streaming: null          # null = auto-enable for large domains when estimated RAM use is too high
+  max_in_memory_gib: 4.0  # if estimated full stack exceeds this, switch to streaming mode
+  bytes_per_value: 4      # float32 assumption for RAM estimate
 
   # NEW — needed for asinh_zscore and boxcox_zscore
   log_stats: true
@@ -29,20 +37,21 @@ statistics:
 data:
   aggregation_time: monthly
   data_dir: ${env:DATA_DIR}
-  n_workers: ${env:SLURM_CPUS_PER_TASK}
+  n_workers: 32 # ${env:SLURM_CPUS_PER_TASK}
   split: train # 'train', 'val', 'test' or 'all'
   verbose: true # Whether to enable verbose logging during data loading (only for debugging, slows down processing)
 
 highres:
   model: DANRA 
-  variables: ['prcp'] #'temp', 
-  agg_methods: ['sum'] #'mean', 
+  variables: ['temp', 'prcp']
+  agg_methods: ['mean', 'sum']
   domain_size: [589, 789]
-  crop_region: [0, 589, 0, 789]
+  crop_region: [0, 589, 0, 789] #[170, 350, 340, 520]
 
 lowres:
   model: ERA5
-  condition_variables: ['prcp', 'ewvf', 'nwvf', 'cape', 'msl', 'z_pl_1000', 'z_pl_250', 'z_pl_500', 'z_pl_850'] # ['prcp', 'temp', 'ewvf', 'nwvf', 'cape', ....] (ERA5 variables) 'temp', 
-  agg_methods: ['sum', 'mean', 'mean', 'mean', 'mean', 'mean', 'mean', 'mean', 'mean'] # 'mean', 
+  condition_variables: ['temp', 'prcp', 'ewvf', 'nwvf', 'cape', 'msl', 'z_pl_500', 'thetae_pl_850', 'pev'] # ['prcp', 'temp', 'ewvf', 'nwvf', 'cape', ....] (ERA5 variables)
+  # temp: mean, prcp: sum, ewvf: mean, nwvf: mean, cape: max, msl: mean, z_pl_500: mean, thetae_pl_850: mean, pev: mean
+  agg_methods: ['mean', 'sum', 'mean', 'mean', 'max', 'mean', 'mean', 'mean', 'mean']
   domain_size: [589, 789]
-  crop_region: [0, 589, 0, 789]
+  crop_region: [0, 589, 0, 789] #[170, 350, 340, 520]
