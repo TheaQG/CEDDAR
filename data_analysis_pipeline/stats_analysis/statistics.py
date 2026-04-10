@@ -197,6 +197,13 @@ def compute_statistics(data,
 
     stack = np.stack(cutouts)  # Shape: (T, H, W)
     global_flat = stack.flatten()  # Shape: (T * H * W,)
+    if variable.lower() in ["prcp", "precip", "precipitation", "tp"]:
+        neg_count = int(np.sum(stack < 0))
+        if neg_count > 0:
+            logger.warning(
+                f"[RED FLAG] Negative precipitation values detected for {model}/{variable}/{split}: "
+                f"count={neg_count}, min={float(np.nanmin(stack))}. This should not happen physically."
+            )
 
     # === 1. Global statistics across all time and pixels ===
     # Use global_stats to save these for training normalization
@@ -254,7 +261,7 @@ def compute_statistics(data,
     # === Optional save of full stats (time series + per-pixel) to NPZ for plot-only reloads ===
     if save_full_stats_npz:
         # Build save dir and filename consistent with global stats JSON
-        save_dir = os.path.join(stats_save_path, model, variable, split)
+        save_dir = os.path.join(stats_save_path, model, variable, split) # , domain_str, crop_region_str)
         os.makedirs(save_dir, exist_ok=True)
         if small_data_batch:
             fname = f"stats_timeseries_cutout__{model}__{domain_str}__crop__{crop_region_str}__{variable}__{split}__small.npz"
@@ -427,6 +434,8 @@ def compute_statistics_streaming(
     count_t = 0
     first_nonfinite = None  # (i, ts, n_nonfinite_in_field)
     total_nonfinite_fields = 0
+    neg_prcp_count = 0
+    neg_prcp_min = np.inf
 
     for i, (arr, ts) in enumerate(entries_iter, 1):
         if arr is None:
@@ -453,6 +462,11 @@ def compute_statistics_streaming(
             raise ValueError(f"[streaming] Inconsistent cutout shape at i={i}: {arr.shape} vs {first_shape}")
 
         a64 = arr.astype(np.float64, copy=False)
+        if variable.lower() in ["prcp", "precip", "precipitation", "tp"]:
+            neg_mask = a64 < 0
+            if np.any(neg_mask):
+                neg_prcp_count += int(np.sum(neg_mask))
+                neg_prcp_min = min(neg_prcp_min, float(np.nanmin(a64)))
 
         # Detect non-finite values early
         if not np.isfinite(a64).all():
@@ -517,6 +531,15 @@ def compute_statistics_streaming(
             str(ts0),
             nbad0,
         )
+    if variable.lower() in ["prcp", "precip", "precipitation", "tp"] and neg_prcp_count > 0:
+        logger.warning(
+            "[RED FLAG] Negative precipitation values detected for %s/%s/%s: count=%d, min=%s. This should not happen physically.",
+            model,
+            variable,
+            split,
+            neg_prcp_count,
+            neg_prcp_min,
+        )
 
     global_stats = {
         "mean": float(g.mean) if pool_pixels else None,
@@ -547,7 +570,7 @@ def compute_statistics_streaming(
     }
 
     if save_glob_stats:
-        save_dir = os.path.join(stats_save_path, model, variable, split)
+        save_dir = os.path.join(stats_save_path, model, variable, split) # , domain_str, crop_region_str)
         os.makedirs(save_dir, exist_ok=True)
         if small_data_batch:
             filename = f"global_stats__{model}__{domain_str}__crop__{crop_region_str}__{variable}__{split}__small.json"
@@ -601,7 +624,7 @@ def compute_statistics_streaming(
             logger.info(f"          {k}: {v}")
 
     if save_full_stats_npz:
-        save_dir = os.path.join(stats_save_path, model, variable, split)
+        save_dir = os.path.join(stats_save_path, model, variable, split) # , domain_str, crop_region_str)
         os.makedirs(save_dir, exist_ok=True)
         if small_data_batch:
             fname = f"stats_timeseries_cutout__{model}__{domain_str}__crop__{crop_region_str}__{variable}__{split}__small.npz"
@@ -651,7 +674,7 @@ def compute_global_stats(data_dict,
         Compute global pixel-wise statistics over the stack of cutouts
         and save them for use in training normalization.
     """
-    save_dir = os.path.join(stats_save_path, model, variable, split)
+    save_dir = os.path.join(stats_save_path, model, variable, split) # , domain_str, crop_region_str)
     os.makedirs(save_dir, exist_ok=True)
 
     cutouts = data_dict["cutouts"]
@@ -674,6 +697,13 @@ def compute_global_stats(data_dict,
     n_bad = int((~np.isfinite(stacked)).sum())
     if n_bad > 0:
         logger.warning(f"[global_stats] Detected {n_bad} non-finite (NaN/Inf) values for {model}/{variable}/{split}. Using nan-safe stats and ignoring them.")
+    if variable.lower() in ["prcp", "precip", "precipitation", "tp"]:
+        neg_count = int(np.sum(stacked < 0))
+        if neg_count > 0:
+            logger.warning(
+                f"[RED FLAG] Negative precipitation values detected for {model}/{variable}/{split}: "
+                f"count={neg_count}, min={float(np.nanmin(stacked))}. This should not happen physically."
+            )
 
     # Prepare containers for optional nonlinear-transform stats
     asinh_mean = asinh_std = asinh_min = asinh_max = None
@@ -768,7 +798,7 @@ def compute_global_stats(data_dict,
         "boxcox_lambda": boxcox_lambda,
     }
 
-    split = cfg.get("data", {}).get("split", "unknown")
+    # split = cfg.get("data", {}).get("split", "unknown")
 
     if save:
         if not os.path.exists(save_dir):
@@ -800,7 +830,7 @@ def load_global_stats(variable, model, domain_str, crop_region_str, split, dir_l
     """
         Load previously saved global statistics for a given variable, model, domain, and crop region.
     """
-    stats_load_dir = os.path.join(dir_load, model, variable, split)
+    stats_load_dir = os.path.join(dir_load, model, variable, split, domain_str, crop_region_str)
     stats_load_path = os.path.join(stats_load_dir, f"global_stats__{model}__{domain_str}__crop__{crop_region_str}__{variable}__{split}.json")
     
     if not os.path.exists(stats_load_path):

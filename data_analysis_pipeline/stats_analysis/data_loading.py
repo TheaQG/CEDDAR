@@ -257,8 +257,14 @@ class DataLoader:
                 logger.info(f"[DataLoader] Streamed {i}/{len(file_list)} files for {self.variable}...")
 
     def get_expected_shape(self):
+        # Prefer cropped shape if a crop region is active
+        if self.crop_region is not None and len(self.crop_region) == 4:
+            y0, y1, x0, x1 = map(int, self.crop_region)
+            return (y1 - y0, x1 - x0)
+
         if self.domain_size and len(self.domain_size) == 2:
             return (int(self.domain_size[0]), int(self.domain_size[1]))
+
         return None
 
     def load(self):
