@@ -32,13 +32,11 @@ max_workers: 2
 tmp_dir: /tmp/era5_downloads
 grid_file: ${env:ERA5_TMP_DIR}/grid/mygrid_danra_small
 weights_file: ${env:ERA5_TMP_DIR}/weights/ERA5_to_DANRA_bil_weights_new.nc
-# grid_file: /Users/au728490/OneDrive - Aarhus universitet/PhD_AU/Python_Scripts/Data/mygrid_danra_small
-# weights_file: /Users/au728490/OneDrive - Aarhus universitet/PhD_AU/Python_Scripts/Data/ERA5_to_DANRA_bil_weights_new.nc
 delete_on_fly: false
 lumi:
-  user:  quistgaa
+  user:  your_username
   host:  lumi.csc.fi
   raw_dir:   ${env:ERA5_TMP_DIR}/raw/{var}/{plev}
   daily_dir: ${env:ERA5_TMP_DIR}/daily/{var}/
   npz_dir:   ${env:ERA5_TMP_DIR}/npz/{var}/
-  key:  /path/to/lumi/key.pem
+  key:  /path/to/ssh/key

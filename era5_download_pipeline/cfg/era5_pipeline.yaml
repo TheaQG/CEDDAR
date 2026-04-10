@@ -3,24 +3,24 @@ area: [70, -20, 45, 35]        # N,W,S,E  (edit!)
 dataset: reanalysis-era5-single-levels
 format: netcdf
 variables:
-  # 2m_temperature:
-  #   short: t2m
-  #   daily_stat: daymean
-  # total_precipitation:
-  #   short: tp
-  #   daily_stat: daysum
-  # potential_evaporation:
-  #   short: pev
-  #   daily_stat: daymean
-  # convective_available_potential_energy:
-  #   short: cape
-  #   daily_stat: daymax
-  # vertical_integral_of_northward_water_vapour_flux:
-  #   short: wvf_north
-  #   daily_stat: daymean
-  # vertical_integral_of_eastward_water_vapour_flux:
-  #   short: wvf_east
-  #   daily_stat: daymean
+  2m_temperature:
+    short: t2m
+    daily_stat: daymean
+  total_precipitation:
+    short: tp
+    daily_stat: daysum
+  potential_evaporation:
+    short: pev
+    daily_stat: daymean
+  convective_available_potential_energy:
+    short: cape
+    daily_stat: daymax
+  vertical_integral_of_northward_water_vapour_flux:
+    short: wvf_north
+    daily_stat: daymean
+  vertical_integral_of_eastward_water_vapour_flux:
+    short: wvf_east
+    daily_stat: daymean
   mean_sea_level_pressure:
     short: msl
     daily_stat: daymean
@@ -30,11 +30,11 @@ max_workers: 3
 tmp_dir: /tmp/era5_downloads
 grid_file: ${env:ERA5_TMP_DIR}/grid/mygrid_danra_small
 weights_file: ${env:ERA5_TMP_DIR}/weights/ERA5_to_DANRA_bil_weights_new.nc
-# grid_file: /Users/au728490/OneDrive - Aarhus universitet/PhD_AU/Python_Scripts/Data/mygrid_danra_small
-# weights_file: /Users/au728490/OneDrive - Aarhus universitet/PhD_AU/Python_Scripts/Data/ERA5_to_DANRA_bil_weights_new.nc
+delete_on_fly: false
 lumi:
-  user:  quistgaa
+  user:  your_username
   host:  lumi.csc.fi
   raw_dir:   ${env:ERA5_TMP_DIR}/raw/{var}/{plev}
   daily_dir: ${env:ERA5_TMP_DIR}/daily/{var}/
   npz_dir:   ${env:ERA5_TMP_DIR}/npz/{var}/
+  key:  /path/to/your/ssh/key

@@ -3,25 +3,30 @@ area: [70, -20, 45, 35]        # N,W,S,E  (edit!)
 dataset: reanalysis-era5-pressure-levels
 format: netcdf
 variables:
-  # temperature:
-  #   short: t_pl
-  #   daily_stat: daymean
-  # specific_humidity:
-  #   short: q_pl
-  #   daily_stat: daymean
+  temperature:
+    short: t_pl
+    daily_stat: daymean
+  specific_humidity:
+    short: q_pl
+    daily_stat: daymean
+  equivalent_potential_temperature:
+    short: thetae_pl
+    nc_var: thetae_pl_850
+    daily_stat: daymean
   geopotential:
     short: z_pl   # used in paths
     nc_var: z     # variable name in netcdf
     daily_stat: daymean
-pressure_levels: [500, 850, 250]  # Pressure levels in hPa
+pressure_levels: [500,850]  # Pressure levels in hPa
 years: [1991, 2020]            # inclusive range
 max_workers: 1
 tmp_dir: /tmp/era5_downloads
 grid_file: ${env:ERA5_TMP_DIR}/grid/mygrid_danra_small
 weights_file: ${env:ERA5_TMP_DIR}/weights/ERA5_to_DANRA_bil_weights_new.nc
 lumi:
-  user:  quistgaa
+  user:  your_username
   host:  lumi.csc.fi
   raw_dir:   ${env:ERA5_TMP_DIR}/raw/{var}/{plev}
   daily_dir: ${env:ERA5_TMP_DIR}/daily/{var}/
   npz_dir:   ${env:ERA5_TMP_DIR}/npz/{var}/
+  key:  /path/to/ssh/key/id_ed25519

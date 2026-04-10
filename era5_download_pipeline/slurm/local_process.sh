@@ -4,7 +4,7 @@
 set -euo pipefail # Fail on any error, treat unset variables as an error, and fail on any command in a pipeline that fails
 
 # Set ERA5 temporary data directory (used by pipeline configs)
-export ERA5_TMP_DIR="/scratch/project_465002493/quistgaa/Data/Data_ERA5_tmp"
+export ERA5_TMP_DIR="/scratch/project_<your_project_id>/<your_user>/Data/Data_ERA5_tmp"
 
 # Ensure log directory exists
 mkdir -p era5_logs

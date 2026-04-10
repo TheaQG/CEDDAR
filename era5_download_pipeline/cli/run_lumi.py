@@ -212,6 +212,11 @@ def main():
                     logger.info("Skipping %s for %d - all .npz files already exist", tag, year)
                     continue
                 todo.append((vshort, year, cfg, plev))
+                # Print the first few tasks for verification
+                if len(todo) <= 5:
+                    logger.info("Added to todo: variable=%s, year=%d, pressure_level=%s", vshort, year, plev if plev else "N/A")
+
+    logger.info("\nTotal tasks to process: %d\n", len(todo))
 
     if not todo:
         logger.info("All years and variables are already processed. Exiting.")
@@ -219,6 +224,7 @@ def main():
 
     # ---------- generate weights once (serial) ----------
     weights_file = pathlib.Path(cfg["weights_file"])
+    logger.info("\nChecking for regridding weights file at %s\n", weights_file)
     if not weights_file.exists():
         sample = None
         for vshort, year, _, plev in todo:
@@ -227,13 +233,29 @@ def main():
                 if plev is not None else
                 cfg["lumi"]["daily_dir"].format(var=vshort)
             )
-            cand = droot / (f"{vshort}_{plev}_{year}_daily.nc"
-                            if plev is not None else f"{vshort}_{year}_daily.nc")
+            cand = droot / (f"{vshort}_{plev}_{year}.nc"
+                            if plev is not None else f"{vshort}_{year}.nc")
+            logger.info("Checking for sample file to generate weights: %s", cand)
             if cand.exists():
                 sample = cand
                 break
         if sample is None:
-            logger.error("\n\n !!! No daily file found to generate regridding weights; exiting. !!! \n")
+            logger.warning("No daily file found. Trying raw files for weights generation...")
+
+            for vshort, year, _, plev in todo:
+                rroot = pathlib.Path(
+                    cfg["lumi"]["raw_dir"].format(var=vshort, plev=plev)
+                    if plev is not None else
+                    cfg["lumi"]["raw_dir"].format(var=vshort)
+                )
+                cand = rroot / (f"{vshort}_{plev}_{year}.nc"
+                                if plev is not None else f"{vshort}_{year}.nc")
+                if cand.exists():
+                    sample = cand
+                    break
+
+        if sample is None:
+            logger.error("No suitable file found (daily or raw) to generate weights.")
             sys.exit(1)
 
         logger.info("\nGenerating bilinear weights once using %s\n", sample)

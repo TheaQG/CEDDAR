@@ -45,24 +45,67 @@ echo "Job   : $SLURM_JOB_ID on $SLURM_NODELIST"
 echo "Log   : $LOG_HOST"
 echo "Start : $(date)"
 
+echo "Starting pressure pipeline: $(date)"
 srun singularity exec \
      --cleanenv \
      --overlay "$OVERLAY":ro \
      --bind "$HOST_CODE:/workspace" \
      "$CONTAINER" \
      bash -eu <<INNER
-MMB=/users/${USER}/micromamba/bin/micromamba
+MMB=/users/quistgaa/micromamba/bin/micromamba
 if [[ ! -x \$MMB ]]; then
     echo "ERROR: micromamba not found at \$MMB" >&2
     exit 1
 fi
+export PYTHONPATH=/workspace:${PYTHONPATH:-}
+mkdir -p /workspace/era5_download_pipeline_private/era5_logs
 
-cd /workspace
-\$MMB run -n era5 python -m era5_download_pipeline.cli.run_lumi \
+cd /workspace/era5_download_pipeline_private/cli
+\$MMB run -n era5 python -m era5_download_pipeline_private.cli.run_lumi \
           --cfg "$CFG_IN_WORKSPACE" \
           --log-level INFO \
           --n-workers \${SLURM_CPUS_PER_TASK:-\$(nproc)} \
           > "$LOG_CONT" 2>&1
 INNER
 
-echo "Finish: $(date)"
+echo "Finish pressure pipeline: $(date)"
+
+
+
+CONTAINER=/scratch/project_465002493/containers/images/my_torch_container_with_plotting.sif
+OVERLAY=/scratch/project_465002493/containers/overlays/my_overlay.img
+HOST_CODE=/scratch/project_465002493/quistgaa/Code/CEDDAR
+
+CFG_IN_WORKSPACE=/workspace/era5_download_pipeline_private/cfg/era5_pipeline.yaml
+TS=$(date +%Y%m%d_%H%M%S)
+LOG_HOST=$HOST_CODE/era5_download_pipeline_private/era5_logs/era5_processing_lumi_${TS}.log
+LOG_CONT=/workspace/era5_download_pipeline_private/era5_logs/era5_processing_lumi_${TS}.log
+mkdir -p "$(dirname "$LOG_HOST")"
+
+echo "Job   : $SLURM_JOB_ID on $SLURM_NODELIST"
+echo "Log   : $LOG_HOST"
+echo "Start : $(date)"
+
+echo "Starting single-level pipeline: $(date)"
+srun singularity exec \
+     --cleanenv \
+     --overlay "$OVERLAY":ro \
+     --bind "$HOST_CODE:/workspace" \
+     "$CONTAINER" \
+     bash -eu <<INNER
+MMB=/users/quistgaa/micromamba/bin/micromamba
+if [[ ! -x \$MMB ]]; then
+    echo "ERROR: micromamba not found at \$MMB" >&2
+    exit 1
+fi
+export PYTHONPATH=/workspace:${PYTHONPATH:-}
+mkdir -p /workspace/era5_download_pipeline_private/era5_logs
+
+cd /workspace/era5_download_pipeline_private/cli
+\$MMB run -n era5 python -m era5_download_pipeline_private.cli.run_lumi \
+          --cfg "$CFG_IN_WORKSPACE" \
+          --log-level INFO \
+          --n-workers \${SLURM_CPUS_PER_TASK:-\$(nproc)} \
+          > "$LOG_CONT" 2>&1
+INNER
+echo "Finish single-level pipeline: $(date)"
