@@ -33,7 +33,8 @@ def compute_field_stats(data_model1, data_model2, mask=None):
     Returns:
         dict: Dictionary containing bias, RMSE, and correlation.
     """
-
+    data_model1 = np.asarray(data_model1)
+    data_model2 = np.asarray(data_model2)
     if mask is not None:
         data_model1 = data_model1[mask]
         data_model2 = data_model2[mask]
@@ -212,6 +213,16 @@ def compare_single_day_fields(
     if isinstance(data_model2, dict):
         timestamp2 = data_model2.get("timestamp", None)
         data_model2 = data_model2.get("cutouts", data_model2)
+    # --- FORCE NUMPY ARRAYS (robust) ---
+    data_model1 = np.asarray(data_model1)
+    data_model2 = np.asarray(data_model2)
+
+    # Handle cases like [H, W] wrapped in list → (1, H, W)
+    if data_model1.ndim > 2:
+        data_model1 = np.squeeze(data_model1)
+
+    if data_model2.ndim > 2:
+        data_model2 = np.squeeze(data_model2)
 
     if timestamp1 and timestamp2 and timestamp1 != timestamp2:
         logger.warning(f"Comparing fields with different timestamps: {timestamp1} vs {timestamp2}")

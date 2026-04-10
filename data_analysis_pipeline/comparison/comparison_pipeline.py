@@ -16,6 +16,32 @@ formatter = logging.Formatter("[%(levelname)s] %(message)s")
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
+def _sample_pixels_by_day(data_dict, shared_dates, max_pixels_total=2000000, seed=42):
+    """
+    Memory-safe pixel sampling across many days.
+    Instead of concatenating every pixel from every field, sample a bounded number
+    of finite pixels per day and concatenate only those.
+    """
+    rng = np.random.default_rng(seed)
+    n_days = max(1, len(shared_dates))
+    per_day = max(1, int(max_pixels_total // n_days))
+
+    sampled = []
+    for date in shared_dates:
+        arr = np.asarray(data_dict[date]).ravel()
+        arr = arr[np.isfinite(arr)]
+        if arr.size == 0:
+            continue
+        if arr.size > per_day:
+            idx = rng.choice(arr.size, size=per_day, replace=False)
+            arr = arr[idx]
+        sampled.append(arr.astype(np.float32, copy=False))
+
+    if not sampled:
+        return np.array([], dtype=np.float32)
+
+    return np.concatenate(sampled, axis=0)
+
 def run_comparison_pipeline(cfg):
     """
         Main entry point for running dataset comparisons. 
@@ -45,12 +71,25 @@ def run_comparison_pipeline(cfg):
     show = comparison_cfg.get("show", False)
     save_figures = comparison_cfg.get("save_figures", True)
     save_path = comparison_cfg.get("save_path", "./figures")
+    def _domain_to_str(domain, crop):
+        if crop is not None:
+            return f"{crop[0]}_{crop[1]}_{crop[2]}_{crop[3]}"
+        elif domain is not None:
+            return f"{domain[0]}x{domain[1]}"
+        return "full"
+
+    domain_str = _domain_to_str(domain_size_hr, crop_hr)
+
+    save_path = os.path.join(save_path, domain_str)
+    os.makedirs(save_path, exist_ok=True)
     verbose_data_loading = cfg.get("data", {}).get("verbose", False)
     if split is not None:
         # Append split to save path if not "all"
         save_path = os.path.join(save_path, split) if split != "all" else save_path
     print_results = comparison_cfg.get("print_results", True)
     max_days = comparison_cfg.get("max_days", None)  # Limit number of days to process (for testing)
+    max_pixels_total = int(comparison_cfg.get("max_pixels_total", 2000000))
+    sampling_seed = int(comparison_cfg.get("sampling_seed", 42))
 
     # Cache directory for precomputed comparison artifacts
     cache_dir = os.path.join(save_path if save_path else "./figures/comparison", "cache")
@@ -359,9 +398,26 @@ def run_comparison_pipeline(cfg):
 
                         logger.info(f"\n\n           ### BATCH PIXEL DISTRIBUTION COMPARISON ###\n")
 
-                        # Aggregate all days' data into single numpy arrays for distribution comparison
-                        hr_array = np.concatenate([np.array(hr_data[date]).flatten() for date in shared_dates])
-                        lr_array = np.concatenate([np.array(lr_data[date]).flatten() for date in shared_dates])
+                        # Memory-safe approximation: sample a bounded number of pixels across days
+                        logger.info(
+                            f"[COMPARE] Sampling up to {max_pixels_total} total pixels across {len(shared_dates)} shared dates "
+                            f"for batch pixel distribution comparison."
+                        )
+                        hr_array = _sample_pixels_by_day(
+                            hr_data,
+                            shared_dates,
+                            max_pixels_total=max_pixels_total,
+                            seed=sampling_seed,
+                        )
+                        lr_array = _sample_pixels_by_day(
+                            lr_data,
+                            shared_dates,
+                            max_pixels_total=max_pixels_total,
+                            seed=sampling_seed,
+                        )
+                        logger.info(
+                            f"[COMPARE] Sampled pixel counts -> HR: {hr_array.size}, LR: {lr_array.size}"
+                        )
                         if variable in ['prcp']:
                             plot_log = True
                         else:
