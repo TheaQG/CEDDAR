@@ -29,14 +29,14 @@ set -eo pipefail
 # --- User/site configuration (override when submitting) ---
 ACCOUNT="${SLURM_JOB_ACCOUNT:-${ACCOUNT:-project_465002493}}"
 USER_BASE="/scratch/${ACCOUNT}/${USER}"
-
+CONT_BASE="/scratch/${ACCOUNT}/containers/images"
 ROOT_DIR="${ROOT_DIR:-${USER_BASE}/Code/CEDDAR}"
 CEDDAR_RUNS="${CEDDAR_RUNS:-${USER_BASE}/runs/CEDDAR}"
 DATA_BASE="${DATA_BASE:-${USER_BASE}/Data}"
 DATA_DIR="${DATA_DIR:-${DATA_BASE}/Data_DiffMod_small}"
 
 # Container path (override at submit-time)
-CONTAINER="${CONTAINER:-${USER_BASE}/images/my_torch_container_with_plotting.sif}"
+CONTAINER="${CONTAINER:-${CONT_BASE}/my_torch_container_with_plotting.sif}"
 
 # Config (relative to ROOT_DIR by default)
 CONFIG_REL="${CONFIG_REL:-sbgm/config/paper2/P0.yaml}"

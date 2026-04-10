@@ -12,8 +12,8 @@
 
 
 experiment:
-  name: B1_GSDF_RGBCE
-  config_name: B1_GSDF_RGBCE
+  name: P0_test_full
+  config_name: P0_test_full
   # Date of the experiment, taken from the environment variable or set to current date
   date: ${env:EXP_DATE} # Date for the experiment, 
 
@@ -36,7 +36,7 @@ paper2:
     mode: large_domain # colocated | large_domain
     lr_context_size: [589, 789] # The size of the raw LR context field loaded before context encoding (e.g. 589x789 for full domain, or smaller if pre-cropping to a sub-domain). 
     encoder:
-      enabled: true
+      enabled: false
       input_mode: context_plus_local # context_only | context_plus_local
       c_out: 32
       depth: 3
@@ -54,7 +54,7 @@ highres:
   scaling_method: log_zscore # Method for scaling the data
   full_domain_dims: [589, 789]
   buffer_frac: 0.00
-  cutout_domains: [170, 350, 340, 520] # [x1, x2, y1, y2], coordinates for cutout
+  cutout_domains: [170, 350, 340, 520] # [y0, y1, x0, x1], coordinates for cutout
   cutout_name: danra # Name of the cutout (for when wanting North Atlantic later, HR and LR cutouts can be different)
   stationary_cutout: # Whether to use a stationary cutout or random crop from cutout domain (i.e. shifting geographic domain slightly)
     enabled: false # Whether to use a stationary cutout or random crop from cutout domain (i.e. shifting geographic domain slightly)
@@ -63,15 +63,15 @@ highres:
 lowres:
   model: ERA5 # Model type for low-resolution data
   full_domain_dims: [589, 789]
-  condition_variables: ["prcp", "temp"] # ["temp", "prcp"] # Variables for conditioning
-  scaling_methods: ["log_zscore", "zscore"] #["zscore", "log_zscore"] # Scaling methods for low-res data
+  condition_variables: ["prcp", "temp", "thetae_pl_850"] # ["temp", "prcp"] # Variables for conditioning
+  scaling_methods: ["log_zscore", "zscore", "zscore"] #["zscore", "log_zscore"] # Scaling methods for low-res data
   dual_lr: false # Whether to use dual (one scaled w. global (HR+LR) statistics, one with LR stats) low-res (prcp or temp) data. When true, LR parsed in two channels, one scaled w. LR stats, one w. HR+LR stats
   lr_main_var_scale: "LR" # Which statistics to use for scaling the main low-res variable (prcp or temp) when dual_lr is False ("LR": lr only, "HR": hr only, "HR_LR": both)
   lr_main_var_scale_method: "log_zscore" # Which scaling method to use for the main low-res variable (prcp or temp) when dual_lr is False
   buffer_frac: 0.00
   data_size: [128, 128] # Size of the low-res data, after potential context/information encoding/decoding (e.g. larger LR context encoded to 128x128, or same LR context encoded to smaller sizes). I.e. what the UNet sees.
   resize_factor: 1 # Factor to resize low-res data (used for testing at lower resolutions)
-  cutout_domains: [170, 350, 340, 520] # [x1, x2, y1, y2], coordinates for cutout
+  cutout_domains: [170, 350, 340, 520] # [y0, y1, x0, x1], coordinates for cutout
   cutout_name: danra # Name of the cutout (for when wanting North Atlantic later, HR and LR cutouts can be different). If HR and LR cutouts are the same, they will be co-located
   stationary_cutout: # Whether to use a stationary cutout or random crop from cutout domain
     enabled: false # Whether to use a stationary cutout or random crop from cutout domain (i.e. shifting geographic domain slightly)
@@ -90,7 +90,7 @@ data_handling:
   cache_size_train: 0 # Size of the cache for data handling
   cache_size_valid: 0 # Size of the cache for validation data
   cache_size_gen: 0 # Size of the cache for test data
-  num_workers: ${env:SLURM_CPUS_PER_TASK} # Number of workers for data loading
+  num_workers: 0 # ${env:SLURM_CPUS_PER_TASK} # Number of workers for data loading
   n_gen_samples: 8 # Number of generated samples (for visualization)
   pin_memory: true # Whether to pin memory for faster data transfer
 
@@ -189,7 +189,7 @@ training:
   ema_decay: 0.998 # Decay rate for EMA. 0.999-0.9995 is a good range for per-step decay with batch size 16-32. Lower for smaller batches, higher for larger batches.
   weight_decay: 0.000001 # Weight decay for regularization
   ema_warmup_steps: 1000 # Number of warmup steps for EMA
-  epochs: 400 # Number of epochs for training
+  epochs: 50 # Number of epochs for training
   loss_type: sdfweighted # Type of loss function to use NOTE: change the name in code
   sdf_weighted_loss: true # Whether to use SDF weighted loss
   optimizer: adamw # Optimizer to use for training (adam, adamw, sgd) (adamw for better decay)
@@ -380,19 +380,19 @@ full_gen_eval:
   dist_ensemble_pool_mode: pool # pool | member_mean
   
   # Which tasks to perform.
-  do_prob: false
-  do_scale: false
-  do_dist: false
-  do_ext: false
+  do_prob: true
+  do_scale: true
+  do_dist: true
+  do_ext: true
   do_spat: true
-  do_temp: false
-  do_feat: false
-  do_dates: false
-  plot_only: true  
+  do_temp: true
+  do_feat: true
+  do_dates: true
+  plot_only: false  
 
   # Benchmark overlay settings
   baselines_overlay:
-    enabled: true
+    enabled: false
     types: [qm] #, bilinear] #, unet_sr] # any subset. Order is plot order "bilinear", "qm", "unet_sr"
     split: test # train | valid | test
     labels:
