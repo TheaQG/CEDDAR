@@ -12,15 +12,15 @@
 
 
 experiment:
-  name: C_10
-  config_name: C_10
+  name: C_10_small
+  config_name: C_10_small
   # Date of the experiment, taken from the environment variable or set to current date
   date: ${env:EXP_DATE} # Date for the experiment, 
 
 paths:
   data_dir: ${env:DATA_DIR} # Directory for input data
   checkpoint_dir: ${env:CKPT_DIR} # Directory for model checkpoints
-  checkpoint_name: C_10.pth.tar  # Name of the checkpoint file
+  checkpoint_name: C_10_small.pth.tar  # Name of the checkpoint file
   sample_dir: ${env:SAMPLE_DIR} # Directory for saving samples
   evaluation_dir: ${env:EVAL_DIR} # Directory for evaluation figures, stats etc.
   log_dir: ${env:LOG_DIR} # Directory for logs
@@ -140,7 +140,7 @@ visualization:
   add_boxplot_summary: true # Whether to add summary boxplot in visualization
   plot_dual_lr_channel: 0 # What LR channel to plot when dual_lr is True (0 or 1)
   train_monitor_generate: true
-  train_monitor_every_n_epochs: 5
+  train_monitor_every_n_epochs: 1
   train_monitor_n_members: 4
   train_monitor_figsize: [18, 5]
   allow_gen_plot_in_ddp: true # Whether to allow generation and plotting in DDP (only on rank 0 if True)
@@ -194,7 +194,7 @@ training:
   ema_decay: 0.998 # Decay rate for EMA. 0.999-0.9995 is a good range for per-step decay with batch size 16-32. Lower for smaller batches, higher for larger batches.
   weight_decay: 0.000001 # Weight decay for regularization
   ema_warmup_steps: 1000 # Number of warmup steps for EMA
-  epochs: 200 # Number of training epochs
+  epochs: 3 # Number of training epochs
   loss_type: sdfweighted # Type of loss function to use NOTE: change the name in code
   sdf_weighted_loss: true # Whether to use SDF weighted loss
   optimizer: adamw # Optimizer to use for training (adam, adamw, sgd) (adamw for better decay)
@@ -251,10 +251,10 @@ rain_gate:
   c_hidden: 16 # Number of channels in hidden layers of rain-gate head
   learning_rate: 0.0002 # Learning rate for rain gate head
   save_train_viz: true # Whether to save RainGate training visualizations
-  viz_every_n_epochs: 10 # Save RainGate training visualizations every N epochs
+  viz_every_n_epochs: 1 # Save RainGate training visualizations every N epochs
   viz_first_batch_only: true # If true, only save RainGate training visualizations for the first batch
   save_train_reliability: true # Whether to save reliability diagrams for rain-gate predictions during training
-  reliability_every_n_epochs: 10 # Save reliability diagrams for rain-gate predictions every N epochs
+  reliability_every_n_epochs: 1 # Save reliability diagrams for rain-gate predictions every N epochs
   reliability_first_batch_only: true # If true, only save reliability diagrams for rain-gate predictions for the first batch
 
   # Selective, softer, reweighting of diffusion loss based on rain-gate predictions
