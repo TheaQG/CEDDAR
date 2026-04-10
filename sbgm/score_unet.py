@@ -27,21 +27,11 @@ class ContextEncoder(nn.Module):
       Compress large-domain LR fields (e.g. 589x789) into a compact feature map at HR size
       (typically 128x128) for conditioning the main UNet.
 
-    Key design choices:
-      - Shared CNN trunk across variables and times (cheap, stable)
-      - Variable-ID conditioning via FiLM (per-variable modulation without separate encoders)
-      - Simple aggregation over variables and time (mean), so the downstream UNet does the heavy lifting
-
-    Expected input:
-      x: [B, T, V, H_lr, W_lr]
-
-    Output:
-      ctx: [B, c_out, H_tgt, W_tgt]
-
-    Notes:
-      - Provide `var_ids` (Long) to identify variables. If omitted, assumes variables are ordered 0..V-1.
-      - `num_vars` should be set >= V.
-
+    UPDATES!!
+        - Downsample early so expensive feature extraction happens at reduced resolution
+        - Keep a shared CNN trunk across variables/times
+        - Retain variable-ID FiLM modulation
+        - Preserved the same output interface [B, c_out, H_tgt, W_tgt] for downstream compatibility
     """
 
     def __init__(
@@ -71,62 +61,56 @@ class ContextEncoder(nn.Module):
         self.depth = int(depth)
         self.target_size = tuple(target_size)
 
-        # Variable-ID embedding -> FiLM (gamma,beta) per block
-        # Keep embedding small; it only modulates shared conv features.
         emb_dim = max(8, base_channels)
         self.var_emb = nn.Embedding(self.num_vars, emb_dim)
 
-        # Stem: project single-channel field to base_channels
-        self.stem = nn.Conv2d(self.c_in, self.base_channels, kernel_size=3, padding=1)
+        def _gn_groups(ch: int) -> int:
+            return max(1, min(gn_groups, ch))
 
-        # Repeated conv blocks (shared)
+        self.stem = nn.Sequential(
+            nn.Conv2d(self.c_in, self.base_channels, kernel_size=3, stride=2, padding=1),
+            nn.GroupNorm(num_groups=_gn_groups(self.base_channels), num_channels=self.base_channels),
+            nn.SiLU(),
+        )
+
         self.blocks = nn.ModuleList()
         self.film = nn.ModuleList()
-        for _ in range(self.depth):
+
+        in_ch = self.base_channels
+        for i in range(self.depth):
+            out_ch = self.base_channels if i == 0 else min(self.base_channels * (2 ** min(i, 2)), self.base_channels * 4)
+            stride = 2 if i < max(1, self.depth - 1) else 1  # Downsample in all but the last block
+
             self.blocks.append(
                 nn.Sequential(
-                    nn.Conv2d(self.base_channels, self.base_channels, kernel_size=3, padding=1),
-                    nn.GroupNorm(num_groups=min(gn_groups, self.base_channels), num_channels=self.base_channels),
+                    nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=stride, padding=1),
+                    nn.GroupNorm(num_groups=_gn_groups(out_ch), num_channels=out_ch),
                     nn.SiLU(),
-                    nn.Conv2d(self.base_channels, self.base_channels, kernel_size=3, padding=1),
-                    nn.GroupNorm(num_groups=min(gn_groups, self.base_channels), num_channels=self.base_channels),
+                    nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1),
+                    nn.GroupNorm(num_groups=_gn_groups(out_ch), num_channels=out_ch)
                 )
             )
-            # Map var embedding -> (gamma,beta) for FiLM
-            self.film.append(nn.Linear(emb_dim, 2 * self.base_channels))
-
+            self.film.append(nn.Linear(emb_dim, 2 * out_ch))
+            in_ch = out_ch
+        
+        self.hidden_channels = in_ch
         self.act = nn.SiLU()
-        self.proj = nn.Conv2d(self.base_channels, self.c_out, kernel_size=1)
+        self.proj = nn.Conv2d(self.hidden_channels, self.c_out, kernel_size=1)
 
     def _apply_film(self, h: torch.Tensor, var_id: torch.Tensor, idx: int) -> torch.Tensor:
-        """FiLM: h <- (1+gamma) * h + beta, broadcasting over H,W."""
-        # var_id: [N] (N = B*T*V)
         e = self.var_emb(var_id)  # [N, emb_dim]
         gb = self.film[idx](e)    # [N, 2C]
         gamma, beta = gb.chunk(2, dim=-1)
-        gamma = gamma.view(-1, self.base_channels, 1, 1)
-        beta = beta.view(-1, self.base_channels, 1, 1)
+        gamma = gamma.view(-1, h.shape[1], 1, 1)
+        beta = beta.view(-1, h.shape[1], 1, 1)
         return (1.0 + gamma) * h + beta
 
     def forward(self, x: torch.Tensor, *, var_ids: torch.Tensor | None = None) -> torch.Tensor:
-        """Forward.
-
-        Args:
-          x: [B, T, V, H, W]
-          var_ids: optional LongTensor identifying variables.
-              Accepts:
-                - shape [V] (preferred)
-                - shape [B, T, V] (will be flattened)
-
-        Returns:
-          ctx: [B, c_out, H_tgt, W_tgt]
-        """
         if x.ndim != 5:
             raise ValueError(f"ContextEncoder expected x with shape [B,T,V,H,W], got {tuple(x.shape)}")
 
         B, T, V, H, W = x.shape
 
-        # Build var_ids
         if var_ids is None:
             var_ids = torch.arange(V, device=x.device, dtype=torch.long)
         if var_ids.dtype not in (torch.long, torch.int64):
@@ -135,7 +119,6 @@ class ContextEncoder(nn.Module):
         if var_ids.ndim == 1:
             if var_ids.numel() != V:
                 raise ValueError(f"ContextEncoder var_ids must have length V={V}, got {var_ids.numel()}")
-            # Broadcast to [B,T,V]
             var_ids_bt = var_ids.view(1, 1, V).expand(B, T, V)
         elif var_ids.ndim == 3:
             if tuple(var_ids.shape) != (B, T, V):
@@ -144,12 +127,8 @@ class ContextEncoder(nn.Module):
         else:
             raise ValueError(f"ContextEncoder var_ids must be [V] or [B,T,V], got {tuple(var_ids.shape)}")
 
-        # Flatten (B,T,V) -> N
         N = B * T * V
         var_ids_flat = var_ids_bt.reshape(N)
-
-        # Collapse fields to batch of single-channel images
-        # Accept both float tensors and numpy-converted tensors.
         x_f = x.reshape(N, 1, H, W)
 
         h = self.stem(x_f)
@@ -158,7 +137,6 @@ class ContextEncoder(nn.Module):
             h = self._apply_film(h, var_ids_flat, i)
             h = self.act(h)
 
-        # Resize to target
         if h.shape[-2:] != self.target_size:
             h = nn.functional.interpolate(
                 h,
@@ -167,12 +145,9 @@ class ContextEncoder(nn.Module):
                 align_corners=False,
             )
 
-        # Restore structure: [B,T,V,C,Ht,Wt]
-        h = h.view(B, T, V, self.base_channels, self.target_size[0], self.target_size[1])
-
-        # Aggregate: mean over variables, then mean over time
-        h = h.mean(dim=2)  # [B,T,C,Ht,Wt]
-        h = h.mean(dim=1)  # [B,C,Ht,Wt]
+        h = h.view(B, T, V, self.hidden_channels, self.target_size[0], self.target_size[1])
+        h = h.mean(dim=2)
+        h = h.mean(dim=1)
 
         ctx = self.proj(h)  # [B,c_out,Ht,Wt]
         return ctx
@@ -337,9 +312,9 @@ class EDMPrecondUNet(nn.Module):
                 lr_ups: torch.Tensor | None = None # <- needed if predict_residual = True
                 ) -> torch.Tensor:
         B = x_t.shape[0]
-        # Move context encoder to the right device lazily (handles CPU->GPU after construction)
-        if self.context_encoder is not None:
-            self.context_encoder = self.context_encoder.to(x_t.device)
+        # # Move context encoder to the right device lazily (handles CPU->GPU after construction)
+        # if self.context_encoder is not None:
+        #     self.context_encoder = self.context_encoder.to(x_t.device)
         c_in, c_skip, c_out, c_noise = self._precond(sigma) # c_noise is [B, 1]
 
         # Sigmaa embedding [B, time_dim]
@@ -544,6 +519,13 @@ class Encoder(ResNet):
         
         # Initialize the ResNet with the given block and block_layers
         super(Encoder, self).__init__(self.block, self.block_layers)
+
+        # DDP/autograd safety: torchvision ResNet uses inplace ReLUs by default.
+        # Disable inplace activations throughout the inherited backbone to avoid
+        # version-counter issues during backward, especially under DDP/ROCm.
+        for _m in self.modules():
+            if isinstance(_m, nn.ReLU):
+                _m.inplace = False
 
         # Device attribute (do not move submodules here, call self.to(device) at the end of init)
         self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
