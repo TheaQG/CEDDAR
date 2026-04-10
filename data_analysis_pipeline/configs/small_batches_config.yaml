@@ -5,7 +5,7 @@ highres:
 
 lowres:
   model: ERA5
-  variables: ['temp', 'prcp', 'cape', 'nwvf', 'ewvf', 'msl', 'z_pl_250', 'z_pl_500', 'z_pl_850', 'z_pl_1000']
+  variables: ['temp', 'prcp', 'cape', 'nwvf', 'ewvf', 'msl', 'z_pl_500', 'thetae_pl_850'] #'z_pl_250', 'z_pl_500', 'z_pl_850', 'z_pl_1000']
   full_domain: [589, 789]
 
 data:

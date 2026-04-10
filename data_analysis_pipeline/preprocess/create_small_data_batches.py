@@ -160,8 +160,8 @@ def split_and_copy_to_dirs(model1='DANRA',
         logger.info(f"      Selecting files from {data_path_full} using models {model1} and {model2}")
         file_names = select_sample_files(model1=model1,
                                          model2=model2,
-                                         full_domain_model1=[589, 789],
-                                         full_domain_model2=[589, 789],
+                                         full_domain_model1=full_domain_model1,
+                                         full_domain_model2=full_domain_model2,
                                          vars_model1=vars_model1,
                                          vars_model2=vars_model2,
                                          n_samples_total=n_samples_total,
@@ -213,7 +213,14 @@ def split_and_copy_to_dirs(model1='DANRA',
 
             small_data_dirs[model][var] = {}
             # Create the small data batch directory 
-            small_data_dir = build_data_path(base_path=data_path_small, model=model, var=var, full_domain_dims=full_domain, split='', zarr_file=False)
+            small_data_dir = build_data_path(
+                base_path=data_path_small,
+                model=model,
+                var=var,
+                full_domain_dims=full_domain,
+                split=None,
+                zarr_file=False
+            )
 
             # Create the train, val and test directories
             os.makedirs(small_data_dir, exist_ok=True)
@@ -278,6 +285,7 @@ def split_and_copy_to_dirs(model1='DANRA',
                 all_dst = os.path.join(all_dir, file_name)
                 if not os.path.exists(all_dst):
                     shutil.copyfile(src, all_dst)
+            small_data_dirs[model][var]['full_domain'] = full_domain
             small_data_dirs[model][var]['train'] = train_dir
             small_data_dirs[model][var]['valid'] = val_dir
             small_data_dirs[model][var]['test'] = test_dir
@@ -310,7 +318,15 @@ def dirs_to_zarr(data_path,
         logger.info(f"      Converting small data batch directories for model: {model}")
         for var in small_data_dirs[model].keys():
             logger.info(f"          Variable: {var}")
-            small_data_dir = build_data_path(base_path=data_path, model=model, var=var, full_domain_dims=[589, 789], split='', zarr_file=False) # Empty split to get the base path
+            full_domain = small_data_dirs[model][var].get('full_domain', [589, 789])
+            small_data_dir = build_data_path(
+                base_path=data_path,
+                model=model,
+                var=var,
+                full_domain_dims=full_domain,
+                split=None,
+                zarr_file=False
+            )  # empty split to get the base path
             small_data_dir_zarr = os.path.join(small_data_dir, 'zarr_files') # Directory to save the zarr files
             os.makedirs(small_data_dir_zarr, exist_ok=True)
             # Get the train, val and test directories
