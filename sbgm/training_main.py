@@ -108,7 +108,7 @@ def train_main(cfg):
 
 
 
-    # Examine sample from train dataloader (sample is full batch) on main process only.
+    # Examine one sample from the train dataset on main process only
     if is_main_process:
         sample = train_dataloader.dataset[0]
         for key, value in sample.items():
@@ -122,15 +122,15 @@ def train_main(cfg):
 
         if cfg['visualization']['plot_initial_sample']:
             fig, _ = plot_sample(sample, cfg)
-            if cfg['visualization']['show_figs']:
-                plt.show()
-            else:
-                plt.close(fig)
             save_name = 'Initial_sample_plot.png'
             save_path = os.path.join(path_figures, save_name)
             fig.savefig(save_path, bbox_inches='tight', dpi=300)
             logger.info(f"\n\n          ▸ Saved initial sample plot to {save_path}")
     
+            if cfg['visualization']['show_figs']:
+                plt.show()
+            else:
+                plt.close(fig)
     
     #Setup checkpoint path
     checkpoint_dir = os.path.join(cfg['paths']['path_save'], cfg['paths']['checkpoint_dir'])

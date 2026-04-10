@@ -9,6 +9,7 @@ import matplotlib.cm as mcm
 import matplotlib.colors as mcolors
 import matplotlib as mpl
 from matplotlib.colors import Normalize
+from matplotlib.ticker import MaxNLocator, ScalarFormatter, FormatStrFormatter
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from typing import Optional, Union, List, Dict, Tuple
@@ -143,7 +144,7 @@ def _get_cfg_vis(cfg: dict | None) -> dict:
     return cfg.get("visualization", {}) or {}
 
 
-def _overlay_landsea_outline(ax, lsm_mask, *, color="lightgrey", linewidth=0.7):
+def _overlay_landsea_outline(ax, lsm_mask, *, color="lightgrey", linewidth=1.1):
     try:
         m = _to_numpy_2d(lsm_mask)
         if m is None:
@@ -540,30 +541,6 @@ def imshow_variable(
     else:
         im = ax.imshow(arr, cmap=cm_obj, vmin=vmin_arg, vmax=vmax_arg, norm=norm, interpolation="nearest", origin="lower")
 
-    # --- If provided lsm_mask doesn't match the plotted array, don't use it
-    if lsm_mask is not None:
-        mm = np.asarray(lsm_mask)
-        mm = np.squeeze(mm)
-        if mm.ndim == 2 and mm.shape != arr.shape:
-            lsm_mask = None  # prevent tiny-mask-in-corner artifacts
-
-    # --- Paper2 large_domain: if we're plotting LR context (e.g. 589x789), use full-domain LSM
-    if lsm_mask is None and isinstance(cfg, dict):
-        paper2 = cfg.get("paper2", {}) or {}
-        scfg = paper2.get("spatial_context", {}) or {}
-        if str(scfg.get("mode", "")).lower() == "large_domain":
-            lr_ctx = scfg.get("lr_context_size", None)
-            if lr_ctx is not None:
-                lr_ctx = tuple(lr_ctx)  # [H,W]
-                if tuple(arr.shape) == lr_ctx:
-                    cache_key = (arr.shape[0], arr.shape[1], str(cfg.get("paths", {}).get("lsm_path", "")))
-                    if cache_key in _FULL_LSM_CACHE:
-                        lsm_mask = _FULL_LSM_CACHE[cache_key]
-                    else:
-                        full_lsm = _load_full_lsm(cfg)
-                        if full_lsm is not None and tuple(full_lsm.shape) == tuple(arr.shape):
-                            _FULL_LSM_CACHE[cache_key] = full_lsm
-                            lsm_mask = full_lsm
 
     # ------------------------------------------------------------
     # Outline / land-sea context handling
@@ -612,31 +589,34 @@ def imshow_variable(
     if variable in ("topo", "lsm", "land_sea_mask", "mask"):
         add_outline = False
 
+    # Do not draw a local DK outline on large-context LR panels when no matching
+    # context/full-domain LSM is available. This avoids the tiny Denmark outline
+    # appearing inside the 589x789 context panel.
+    if add_outline and is_lr_context_panel and lsm_mask is None:
+        add_outline = False
+
     if add_outline:
         mask_for_outline = None
 
-        # LR context: prefer full-domain LSM (must match)
-        if is_lr_context_panel and lsm_mask is not None:
+        # First choice for co-located / local panels: use the in-sample mask if it matches.
+        if lsm_mask is not None:
             mm = np.asarray(lsm_mask)
             mm = np.squeeze(mm)
             if mm.ndim == 2 and mm.shape == arr.shape:
                 mask_for_outline = mm
 
-        # Non-LR-context: prefer DK outline (must match arr)
-        if mask_for_outline is None:
+        # For large LR-context panels, only use the full-domain mask.
+        if mask_for_outline is None and is_lr_context_panel:
+            mask_for_outline = None
+
+        # Last fallback for local/co-located panels only: use the cached DK outline.
+        if mask_for_outline is None and (not is_lr_context_panel):
             dk = get_dk_lsm_outline(bounds=bounds)
             if dk is not None:
                 dk = np.asarray(dk)
                 dk = np.squeeze(dk)
                 if dk.ndim == 2 and dk.shape == arr.shape:
                     mask_for_outline = dk
-
-        # Final fallback: any matching lsm_mask
-        if mask_for_outline is None and lsm_mask is not None and (not is_lr_context_panel):
-            mm = np.asarray(lsm_mask)
-            mm = np.squeeze(mm)
-            if mm.ndim == 2 and mm.shape == arr.shape:
-                mask_for_outline = mm
 
         if mask_for_outline is not None:
             _overlay_landsea_outline(ax, mask_for_outline, color=outline_color, linewidth=outline_linewidth)
@@ -800,322 +780,291 @@ def _to_imshow_image(arr, prefer_channel: int = 0):
 
 def plot_sample(sample, cfg, figsize=None):
     """
-    Plot a single sample in a consistent layout.
-    - Dual-LR tensors [2,H,W] are expanded into two separate axes (ch0, ch1).
-    - Optional lock of vmin/vmax across the dual pair via cfg['visualization']['dual_lr_lock_scale'].
+    Plot a single dataset sample with a layout that works for both co-located and
+    large-domain Paper2 setups.
+
+    Main behaviour:
+        - Prefer physical/original fields when available.
+        - Show both local and large-domain LR panels when present.
+        - Use panel-specific LSM masks so the outline follows the actual sample geometry
+        - Automatically wrap to multiple rows when many panels are present.
     """
-    # === cfg bits
     hr_model = cfg['highres']['model']
-    hr_units, lr_units = get_units(cfg)
     lr_model = cfg['lowres']['model']
     var = cfg['highres']['variable']
-    show_ocean = cfg['visualization'].get('show_ocean', True)
-    force_matching_scale = cfg['visualization'].get('force_matching_scale', False)
-    global_min = cfg['highres'].get('scaling_params', None)
-    global_max = cfg['highres'].get('scaling_params', None)
-    extra_keys = cfg.get('stationary_conditions', {}).get('geographic_conditions', {}).get('geo_variables', None)
+    hr_units, lr_units = get_units(cfg)
     hr_cmap, lr_cmap_dict = get_cmaps(cfg)
     default_lr_cmap = 'inferno'
     extra_cmap_dict = {"topo": "terrain", "sdf": "coolwarm", "lsm": "binary"}
 
-    # visualization options
-    cfg_vis = cfg.get('visualization', {}) if isinstance(cfg, dict) else {}
+    vis = cfg.get('visualization', {}) or {}
+    show_ocean = bool(vis.get('show_ocean', True))
+    show_scaled_if_no_original = bool(vis.get('show_both_orig_scaled', False))
+    add_boxplot_per_panel = bool(vis.get('add_boxplot_per_panel', True))
 
-    land_mask = _extract_land_mask(sample)
+    paper2 = cfg.get('paper2', {}) or {}
+    spatial_cfg = paper2.get('spatial_context', {}) or {}
+    spatial_mode = str(spatial_cfg.get('mode', '')).lower()
+    is_large_domain = spatial_mode == 'large_domain'
 
-    vis = cfg.get("visualization", {}) or {}
-    show_ocean = bool(vis.get("show_ocean", True))
+    def _to_np(x):
+        if x is None:
+            return None
+        if torch.is_tensor(x):
+            return x.detach().cpu().numpy()
+        return np.asarray(x)
 
-    # Only use land pixels for shared scaling if ocean is hidden (recommended)
-    scale_mask = land_mask if (not show_ocean) else None
+    def _to_2d(x):
+        if x is None:
+            return None
+        arr = _to_np(x)
+        arr = np.squeeze(arr)
+        if arr.ndim == 2:
+            return arr
+        if arr.ndim == 3 and arr.shape[0] == 1:
+            return arr[0]
+        return arr
 
-    # --- Shared scale for HR vs LR of the *target variable* (works for prcp/temp/peva/etc.) ---
+    def _unit_for_lr_base(base_name: str) -> str:
+        conds = list(cfg['lowres'].get('condition_variables', []))
+        if base_name in conds:
+            idx = conds.index(base_name)
+            if idx < len(lr_units):
+                return lr_units[idx]
+        return '—'
 
+    def _panel_title(panel_kind, base_name=None, is_physical=True):
+        if panel_kind == 'hr':
+            return f"HR {hr_model} ({var})\nphysical [{hr_units}]" if is_physical else f"HR {hr_model} ({var})\nscaled"
+        if panel_kind == 'lr_local':
+            unit = _unit_for_lr_base(base_name)
+            return f"LR {lr_model} ({base_name}) local\nphysical [{unit}]" if is_physical else f"LR {lr_model} ({base_name}) local\nscaled"
+        if panel_kind == 'lr_context':
+            unit = _unit_for_lr_base(base_name)
+            return f"LR {lr_model} ({base_name}) context\nphysical [{unit}]" if is_physical else f"LR {lr_model} ({base_name}) context\nscaled"
+        if panel_kind == 'extra':
+            if base_name == 'topo':
+                return 'Topography'
+            if base_name == 'lsm':
+                return 'Land/Sea Mask\n(LSM)'
+            if base_name == 'sdf':
+                return 'SDF'
+            return str(base_name)
+        return str(base_name)
 
-    # Determine the HR key and a matching LR key for the SAME physical variable.
-    hr_key = f"{var}_hr"
+    def _pick_display_array(primary_key, original_key=None):
+        if original_key is not None:
+            orig = sample.get(original_key, None)
+            if orig is not None:
+                arr = _to_2d(orig)
+                if arr is not None:
+                    return arr, True, original_key
+        arr = _to_2d(sample.get(primary_key, None))
+        if arr is not None:
+            return arr, False, primary_key
+        return None, False, primary_key
 
-    # LR variable name may differ (aliases). Try direct match first, then common aliases.
-    lr_var_candidates = [var]
-    alias_pairs = [('prcp', 'tp'), ('tp', 'prcp'), ('temp', 't2m'), ('t2m', 'temp')]
-    for a, b in alias_pairs:
-        if var == a:
-            lr_var_candidates.append(b)
+    panel_specs = []
 
-    lr_key_target = None
-    for cand in lr_var_candidates:
-        k = f"{cand}_lr"
-        if k in sample:
-            lr_key_target = k
-            break
+    # HR target panel
+    hr_primary = f"{var}_hr"
+    hr_original = f"{var}_hr_original"
+    hr_img, hr_is_physical, hr_source_key = _pick_display_array(hr_primary, hr_original)
+    if hr_img is not None:
+        panel_specs.append({
+            'kind': 'hr',
+            'base_name': var,
+            'source_key': hr_source_key,
+            'img': hr_img,
+            'is_physical': hr_is_physical,
+            'cmap': hr_cmap,
+            'lsm_key': 'lsm_hr' if 'lsm_hr' in sample else ('lsm' if 'lsm' in sample else None),
+            'show_ocean': show_ocean,
+        })
 
-    # Scaled fields
-    _hr_scaled_src = sample.get(hr_key, None)
-    if _hr_scaled_src is None:
-        _hr_scaled_src = sample.get("y", None)
-    hr_scaled = _to_numpy_2d(_hr_scaled_src)
+    # LR panels: prefer local + context variants when they exist
+    cond_vars = list(cfg['lowres'].get('condition_variables', []))
+    for base in cond_vars:
+        local_key = f"{base}_lr_local"
+        local_original_key = f"{base}_lr_local_original"
+        context_key = f"{base}_lr"
+        context_original_key = f"{base}_lr_original"
 
-    lr_scaled = _to_numpy_2d(sample.get(lr_key_target, None)) if lr_key_target is not None else None
+        if local_key in sample:
+            img, is_physical, source_key = _pick_display_array(local_key, local_original_key)
+            if img is not None:
+                panel_specs.append({
+                    'kind': 'lr_local',
+                    'base_name': base,
+                    'source_key': source_key,
+                    'img': img,
+                    'is_physical': is_physical,
+                    'cmap': lr_cmap_dict.get(base, default_lr_cmap) if lr_cmap_dict is not None else default_lr_cmap,
+                    'lsm_key': 'lsm_hr' if 'lsm_hr' in sample else ('lsm' if 'lsm' in sample else None),
+                    'show_ocean': True,
+                })
 
-    # Original fields (if saved)
-    _hr_orig_src = sample.get(hr_key + "_original", None)
-    if _hr_orig_src is None:
-        _hr_orig_src = sample.get(hr_key + "_orig", None)
-    hr_orig = _to_numpy_2d(_hr_orig_src)
-
-    _lr_orig_src = None
-    if lr_key_target is not None:
-        _lr_orig_src = sample.get(lr_key_target + "_original", None)
-        if _lr_orig_src is None:
-            _lr_orig_src = sample.get(lr_key_target + "_orig", None)
-    lr_orig = _to_numpy_2d(_lr_orig_src)
-
-    # Shared min/max (scaled + original) over HR and the matching LR target, optionally land-masked
-    target_vmin_scaled, target_vmax_scaled = _shared_minmax([a for a in [hr_scaled, lr_scaled] if a is not None], scale_mask)
-    target_vmin_orig,   target_vmax_orig   = _shared_minmax([a for a in [hr_orig, lr_orig] if a is not None], scale_mask)
-
-    # Save the LR base-name we matched to, for per-panel detection later
-    target_lr_base = lr_key_target[:-3] if lr_key_target is not None else None
-
-    overlay_lsm_contour = bool(cfg_vis.get('overlay_lsm_contour', False))
-    dual_lr_lock_scale = bool(cfg_vis.get('dual_lr_lock_scale', True))  # NEW
-
-    # Build items
-    lr_keys = sorted([k for k in sample.keys() if k.endswith('_lr')])
-
-    # plot_items: (key, ch_idx) where ch_idx=None means single; 0/1 selects channel from [2,H,W]
-    plot_items = []
-
-    # HR
-    plot_items.append((hr_key, None))
-
-    # LR scaled keys: expand dual tensors
-    for k in lr_keys:
-        arr = sample.get(k)
-        if torch.is_tensor(arr):
-            is_dual = (arr.ndim == 3 and arr.shape[0] == 2)
-        else:
-            a = np.asarray(arr) if arr is not None else None
-            is_dual = (a is not None and a.ndim == 3 and a.shape[0] == 2)
-        if is_dual:
-            plot_items.extend([(k, 0), (k, 1)])
-        else:
-            plot_items.append((k, None))
-
-    # Originals
-    for base_k in [hr_key] + lr_keys:
-        orig_k = base_k + "_original"
-        if orig_k in sample:
-            arr = sample.get(orig_k)
-            if torch.is_tensor(arr):
-                is_dual = (arr.ndim == 3 and arr.shape[0] == 2)
-            else:
-                a = np.asarray(arr) if arr is not None else None
-                is_dual = (a is not None and a.ndim == 3 and a.shape[0] == 2)
-            if is_dual:
-                plot_items.extend([(orig_k, 0), (orig_k, 1)])
-            else:
-                plot_items.append((orig_k, None))
+        if context_key in sample:
+            img, is_physical, source_key = _pick_display_array(context_key, context_original_key)
+            if img is not None:
+                same_as_local = False
+                if local_key in sample:
+                    try:
+                        same_as_local = tuple(np.asarray(img).shape) == tuple(np.asarray(_to_2d(sample[local_key])).shape)
+                    except Exception:
+                        same_as_local = False
+                if is_large_domain or (not same_as_local) or (local_key not in sample):
+                    panel_specs.append({
+                        'kind': 'lr_context',
+                        'base_name': base,
+                        'source_key': source_key,
+                        'img': img,
+                        'is_physical': is_physical,
+                        'cmap': lr_cmap_dict.get(base, default_lr_cmap) if lr_cmap_dict is not None else default_lr_cmap,
+                        'lsm_key': None,
+                        'show_ocean': True,
+                    })
 
     # Extras
+    extra_keys = cfg.get('stationary_conditions', {}).get('geographic_conditions', {}).get('geo_variables', None)
     if extra_keys is not None:
-        for ek in extra_keys:
-            plot_items.append((ek, None))
+        for extra_key in extra_keys:
+            source_key = extra_key
 
-    n = len(plot_items)
+            # Prefer local HR versions for quicklook, so these panels stay square
+            # and match the HR / co-located domain.
+            if extra_key == 'lsm' and 'lsm_hr' in sample and sample['lsm_hr'] is not None:
+                source_key = 'lsm_hr'
+            elif extra_key == 'topo' and 'topo_hr' in sample and sample['topo_hr'] is not None:
+                source_key = 'topo_hr'
+
+            if source_key in sample and sample[source_key] is not None:
+                panel_specs.append({
+                    'kind': 'extra',
+                    'base_name': extra_key,
+                    'source_key': source_key,
+                    'img': _to_2d(sample[source_key]),
+                    'is_physical': True,
+                    'cmap': extra_cmap_dict.get(extra_key, 'viridis'),
+                    'lsm_key': None,
+                    'show_ocean': True,
+                })
+
+    if not panel_specs:
+        fig, ax = plt.subplots(1, 1, figsize=(8, 4))
+        ax.axis('off')
+        ax.set_title('No sample panels available')
+        return fig, np.array([ax])
+
+    # Shared limits within comparable groups
+    def _shared_limits(specs):
+        arrays = []
+        for spec in specs:
+            arr = np.asarray(spec['img'], dtype=float)
+            if not spec.get('show_ocean', True) and spec.get('lsm_key') == 'lsm_hr' and ('lsm_hr' in sample):
+                m = _to_2d(sample['lsm_hr'])
+                if m is not None and m.shape == arr.shape:
+                    arr = np.where(m >= 0.5, arr, np.nan)
+            finite = arr[np.isfinite(arr)]
+            if finite.size:
+                arrays.append(finite)
+        if not arrays:
+            return None, None
+        vals = np.concatenate(arrays)
+        return float(np.nanmin(vals)), float(np.nanmax(vals))
+
+    physical_target_specs = [
+        s for s in panel_specs
+        if s['base_name'] == var and s['kind'] in {'hr', 'lr_local', 'lr_context'} and s['is_physical']
+    ]
+    scaled_target_specs = [
+        s for s in panel_specs
+        if s['base_name'] == var and s['kind'] in {'hr', 'lr_local', 'lr_context'} and not s['is_physical']
+    ]
+    physical_limits = _shared_limits(physical_target_specs)
+    scaled_limits = _shared_limits(scaled_target_specs)
+
+    n_panels = len(panel_specs)
+    if n_panels <= 4:
+        ncols = n_panels
+    elif n_panels <= 6:
+        ncols = 3
+    else:
+        ncols = 4
+    nrows = int(np.ceil(n_panels / ncols))
+
     if figsize is None:
-        # Wider layout for many panels + colorbars + boxplots
-        figsize = (18, 4.2)    
-    fig, axs = plt.subplots(1, n, figsize=figsize)
-    fig.subplots_adjust(wspace=0.55, hspace=0.35)    
-    if n == 1:
-        axs = np.array([axs])
+        figsize = (5.2 * ncols, 4.8 * nrows)
+
+    fig, axs = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+    fig.subplots_adjust(wspace=0.5, hspace=0.45)
     fig.suptitle(f"Sample from train dataset, {var} (HR: {hr_model}, LR: {lr_model})", fontsize=16)
 
-    # Helper: compute joint vmin/vmax for a dual pair
-    def _joint_limits_for_pair(key, ch_idx, img2d_cur):
-        if not dual_lr_lock_scale:
-            return None
-        other = sample[key]
-        other = other.detach().cpu().numpy() if torch.is_tensor(other) else np.asarray(other)
-        if other.ndim != 3 or other.shape[0] < 2:
-            return None
-        other2d = other[1 - ch_idx].squeeze()
-        # mask ocean for HR keys (not typical here, but harmless)
-        return (float(np.nanmin([np.nanmin(img2d_cur), np.nanmin(other2d)])),
-                float(np.nanmax([np.nanmax(img2d_cur), np.nanmax(other2d)])))
+    flat_axs = axs.flatten()
 
-    for i, (key, ch_idx) in enumerate(plot_items):
-        is_lr_panel = key.endswith("_lr") or key.endswith("_lr_original")
-        # what to SHOW in the image
-        show_ocean_panel = True if is_lr_panel else show_ocean  # LR always shows full field
-        # what the boxplot should USE
-        boxplot_mask_land_only = True  # for both HR and LR (so they’re comparable)
-
-        ax = axs[i]
-        if key not in sample or sample[key] is None:
-            ax.axis('off'); continue
-
-        data = sample[key]
-        arr = data.detach().cpu() if torch.is_tensor(data) else torch.as_tensor(data)  # torch for uniform ops
-        if ch_idx is not None and arr.ndim == 3 and arr.shape[0] > ch_idx:
-            arr = arr[ch_idx]
-        img = arr.squeeze().numpy()
-
-        # mask ocean for HR images
-        if not show_ocean_panel and (key.endswith("_hr") or key.endswith("_hr_original")) and ("lsm_hr" in sample):
-            m = sample["lsm_hr"]
-            m = m.squeeze().detach().cpu().numpy() if torch.is_tensor(m) else np.asarray(m).squeeze()
-            img = np.where(m < 1, np.nan, img)
-
-        # choose cmap
-        if key.endswith('_hr') or key.endswith('_hr_original'):
-            cmap = hr_cmap
-        elif key.endswith('_lr') or key.endswith('_lr_original'):
-            base = key[:-3] if key.endswith('_lr') else key[:-12]
-            cmap = lr_cmap_dict.get(base, default_lr_cmap) if lr_cmap_dict is not None else default_lr_cmap
-        else:
-            cmap = extra_cmap_dict.get(key, 'viridis')
-
-        # limits
-        # 1) optional global force matching (per-key)
-        if force_matching_scale and isinstance(global_min, dict) and isinstance(global_max, dict):
-            vmin = global_min.get(key, np.nanmin(img))
-            vmax = global_max.get(key, np.nanmax(img))
-
-        # 2) dual-LR channel locking (only relevant when key is dual and ch_idx is not None)
-        elif (key.endswith('_lr') or key.endswith('_lr_original')) and (ch_idx is not None):
-            joint = _joint_limits_for_pair(key, ch_idx, img)
-            if joint is not None:
-                vmin, vmax = joint
-            else:
-                vmin, vmax = np.nanmin(img), np.nanmax(img)
-        
-        # 3) shared HR-vs-LR precip limits (scaled + original)
-        else:
-            # Detect "this panel is the target variable".
-            # HR panels are always the target var; LR panels match when base==target_lr_base.
-            is_hr = key.endswith('_hr') or key.endswith('_hr_original')
-            if key.endswith('_lr'):
-                base = key[:-3]
-            elif key.endswith('_lr_original'):
-                base = key[:-12]
-            else:
-                base = None
-
-            is_target_panel = is_hr or (target_lr_base is not None and base == target_lr_base)
-
-            if is_target_panel:
-                if key.endswith('_hr_original') or key.endswith('_lr_original'):
-                    if (target_vmin_orig is not None) and (target_vmax_orig is not None):
-                        vmin, vmax = target_vmin_orig, target_vmax_orig
-                    else:
-                        vmin, vmax = np.nanmin(img), np.nanmax(img)
-                else:
-                    if (target_vmin_scaled is not None) and (target_vmax_scaled is not None):
-                        vmin, vmax = target_vmin_scaled, target_vmax_scaled
-                    else:
-                        vmin, vmax = np.nanmin(img), np.nanmax(img)
-            else:
-                vmin, vmax = np.nanmin(img), np.nanmax(img)
-
-        # title
-        if key.endswith('_hr'):
-            title = f"HR {hr_model} ({var})\nscaled"
-        elif key.endswith('_hr_original'):
-            title = f"HR {hr_model} ({var})\noriginal [{hr_units}]"
-        elif key.endswith('_lr'):
-            base = key[:-3]; suffix = f" (ch {ch_idx})" if ch_idx is not None else ""
-            title = f"LR {lr_model} ({base})\nscaled{suffix}"
-        elif key.endswith('_lr_original'):
-            base = key[:-12]; suffix = f" (ch {ch_idx})" if ch_idx is not None else ""
-            unit = lr_units[lr_keys.index(base)] if base in lr_keys else '—'
-            title = f"LR {lr_model} ({base})\noriginal [{unit}]{suffix}"
-        elif extra_keys is not None and key in extra_keys:
-            title = "Topography\n\t" if key == "topo" else ("SDF" if key == "sdf" else ("Land/Sea Mask\n(LSM)" if key == "lsm" else key))
-        else:
-            title = key
-
-        # draw
+    for ax, spec in zip(flat_axs, panel_specs):
+        img = np.asarray(spec['img'], dtype=float)
         lsm_for_plot = None
-        if "lsm_hr" in sample and sample["lsm_hr"] is not None:
-            lsm_for_plot = sample["lsm_hr"]
-        elif "lsm" in sample and sample["lsm"] is not None:
-            lsm_for_plot = sample["lsm"]
+        if spec['lsm_key'] is not None and spec['lsm_key'] in sample:
+            lsm_for_plot = _to_2d(sample[spec['lsm_key']])
+            if lsm_for_plot is not None and tuple(np.asarray(lsm_for_plot).shape) != tuple(np.asarray(img).shape):
+                lsm_for_plot = None
 
-        if lsm_for_plot is not None and torch.is_tensor(lsm_for_plot):
-            lsm_for_plot = lsm_for_plot.detach().cpu().numpy().squeeze()
-        elif lsm_for_plot is not None:
-            lsm_for_plot = np.asarray(lsm_for_plot).squeeze()
-        add_outline = True
-        if var in ["lsm", "topo", "sdf"]:
-            add_outline = False  # these variables are their own context; outline would be redundant/noisy
+        if not spec['show_ocean'] and lsm_for_plot is not None and lsm_for_plot.shape == img.shape:
+            img = np.where(lsm_for_plot >= 0.5, img, np.nan)
+
+        if spec['base_name'] == var and spec['kind'] in {'hr', 'lr_local', 'lr_context'}:
+            if spec['is_physical'] and all(v is not None for v in physical_limits):
+                vmin, vmax = physical_limits
+            elif (not spec['is_physical']) and all(v is not None for v in scaled_limits):
+                vmin, vmax = scaled_limits
+            else:
+                vmin, vmax = np.nanmin(img), np.nanmax(img)
+        else:
+            vmin, vmax = np.nanmin(img), np.nanmax(img)
+
+        # For large-domain LR context panels, only draw outline if a matching full-domain
+        # LSM actually exists. Otherwise do not fall back to a DK local outline.
+        add_outline = (spec['base_name'] not in {'lsm', 'topo', 'sdf'})
+        if spec['kind'] == 'lr_context':
+            # Only draw a context-domain outline when we truly have a matching
+            # full-domain/context LSM. Never fall back to a local DK outline here.
+            if lsm_for_plot is None or tuple(np.asarray(lsm_for_plot).shape) != tuple(np.asarray(img).shape):
+                add_outline = False
+
         im = imshow_variable(
             ax,
             img,
-            variable=(var if (key.endswith("_hr") or key.endswith("_hr_original")) else key),
+            variable=spec['base_name'],
             vmin=vmin,
             vmax=vmax,
-            cmap=cmap,
+            cmap=spec['cmap'],
             add_outline=add_outline,
-            show_ocean=bool(show_ocean_panel),
+            outline_linewidth=1.25,
+            show_ocean=spec['show_ocean'],
             lsm_mask=lsm_for_plot,
             cfg=cfg,
         )
-        ax.set_xticks([]); ax.set_yticks([]); ax.set_title(title, fontsize=10)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title(_panel_title(spec['kind'], spec['base_name'], spec['is_physical']), fontsize=10)
 
-        # If we are globally hiding ocean (show_ocean=False), we still want to SHOW the full LR field
-        # (conditioning), but visually deemphasize ocean while keeping boxplots land-only.
-        if (not show_ocean) and is_lr_panel and (lsm_for_plot is not None):
-            try:
-                from matplotlib.colors import ListedColormap
-                m = np.asarray(lsm_for_plot).squeeze()
-                if m.shape == np.asarray(img).shape:
-                    ocean = (m < 0.5)
-                    overlay = np.zeros_like(np.asarray(img), dtype=float)
-                    overlay[ocean] = 1.0
-
-                    ax.imshow(
-                        overlay,
-                        cmap=ListedColormap([(0, 0, 0, 0), (0.9, 0.9, 0.9, 1.0)]),
-                        interpolation="nearest",
-                        origin="lower",
-                        alpha=0.4,
-                        vmin=0.0,
-                        vmax=1.0,
-                    )
-            except Exception as e:
-                logger.debug(f"LR ocean overlay failed on {key}: {e}")
-
-        # # optional land/sea contour
-        # if overlay_lsm_contour and ((key.endswith('_hr') or key.endswith('_hr_original'))) and (lsm_for_plot is not None):
-        #     if "lsm_hr" in sample and sample["lsm_hr"] is not None:
-        #         m = sample["lsm_hr"]
-        #         m = m.squeeze().detach().cpu().numpy() if torch.is_tensor(m) else np.asarray(m).squeeze()
-        #         try:
-        #             ax.contour(np.array(m, copy=False).astype(float, copy=False), levels=[0.5], colors="darkgrey", linewidths=0.8)
-        #         except Exception as e:
-        #             logger.warning(f"LSM contour failed on {key}: {e}")
-
-        # colorbar + optional per-panel boxplot (use shared helper)
-        add_boxplot_per_panel = bool(cfg_vis.get('add_boxplot_per_panel', True))
-
-        # mask for boxplot: prefer extracted land_mask, fall back to lsm_hr/lsm if needed
-        _mask = land_mask
-        if _mask is None and ("lsm_hr" in sample) and (sample["lsm_hr"] is not None):
-            _mask = sample["lsm_hr"]
-        elif _mask is None and ("lsm" in sample) and (sample["lsm"] is not None):
-            _mask = sample["lsm"]
+        _box_mask = None
+        if spec['lsm_key'] is not None and spec['lsm_key'] in sample:
+            _box_mask = sample[spec['lsm_key']]
 
         _add_colorbar_and_boxplot(
             fig,
             ax,
             im,
             img,
-            boxplot=add_boxplot_per_panel and key.endswith(('_hr', '_lr', '_hr_original', '_lr_original')),
+            boxplot=add_boxplot_per_panel and spec['kind'] in {'hr', 'lr_local', 'lr_context'},
             ylim=(vmin, vmax),
-            boxplot_mask=_mask,
+            boxplot_mask=_box_mask,
         )
+
+    for ax in flat_axs[n_panels:]:
+        ax.axis('off')
 
     return fig, axs
 
@@ -1135,15 +1084,67 @@ def _finite_flat(arr):
 
 def _add_colorbar_and_boxplot(fig, ax, im, img_data, *, boxplot=True, ylim=None, boxplot_mask=None):
     """
-        Attach a boxplot (left) and a colorbar (right) to an image axis using axes_divider.
-        The boxplot is vertical, minimal styling and hides ticks/frames.
+    Attach a boxplot (left) and a colorbar (right) to an image axis using axes_divider.
+    The boxplot is vertical, minimal styling and hides ticks/frames.
     """
     divider = make_axes_locatable(ax)
-    # order: [ax | boxplot | colorbar]
-    bax = divider.append_axes("right", size="10%", pad=0.1) if boxplot else None
-    cax = divider.append_axes("right", size="5%", pad=0.1)
 
-    fig.colorbar(im, cax=cax, orientation='vertical')
+    # order: [ax | boxplot | colorbar]
+    bax = divider.append_axes("right", size="9%", pad=0.12) if boxplot else None
+    cax = divider.append_axes("right", size="4.5%", pad=0.12)
+
+    cb = fig.colorbar(im, cax=cax, orientation='vertical')
+
+    # Put ticks/labels on the right only and keep them compact.
+    cb.ax.yaxis.set_ticks_position("right")
+    cb.ax.yaxis.set_label_position("right")
+    cb.ax.tick_params(
+        axis='y',
+        which='both',
+        left=False,
+        right=True,
+        labelleft=False,
+        labelright=True,
+        labelsize=8,
+        pad=2,
+    )
+
+    # Choose a formatter based on data spread so we do not get visually duplicated
+    # labels such as repeated "0.0" or cramped rounded values.
+    try:
+        finite = _finite_flat(img_data)
+        if finite.size:
+            data_min = float(np.nanmin(finite))
+            data_max = float(np.nanmax(finite))
+        else:
+            data_min, data_max = 0.0, 1.0
+
+        if ylim is not None:
+            try:
+                y0, y1 = float(ylim[0]), float(ylim[1])
+                if np.isfinite([y0, y1]).all() and y1 > y0:
+                    data_min, data_max = y0, y1
+            except Exception:
+                pass
+
+        if np.isfinite([data_min, data_max]).all() and data_max > data_min:
+            ticks = np.linspace(data_min, data_max, 4)
+            cb.set_ticks(ticks)
+            spread = data_max - data_min
+            if spread < 0.1:
+                cb.ax.yaxis.set_major_formatter(FormatStrFormatter('%.3f'))
+            elif spread < 1.0:
+                cb.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+            else:
+                cb.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+        else:
+            cb.set_ticks([data_min])
+            cb.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+        cb.ax.minorticks_off()
+        cb.ax.yaxis.get_offset_text().set_visible(False)
+    except Exception:
+        pass
 
     if boxplot and bax is not None:
         # If a mask is provided, compute the boxplot only over masked (typically land-only) pixels.
@@ -1164,13 +1165,15 @@ def _add_colorbar_and_boxplot(fig, ax, im, img_data, *, boxplot=True, ylim=None,
 
         vals = _finite_flat(_bp_src)
         if vals.size:
-            bax.boxplot(vals,
-                        vert=True,
-                        widths=0.9,
-                        showmeans=True,
-                        meanprops=dict(marker='x', markerfacecolor='firebrick', markersize=5, markeredgecolor='firebrick'),
-                        flierprops=dict(marker='o', markerfacecolor='none', markersize=2, linestyle='None', markeredgecolor='darkgreen', alpha=0.4),
-                        medianprops=dict(linestyle='-', linewidth=2, color='black'),
+            vals = np.asarray(vals, dtype=float)
+            bax.boxplot(
+                vals,
+                vert=True,
+                widths=0.85,
+                showmeans=True,
+                meanprops=dict(marker='x', markerfacecolor='firebrick', markersize=5, markeredgecolor='firebrick'),
+                flierprops=dict(marker='o', markerfacecolor='none', markersize=2, linestyle='None', markeredgecolor='darkgreen', alpha=0.4),
+                medianprops=dict(linestyle='-', linewidth=2, color='black'),
             )
             if ylim is not None:
                 try:
@@ -1179,10 +1182,22 @@ def _add_colorbar_and_boxplot(fig, ax, im, img_data, *, boxplot=True, ylim=None,
                         bax.set_ylim(y0, y1)
                 except Exception as e:
                     logger.warning(f"Could not set boxplot ylim {ylim}: {e}")
-                    pass
-            # Cosmetic cleanup
+
+            # Cosmetic cleanup: boxplot should never contribute labels/ticks that can
+            # visually collide with the colorbar tick labels.
             bax.set_xticks([])
             bax.set_yticks([])
+            bax.tick_params(
+                axis='both',
+                which='both',
+                left=False,
+                right=False,
+                labelleft=False,
+                labelright=False,
+                bottom=False,
+                top=False,
+                labelbottom=False,
+            )
             bax.set_frame_on(False)
         else:
             bax.axis('off')
@@ -2246,392 +2261,3 @@ def plot_quantiles_wetday_history(
     plt.close(fig)
 
 
-
-
-
-
-# def plot_sample_with_boxplot(
-#         hr: Union[np.ndarray, dict], # Expecting a 2D array or dict with multiple days
-#         lr: Optional[Union[np.ndarray, dict]] = None,
-#         gen: Optional[Union[np.ndarray, dict]] = None,
-#         variable: str = "Variable",
-#         hr_model: str = "HR Model",
-#         lr_model: Optional[str] = None,
-#         gen_model: Optional[str] = None,
-#         dates: Optional[Union[str, list]] = None,
-#         save_path: Optional[str] = None,
-#         show: bool = False,
-#         cmap_default: str = "viridis",
-#         combine_into_grid: bool = False,
-#         n_rows_max: int = 5,
-#     ):
-#     """
-#         Plots HR, LR and generated images side-by-side with boxplots adjacent to each image.
-#         Accepts either single arrays or dicts + dates for multiple days.
-#         If combine_into_grid is True, multiple dates will be plotted in a grid layout in a single figure.
-#         - If hr is a dict and date is a list -> loop throuhg each date
-#         - If hr is a dict and date is a single str -> lookup that date once
-#         - If hr is a NumPy array, date is ignored
-#     """
-
-#     if save_path is None:
-#         save_path = f"./comparison/{variable}/"
-
-#     # Get cmap for variable if possible
-#     try:
-#         cmap_default = get_cmap_for_variable(variable)
-#     except ValueError:
-#         pass
-
-#     # === MULTIPLE DAYS ===
-#     if isinstance(dates, list):
-#         # === IF COMBINING INTO GRID PLOT IN ONE FIGURE ===
-#         if combine_into_grid:
-#             dates = dates[:n_rows_max]
-#             fields = [('Gen', gen), (f'{hr_model}', hr), (f'{lr_model}', lr)]
-#             fields = [(name, f) for name, f in fields if f is not None]
-#             n_fields = len(fields)
-#             n_rows = len(dates)
-
-#             fig = plt.figure(figsize=(5 * n_fields * 1.5, 3.5 * n_rows))
-#             gs = GridSpec(n_rows, n_fields * 2, width_ratios=[4, 1] * n_fields, figure=fig)
-
-#             for row_idx, d in enumerate(dates):
-#                 row_data = []
-#                 for label, dataset in fields:
-#                     if isinstance(dataset, dict) and d in dataset:
-#                         row_data.append((label, dataset[d]))
-#                     else:
-#                         row_data.append((label, None))
-
-#                 vmin = min(np.min(x[1]) for x in row_data if x[1] is not None)
-#                 vmax = max(np.max(x[1]) for x in row_data if x[1] is not None)
-
-#                 for i, (label, data) in enumerate(row_data):
-#                     ax_img = fig.add_subplot(gs[row_idx, i * 2])
-#                     if data is not None:
-#                         # Ensure data is a NumPy array before plotting
-#                         if isinstance(data, dict):
-#                             logger.warning(f"Cannot plot dictionary for label '{label}'. Skipping.")
-#                             ax_img.set_title(f"{label} (invalid data type)")
-#                             ax_img.axis('off')
-#                             continue
-#                         if not isinstance(data, np.ndarray):
-#                             data = np.array(data)
-#                         # Set date title to only be date (not time)
-#                         try:
-#                             d_title = d.split(' ')[0] if ' ' in d else d
-#                         except Exception as e:
-#                             logger.warning(f"Error extracting date title from '{d}': {e}")
-#                             d_title = d
-                        
-#                         im = ax_img.imshow(data, cmap=cmap_default, vmin=vmin, vmax=vmax)
-#                         ax_img.set_title(f"{label} ({d_title})", fontsize=10)
-#                         ax_img.axis('off')
-#                         ax_img.invert_yaxis()  # Invert y-axis to match the original image orientation
-#                         plt.colorbar(im, ax=ax_img, shrink=0.8)
-#                     else:
-#                         ax_img.set_title(f"{label} (missing)")
-#                         ax_img.axis('off')
-
-#                     ax_box = fig.add_subplot(gs[row_idx, i * 2 + 1])
-#                     if data is not None:
-#                         ax_box.boxplot(
-#                                 data.flatten(),
-#                                 vert=True,
-#                                 widths=1,
-#                                 showmeans=True,
-#                                 meanprops=dict(marker='x', markerfacecolor='firebrick', markersize=5, markeredgecolor='firebrick'),
-#                                 flierprops=dict(marker='o', markerfacecolor='none', markersize=2, linestyle='None', markeredgecolor='darkgreen', alpha=0.4),
-#                                 medianprops=dict(linestyle='-', linewidth=2, color='black'),
-#                                 patch_artist=True,
-#                                 )
-
-#                     # ax_box.set_title("Box", fontsize=8)
-#                     ax_box.set_xticks([])
-#                     ax_box.tick_params(axis='y', labelsize=6)
-#                     ax_box.set_frame_on(False)
-
-
-#             fig.suptitle(f"{variable} | Multiple Dates", fontsize=16)
-#             fig.tight_layout()
-#             if save_path:
-#                 os.makedirs(os.path.dirname(save_path), exist_ok=True)
-#                 path = os.path.join(save_path, f"{variable}_{hr_model}_vs_{lr_model}_boxplot__qualitative_visual.png")
-#                 plt.savefig(path, dpi=300, bbox_inches='tight')
-#             if show:
-#                 plt.show()
-#             plt.close()
-#             return  # Don't fall through to single plot
-
-#         # === IF NOT COMBINING, PLOT EACH DATE SEPARATELY IN MULTIPLE FIGURES ===
-#         for d in dates:
-#             plot_sample_with_boxplot(
-#                 hr=hr, lr=lr, gen=gen,
-#                 variable=variable,
-#                 hr_model=hr_model,
-#                 lr_model=lr_model,
-#                 gen_model=gen_model,
-#                 dates=d,
-#                 save_path=os.path.join(save_path, f"{variable}_{d}_boxplot__qualitative_visual.png") if save_path else None,
-#                 show=show,
-#                 cmap_default=cmap_default
-#             )
-#         return 
-
-#     # === DICTIONARY LOOKUP ===
-#     if isinstance(hr, dict):
-#         if dates not in hr:
-#             logger.warning(f"Date '{dates}' not found in HR data dictionary. Skipping plot.")
-#             return
-#         hr = hr[dates]
-#         lr = lr.get(dates) if lr and isinstance(lr, dict) else None
-#         gen = gen.get(dates) if gen and isinstance(gen, dict) else None
-
-#     # === SINGLE PLOT ===
-
-#     fields = [('HR', hr, hr_model)]
-#     if gen is not None:
-#         fields.insert(0, ('Generated', gen, gen_model if gen_model else "Gen Model"))
-#     if lr is not None:
-#         fields.append(('LR', lr, lr_model if lr_model else "LR Model"))
-
-#     n_fields = len(fields)
-#     fig = plt.figure(figsize=(5 * n_fields * 1.5, 5)) # 5 for each image, 1.5 for boxplot
-#     gs = GridSpec(1, n_fields * 2, width_ratios=[4, 1] * n_fields, figure=fig)
-
-#     vmin = min(np.nanmin(f[1]) for f in fields if isinstance(f[1], np.ndarray))
-#     vmax = max(np.nanmax(f[1]) for f in fields if isinstance(f[1], np.ndarray))
-
-
-#     for i, (label, data, model) in enumerate(fields):
-#         if data is None:
-#             continue
-#         if not isinstance(data, np.ndarray):
-#             data = np.array(data)
-#         ax_img = fig.add_subplot(gs[0, i * 2])
-#         im = ax_img.imshow(data, cmap=cmap_default, vmin=vmin, vmax=vmax)
-#         ax_img.set_title(f"{label} ({model})", fontsize=14)
-#         ax_img.axis('off')
-#         ax_img.invert_yaxis()  # Invert y-axis to match the original image orientation
-
-#         cbar = plt.colorbar(im, ax=ax_img, shrink=0.8)
-#         cbar.ax.tick_params(labelsize=8)
-
-#         ax_box = fig.add_subplot(gs[0, i * 2 + 1])
-#         ax_box.boxplot(data.flatten(), vert=True, patch_artist=True,
-#                           boxprops=dict(facecolor='lightblue', color='blue'),
-#                           medianprops=dict(color='red'),
-#                           flierprops=dict(marker='o', markerfacecolor='none', markersize=5, markeredgecolor='blue', alpha=0.5))
-#         ax_box.set_xticks([])
-#         ax_box.tick_params(axis='y', labelsize=8)
-
-
-#     suptitle = f"{variable} | {dates}" if dates else variable
-#     fig.suptitle(suptitle, fontsize=16)
-
-#     if save_path:
-#         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-#         logger.info(f"Plot saved to {save_path}")
-#     if show:
-#         plt.show()
-#     plt.close()
-    
-#     return 
-
-
-# def plot_samples(samples, cfg, n_samples_threshold=3, figsize=(15, 8)):
-#     """
-#     Plot a batch of samples (provided as a list of sample dictionaries) in a grid where each row is a sample and
-#     each column corresponds to a particular key (e.g., HR, LR, originals, geo).
-    
-#     If the number of samples exceeds n_samples_threshold, only the first n_samples_threshold will be plotted.
-    
-#     Parameters:
-#       - sample_list: List of sample dictionaries.
-#       - cfg: Configuration dictionary containing model and variable information.
-#       - figsize: Overall figure size.
-      
-#     Returns:
-#       - fig: The matplotlib Figure object.
-#     """
-#     from mpl_toolkits.axes_grid1 import make_axes_locatable
-
-#     # Extract configuration for plotting
-#     hr_model = cfg['highres']['model']
-#     lr_model = cfg['lowres']['model']
-#     var = cfg['highres']['variable']
-#     hr_units, lr_units = get_units(cfg)
-#     hr_cmap, lr_cmap_dict = get_cmaps(cfg)
-#     default_lr_cmap = 'viridis'
-#     extra_cmap_dict = {"topo": "terrain", "lsm": "binary", "sdf": "coolwarm"}
-#     show_ocean = cfg.get('visualization', {}).get('show_ocean', False)
-#     force_matching_scale = cfg.get('visualization', {}).get('force_matching_scale', True)
-#     global_min = cfg.get('visualization', {}).get('global_min', None)
-#     global_max = cfg.get('visualization', {}).get('global_max', None)
-#     extra_keys = cfg.get('visualization', {}).get('extra_keys', None)
-
-
-#     # If single batch dict is passed, unpack it to a list
-#     if isinstance(samples, dict):
-#         # Figure out batch size from first tensor we find:
-#         batch_size = None
-#         for v in samples.values():
-#             if torch.is_tensor(v):
-#                 batch_size = v.shape[0]
-#                 break
-#             if isinstance(v, list) and all(torch.is_tensor(x) for x in v):
-#                 batch_size = len(v)
-#                 break
-#         if batch_size is None:
-#             raise ValueError("No tensor found in the sample dictionary to determine batch size.")
-        
-#         sample_list = []
-#         for i in range(batch_size):
-#             single = {}
-#             for k, v in samples.items():
-#                 if torch.is_tensor(v):
-#                     # Slice tensor on batch dim
-#                     single[k] = v[i]
-#                 elif isinstance(v, (list, tuple)) and len(v) == batch_size:
-#                     # Truly per-sample list
-#                     single[k] = v[i]
-#                 else:
-#                     # Some constant list or metadata: leave as-is
-#                     single[k] = v
-#             sample_list.append(single)
-#     else:
-#         sample_list = samples
-
-#     # logger.info(f"Plotting first {n_samples_threshold} samples out of {len(sample_list)} provided.")
-#     sample_list = sample_list[:n_samples_threshold]
-    
-#     # Construct the keys:
-#     # HR key is "var_hr" (e.g., "prcp_hr")
-#     hr_key = f"{var}_hr"
-#     # Assume LR keys end with '_lr'
-#     lr_keys = sorted([key for key in sample_list[0].keys() if key.endswith('_lr')])
-#     scaled_keys = [hr_key] + lr_keys
-
-#     # Determine original keys if available.
-#     original_keys = []
-#     for key in scaled_keys:
-#         orig_key = key + "_original"
-#         if orig_key in sample_list[0]:
-#             original_keys.append(orig_key)
-    
-#     # Build final list of keys. Append extra keys if provided.
-#     plot_keys = scaled_keys + original_keys
-#     if extra_keys is not None:
-#         plot_keys += extra_keys
-
-#     num_samples = len(sample_list)
-#     num_keys = len(plot_keys)
-
-#     # Create a grid with rows = number of samples and columns = number of keys
-#     fig, axs = plt.subplots(num_samples, num_keys, figsize=figsize)
-#     # Set figure title 
-#     fig.suptitle(f"Sample images for {var} (HR: {hr_model} and LR: {lr_model})", fontsize=16)
-#     if num_samples == 1:
-#         axs = np.expand_dims(axs, axis=0)
-#     if num_keys == 1:
-#         axs = np.expand_dims(axs, axis=1)
-
-#     for row, sample in enumerate(sample_list):
-#         for col, key in enumerate(plot_keys):
-#             ax = axs[row, col]
-#             if key not in sample or sample[key] is None:
-#                 ax.axis('off')
-#                 continue
-#             # Retrieve image data
-#             img_data = sample[key]
-#             if torch.is_tensor(img_data):
-#                 img_data = img_data.squeeze().cpu().numpy()
-#             img_data = _squeeze_geo_value(img_data, key)
-#             # For HR images mask out ocean using lsm_hr if needed.
-#             if not show_ocean and (key.endswith('_hr') or key.endswith('_hr_original')):
-#                 if "lsm_hr" in sample and sample["lsm_hr"] is not None:
-#                     mask = sample["lsm_hr"].squeeze().cpu().numpy()
-#                     img_data = np.where(mask < 1, np.nan, img_data)
-#             # Determine color limits.
-#             if force_matching_scale and global_min is not None and global_max is not None:
-#                 vmin = global_min.get(key, np.nanmin(img_data))
-#                 vmax = global_max.get(key, np.nanmax(img_data))
-#             else:
-#                 vmin, vmax = np.nanmin(img_data), np.nanmax(img_data)
-#             # Choose colormap:
-#             if key.endswith('_hr') or key.endswith('_hr_original'):
-#                 cmap = hr_cmap
-#             elif key.endswith('_lr') or key.endswith('_lr_original'):
-#                 if key.endswith('_lr'):
-#                     base = key[:-3]
-#                 else:
-#                     base = key[:-12]
-#                 if lr_cmap_dict is not None and base in lr_cmap_dict:
-#                     cmap = lr_cmap_dict[base]
-#                 else:
-#                     cmap = default_lr_cmap
-#             else:
-#                 if extra_cmap_dict is not None and key in extra_cmap_dict:
-#                     cmap = extra_cmap_dict[key]
-#                 else:
-#                     cmap = 'viridis'
-#             im = ax.imshow(img_data, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
-#             ax.invert_yaxis()
-#             ax.set_xticks([])
-#             ax.set_yticks([])
-#             divider = make_axes_locatable(ax)
-#             # For keys that correspond to variable fields, add a boxplot next to the colorbar.
-#             if key.endswith('_hr') or key.endswith('_lr') or key.endswith('_hr_original') or key.endswith('_lr_original'):
-#                 bax = divider.append_axes("right", size="10%", pad=0.1)
-#                 cax = divider.append_axes("right", size="5%", pad=0.1)
-#                 flierprops = dict(marker='o', markerfacecolor='none', markersize=2,
-#                                   linestyle='none', markeredgecolor='darkgreen', alpha=0.4)
-#                 medianprops = dict(linestyle='-', linewidth=2, color='black')
-#                 meanpointprops = dict(marker='x', markerfacecolor='firebrick', markersize=5, markeredgecolor='firebrick')
-#                 img_flat = img_data[~np.isnan(img_data)].flatten()
-#                 if len(img_flat) > 0:
-#                     bax.boxplot(img_flat,
-#                                 vert=True,
-#                                 widths=2,
-#                                 patch_artist=True,
-#                                 showmeans=True,
-#                                 meanprops=meanpointprops,
-#                                 medianprops=medianprops,
-#                                 flierprops=flierprops)
-#                 bax.set_xticks([])
-#                 bax.set_yticks([])
-#                 bax.set_frame_on(False)
-#             else:
-#                 cax = divider.append_axes("right", size="5%", pad=0.1)
-#             fig.colorbar(im, cax=cax)
-
-#             base = None
-
-
-#             # Set column title (only for top row)
-#             if row == 0:
-#                 if key.endswith('_hr'):
-#                     title = f"HR {hr_model} ({var})\nscaled"
-#                 elif key.endswith('_hr_original'):
-#                     title = f"HR {hr_model} ({var})\noriginal [{hr_units}]"
-#                 elif key.endswith('_lr'):
-#                     base = key[:-3]
-#                     title = f"LR {lr_model} ({base})\nscaled"
-#                 elif key.endswith('_lr_original'):
-#                     base = key[:-12]
-#                     title = f"LR {lr_model} ({base})\noriginal [{lr_units[lr_keys.index(base)]}]"
-#                 elif extra_keys is not None and key in extra_keys:
-#                     if key == "topo":
-#                         title = f"Topography"
-#                     elif key == "sdf":
-#                         title = f"SDF"
-#                     elif key == "lsm":
-#                         title = f"Land/Sea Mask"
-#                     else:
-#                         title = f"{key}"
-#                 else:
-#                     title = f"{key}"
-#                 ax.set_title(title, fontsize=10)
-#     fig.tight_layout()
-#     return fig, axs
