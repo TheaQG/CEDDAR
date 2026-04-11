@@ -1703,6 +1703,11 @@ def plot_training_monitor_generated(
     show_ocean = bool(cfg_vis.get('show_ocean', False))
     plot_dual_lr_channel = int(cfg_vis.get('plot_dual_lr_channel', 0) or 0)
 
+    paths_cfg = cfg.get('paths', {}) if isinstance(cfg, dict) else {}
+    stats_dir_root = paths_cfg.get('stats_load_dir', None)
+    if stats_dir_root is None:
+        raise KeyError("paths.stats_load_dir")
+
     def to_numpy(x):
         if torch.is_tensor(x):
             return x.detach().cpu().numpy()

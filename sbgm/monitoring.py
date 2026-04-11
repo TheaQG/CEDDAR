@@ -294,21 +294,57 @@ def compute_sigma_star_from_loader(hr_batch: torch.Tensor,
 # sigma_min_eff = max(sigma_min_user, getattr(self, 'sigma_star_px', 0.0))
 # samples = edm_sampler(self.model, ..., sigma_min=sigma_min_eff, ...)
 
-def _plot_reliability_curve( probs: torch.Tensor, targets: torch.Tensor,
-                            bins: int = 15, save_path: str | None = None,
-                            title: str = "RainGate reliability curve"):
+def _plot_reliability_curve(
+    probs: torch.Tensor,
+    targets: torch.Tensor,
+    bins: int = 15,
+    save_path: str | None = None,
+    title: str = "RainGate reliability curve",
+    epoch: int | None = None,
+    step: int | None = None,
+    prefix: str = "train",
+):
     """
-        Plot reliability (calibration) curve for wet probabilities vs truth
-        probs, targets are 1D tensors in [0,1] and {0,1} respectively
-    """
-    probs = probs.detach().cpu().float().clamp(0, 1)
-    targets = targets.detach().cpu().float().clamp(0, 1)
+        Plot reliability (calibration) curve for wet probabilities vs truth.
+
+        Parameters
+        ----------
+        probs : torch.Tensor
+            Probability tensor. Can be any shape; it will be flattened.
+        targets : torch.Tensor
+            Binary target tensor with same shape as probs; will be flattened.
+        bins : int
+            Number of reliability bins.
+        save_path : str | None
+            If this is a directory, a filename is constructed automatically.
+            If this is a full file path ending in `.png`, it is used directly.
+        title : str
+            Plot title.
+        epoch : int | None
+            Optional epoch index used for automatic filename construction.
+        step : int | None
+            Optional step/batch index used for automatic filename construction.
+        prefix : str
+            Prefix used for automatic filename construction.
+        """
+    probs = probs.detach().cpu().float().clamp(0, 1).reshape(-1)
+    targets = targets.detach().cpu().float().clamp(0, 1).reshape(-1)
+
     if probs.numel() == 0:
         logger.warning("No valid probabilities to plot reliability curve.")
         return
+
+    if probs.numel() != targets.numel():
+        raise ValueError(
+            f"Reliability curve expects probs and targets with matching number of elements, "
+            f"got probs={probs.numel()} and targets={targets.numel()}."
+        )
+
     # Bin edges
     edges = torch.linspace(0, 1, bins + 1)
-    bin_ids = torch.bucketize(probs, edges, right=True) - 1  # Bin indices [0, bins-1]
+    bin_ids = torch.bucketize(probs, edges, right=True) - 1
+    bin_ids = bin_ids.clamp(0, bins - 1)
+
     # Aggregate
     acc = torch.zeros(bins)
     conf = torch.zeros(bins)
@@ -321,27 +357,42 @@ def _plot_reliability_curve( probs: torch.Tensor, targets: torch.Tensor,
         cnt[b] = n
         conf[b] = probs[m].mean()
         acc[b] = targets[m].mean()
+
     # Remove empty bins
     keep = cnt > 0
-    conf = conf[keep].numpy()
-    acc = acc[keep].numpy()
+    conf_np = conf[keep].numpy()
+    acc_np = acc[keep].numpy()
+
     # ECE (Expected Calibration Error)
     w = (cnt[keep] / cnt[keep].sum()).numpy()
-    ece = float((w * np.abs(acc - conf)).sum())
+    ece = float((w * np.abs(acc_np - conf_np)).sum())
+
     # Plot
-    plt.figure(figsize=(4.2, 4.2))
-    plt.plot([0, 1], [0, 1], '--', lw=1, label='Perfectly calibrated', color='gray')
-    plt.plot(conf, acc, marker='o', lw=1.5, label=f'RainGate (ECE={ece:.3f})', color='blue')
-    plt.xlabel('Predicted probability')
-    plt.ylabel('Observed frequency')
-    plt.title(title)
-    plt.xlim(0, 1)
-    plt.ylim(0, 1)
-    plt.grid(True, linestyle='--', alpha=0.3)
-    plt.legend(frameon=False)
+    fig, ax = plt.subplots(figsize=(4.2, 4.2))
+    ax.plot([0, 1], [0, 1], '--', lw=1, label='Perfectly calibrated', color='gray')
+    ax.plot(conf_np, acc_np, marker='o', lw=1.5, label=f'RainGate (ECE={ece:.3f})', color='blue')
+    ax.set_xlabel('Predicted probability')
+    ax.set_ylabel('Observed frequency')
+    ax.set_title(title)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.grid(True, linestyle='--', alpha=0.3)
+    ax.legend(frameon=False)
+
     if save_path is not None:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
-        plt.close()
+        out_path = save_path
+        if not str(save_path).lower().endswith('.png'):
+            os.makedirs(save_path, exist_ok=True)
+            epoch_str = f"e{int(epoch):03d}" if epoch is not None else "eNA"
+            step_str = f"s{int(step):06d}" if step is not None else "sNA"
+            out_path = os.path.join(save_path, f"{prefix}_reliability_{epoch_str}_{step_str}.png")
+        else:
+            out_dir = os.path.dirname(save_path)
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+
+        fig.savefig(out_path, dpi=200, bbox_inches='tight')
+        plt.close(fig)
     else:
         plt.show()
 
