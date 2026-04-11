@@ -14,7 +14,7 @@
 # ===================================================================
 # V0: B1_GSDF_RGBCE (BASELINE B1 + GEOGRAPHIC CONDITIONS AND SDF-WEIGHTED LOSS + RAINGATE BCE (WITHOUT REWEIGHTING)
 # ===================================================================
-# Baseline, paper 2
+# Baseline, paper 2, small debug version
 
 # Fail fast, but set -u only after we’ve safely handled env defaults
 set -eo pipefail
@@ -24,8 +24,6 @@ set -eo pipefail
 module --force purge || true
 module use /appl/local/training/modules/AI-20240529/
 module load singularity-userfilesystems singularity-CPEbits
-# If your site expects lumi-tools present, reload it explicitly:
-module load lumi-tools || true
 
 # --- Container ---
 CONTAINER=/scratch/project_465002493/containers/images/my_torch_container_with_plotting.sif
@@ -71,7 +69,7 @@ mkdir -p "$MIOPEN_DB_DIR"
 export MIOPEN_USER_DB_PATH="$MIOPEN_DB_DIR/userdb.sql"
 export MIOPEN_SYSTEM_DB_PATH="$MIOPEN_DB_DIR/systemdb.sql"
 
-CFG="$CONFIG_DIR/baseline/V0.yaml"
+CFG="$CONFIG_DIR/baseline/V0_small.yaml"
 
 echo "[INFO] Running V0: training → generation → quicklook → evaluation (inside container)"
 

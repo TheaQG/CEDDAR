@@ -12,7 +12,7 @@
 
 
 # ===================================================================
-# C_10: V0 + CONTEXT ENCODER (LARGE DOMAIN, NOT PRE-CROPPED TO COLLOCATED REGION)
+# C_10_small: V0 + CONTEXT ENCODER (LARGE DOMAIN, NOT PRE-CROPPED TO COLLOCATED REGION), small debug version
 # ===================================================================
 
 # Fail fast, but set -u only after we’ve safely handled env defaults
@@ -69,9 +69,9 @@ mkdir -p "$MIOPEN_DB_DIR"
 export MIOPEN_USER_DB_PATH="$MIOPEN_DB_DIR/userdb.sql"
 export MIOPEN_SYSTEM_DB_PATH="$MIOPEN_DB_DIR/systemdb.sql"
 
-CFG="$CONFIG_DIR/context_only/C_10.yaml"
+CFG="$CONFIG_DIR/context_only/C_10_small.yaml"
 
-echo "[INFO] Running C_10: training → generation → quicklook → evaluation (inside container)"
+echo "[INFO] Running C_10_small: training → generation → quicklook → evaluation (inside container)"
 
 
 export TMPDIR="$SCRATCH/$USER/tmp"
