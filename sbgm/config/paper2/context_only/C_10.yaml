@@ -143,7 +143,6 @@ visualization:
   train_monitor_every_n_epochs: 10
   train_monitor_n_members: 4
   train_monitor_figsize: [18, 5]
-  allow_gen_plot_in_ddp: true # Whether to allow generation and plotting in DDP (only on rank 0 if True)
 
   ocean_background: hatch # hatch | solid | none
   ocean_facecolor: "#f3f3f3" # Color for ocean facecolor when ocean_background is 'solid'. "#f3f3f3" is light gray
