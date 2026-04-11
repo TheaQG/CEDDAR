@@ -4,7 +4,7 @@
     Outputs per-day npzs:
         - ensembles/{date}.npz   -> {'ens': [M,1,H,W]}  (model space)
         - pmm/{date}.npz         -> {'pmm': [1,1,H,W]}  (model space)
-        - lr_hr/{date}.npz       -> {'hr': [1,1,H,W] or None, 'lr_hr': [1,1,H,W] or None} (model space)
+        - lr_hr/{date}.npz       -> {'hr': [1,1,H,W] or None, 'lr': [1,1,H,W] or None, 'lr_local': [1,1,H,W] or None, 'lr_context': [1,1,H,W] or None, 'lr_ups_baseline': [1,1,H,W] or None} (model space)
     and meta/manifest.json for reproducibility
 """
 
@@ -408,7 +408,62 @@ class GenerationRunner:
             return ctx
 
         return torch.cat([cond_local, ctx], dim=1)
-    
+
+    def _extract_lr_fields_for_saving(self, batch: dict, cond_images_gen: torch.Tensor | None) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        def _first_1hw(x):
+            if x is None:
+                return None
+            if not torch.is_tensor(x):
+                x = torch.as_tensor(x)
+            x = x.detach().cpu()
+            if x.ndim == 4:
+                x = x[:1]
+                if x.shape[1] >= 1:
+                    x = x[:, :1]
+                return x.squeeze(0)
+            if x.ndim == 3:
+                if x.shape[0] >= 1:
+                    return x[:1]
+                return x
+            if x.ndim == 2:
+                return x.unsqueeze(0)
+            return None
+
+        spatial_mode = str(getattr(self, '_spatial_mode', '')).lower()
+
+        lr_local = None
+        if self.hr_var is not None:
+            k_local = f"{self.hr_var}_lr_local"
+            k_ctx = f"{self.hr_var}_lr"
+            if k_local in batch and batch[k_local] is not None:
+                lr_local = _first_1hw(batch[k_local])
+            elif spatial_mode == 'colocated' and k_ctx in batch and batch[k_ctx] is not None:
+                lr_local = _first_1hw(batch[k_ctx])
+
+        lr_context = None
+        if self.hr_var is not None:
+            k_ctx = f"{self.hr_var}_lr"
+            if k_ctx in batch and batch[k_ctx] is not None:
+                lr_context = _first_1hw(batch[k_ctx])
+
+        if spatial_mode == 'colocated':
+            if lr_local is None and lr_context is not None:
+                lr_local = lr_context.clone()
+            if lr_context is None and lr_local is not None:
+                lr_context = lr_local.clone()
+
+        if lr_local is None and cond_images_gen is not None and self._lr_target_indices:
+            try:
+                idx = int(self._lr_target_indices[0])
+                t = cond_images_gen[:1, idx:idx+1].detach().cpu()
+                lr_local = t.squeeze(0)
+                if lr_context is None and spatial_mode == 'colocated':
+                    lr_context = lr_local.clone()
+            except Exception:
+                pass
+
+        return lr_local, lr_context
+
     def _get_static_lsm(self) -> Optional[torch.Tensor]:
         """
         Fallback land-sea mask used when the dataset does not yield an LSM tensor.
@@ -929,47 +984,55 @@ class GenerationRunner:
 
             # --- after we have x_hr_1 and cond_images_gen ---
 
-            # Save HR (model space)
+            # Save canonical HR/LR references in model space and physical space.
             hr = x_hr_1.detach().cpu().float() if x_hr_1 is not None else None
+
+            lr_local_src, lr_context_src = self._extract_lr_fields_for_saving(samples, cond_images_gen)
+            lr_ups_src = lr_ups_baseline[:1].detach().cpu().float() if (lr_ups_baseline is not None) else None
+
+            # Canonical evaluation key: always use the local HR-aligned LR patch.
+            lr_model_canonical = lr_local_src.detach().cpu().float() if (lr_local_src is not None) else None
+            lr_local_model = lr_local_src.detach().cpu().float() if (lr_local_src is not None) else None
+            lr_context_model = lr_context_src.detach().cpu().float() if (lr_context_src is not None) else None
+            lr_ups_model = lr_ups_src
+
             if save:
                 _save_npz(
                     self.out_root / "lr_hr" / f"{date0}.npz",
                     hr=hr,
-                    lr_local=lr_local.detach().cpu().float() if lr_local is not None else None,
-                    lr_large=lr_large.detach().cpu().float() if lr_large is not None else None,
-                    lr_ups_baseline=lr_ups_baseline.detach().cpu().float() if lr_ups_baseline is not None else None,
+                    lr=lr_model_canonical,
+                    lr_local=lr_local_model,
+                    lr_context=lr_context_model,
+                    lr_ups_baseline=lr_ups_model,
                 )
-            # ------------------------------------------------------------
-            # Paper2+ : Save LR references using dataset-provided tensors
-            # ------------------------------------------------------------
-            # NOTE:
-            #   - `lr_local` is the co-located 128x128 patch used for HR comparison/evaluation.
-            #   - `lr_large` is the large-domain LR field (e.g. 589x789) used for context encoder/debug.
-            #   - `cond_images_gen` may contain context-encoder channels and its layout is NOT a stable
-            #     source of LR target channels anymore. Do not derive LR refs from `cond_images_gen`.
 
-            # Prepare model-space references for optional in-memory return
-            lr_local_model = lr_local[:1].detach().cpu().float() if (lr_local is not None) else None
-            lr_large_model = lr_large[:1].detach().cpu().float() if (lr_large is not None) else None
-            lr_ups_model = lr_ups_baseline[:1].detach().cpu().float() if (lr_ups_baseline is not None) else None
-
-            # Physical-space references
             lr_local_phys = None
+            lr_context_phys = None
             lr_ups_phys = None
 
             if self.gen_config.save_space in ("physical", "both"):
-                # LR local: inverse with LR-stats back-transform (canonical LR reference)
-                if lr_local_model is not None:
-                    if callable(self.bt_lr_lrspace):
-                        try:
-                            lr_local_phys = self.bt_lr_lrspace(lr_local_model)
-                            lr_local_phys = _cast_phys(lr_local_phys)
-                        except Exception as e:
-                            logger.warning(f"[generation] Failed to back-transform lr_local (LR-stats) for {date0}: {e}")
-                    else:
-                        logger.warning(f"[generation] Missing bt_lr_lrspace; cannot invert lr_local for {date0}")
+                if lr_local_src is not None:
+                    try:
+                        if self.bt_lr_target is not None:
+                            lr_local_phys = self.bt_lr_target(lr_local_src.unsqueeze(0)).detach().cpu().squeeze(0)
+                        else:
+                            lr_local_phys = lr_local_src.detach().cpu()
+                        lr_local_phys = _cast_phys(lr_local_phys)
+                    except Exception as e:
+                        logger.warning(f"[generation] Failed to back-transform lr_local for {date0}: {e}")
+                        lr_local_phys = _cast_phys(lr_local_src.detach().cpu())
 
-                # LR upsampled baseline: this is already in HR-zspace, so invert with bt_lr_hrspace if available
+                if lr_context_src is not None:
+                    try:
+                        if self.bt_lr_target is not None:
+                            lr_context_phys = self.bt_lr_target(lr_context_src.unsqueeze(0)).detach().cpu().squeeze(0)
+                        else:
+                            lr_context_phys = lr_context_src.detach().cpu()
+                        lr_context_phys = _cast_phys(lr_context_phys)
+                    except Exception as e:
+                        logger.warning(f"[generation] Failed to back-transform lr_context for {date0}: {e}")
+                        lr_context_phys = _cast_phys(lr_context_src.detach().cpu())
+
                 if lr_ups_model is not None:
                     if callable(self.bt_lr_hrspace):
                         try:
@@ -978,10 +1041,8 @@ class GenerationRunner:
                         except Exception as e:
                             logger.warning(f"[generation] Failed to back-transform lr_ups_baseline (HR-zspace) for {date0}: {e}")
                     else:
-                        # Not strictly required for evaluation; keep silent-ish
                         logger.info(f"[generation] Missing bt_lr_hrspace; skipping physical inversion of lr_ups_baseline for {date0}")
 
-                # HR physical ref for lr_hr_phys is the canonical HR reference (single image)
                 hr_phys_ref = hr
                 if callable(self.bt_hr) and hr_phys_ref is not None:
                     try:
@@ -990,23 +1051,30 @@ class GenerationRunner:
                     except Exception as e:
                         logger.warning(f"[generation] Failed to back-transform HR reference for {date0}: {e}")
                         hr_phys_ref = None
-                # Save phys refs used for evaluation
+
+                lr_phys_canonical = lr_local_phys
+
                 if save:
                     _save_npz(
                         self.out_root / "lr_hr_phys" / f"{date0}.npz",
                         hr=hr_phys_ref,
+                        lr=lr_phys_canonical,
                         lr_local=lr_local_phys,
+                        lr_context=lr_context_phys,
                         lr_ups_baseline=lr_ups_phys,
                     )
                     logger.info("[generation] Saved lr_hr_phys → %s", self.out_root / "lr_hr_phys" / f"{date0}.npz")
 
-                    def _m(x):
-                        return float(torch.nanmean(x)) if (x is not None and torch.is_tensor(x)) else None
-
-                    logger.info(
-                        "[generation] %s LR means (phys): lr_local=%s lr_ups_baseline=%s",
-                        date0, _m(lr_local_phys), _m(lr_ups_phys)
-                    )
+                logger.info(
+                    "[generation] %s LR means (phys): lr=%s lr_local=%s lr_context=%s lr_ups_baseline=%s",
+                    date0,
+                    None if lr_phys_canonical is None else float(torch.as_tensor(lr_phys_canonical).float().mean().item()),
+                    None if lr_local_phys is None else float(torch.as_tensor(lr_local_phys).float().mean().item()),
+                    None if lr_context_phys is None else float(torch.as_tensor(lr_context_phys).float().mean().item()),
+                    None if lr_ups_phys is None else float(torch.as_tensor(lr_ups_phys).float().mean().item()),
+                )
+            else:
+                lr_phys_canonical = None
 
             # Canonical LR phys reference for quicklook payload
             lr_phys = lr_local_phys
@@ -1021,8 +1089,9 @@ class GenerationRunner:
                     "ensemble_model": _cpu(ens_model),  # [M,1,H,W]
                     "pmm_model": _cpu(pmm_full),        # [1,1,H,W]
                     "hr_model": _cpu(hr),               # [1,1,H,W] or None
+                    "lr_model": _cpu(lr_model_canonical),
                     "lr_model_local": _cpu(lr_local_model),
-                    "lr_model_large": _cpu(lr_large_model),
+                    "lr_model_context": _cpu(lr_context_model),
                     "lr_model_ups_baseline": _cpu(lr_ups_model),
                     # physical-space (may be large and non-deterministic due to back-transform)
                     "ensemble_phys": _cpu(gen_phys),    # [M,1,H,W]

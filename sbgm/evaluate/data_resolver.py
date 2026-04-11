@@ -199,14 +199,15 @@ class EvalDataResolver:
             logger.info(f"[EvalDataResolver] Requested LR key '{desired}' not found in {p}; returning None to avoid wrong channel.")
             return None
         else:
-            # no preference set → conservative fallback order (no HR-space unless explicitly asked)
-            for k in ("lr", "lr_lrspace"):
+            # no preference set → prefer canonical local LR, then explicit local/context variants,
+            # then legacy physical LR variants if present.
+            for k in ("lr", "lr_local", "lr_context", "lr_lrspace"):
                 if k in d.files and d[k] is not None:
                     x = d[k]
                     chosen = k
                     break
         if x is None:
-            logger.info(f"[EvalDataResolver] No LR arrays found in {p} for any of keys ['lr', 'lr_lrspace']; returning None to avoid wrong channel.")
+            logger.info(f"[EvalDataResolver] No LR arrays found in {p} for any of keys ['lr', 'lr_local', 'lr_context', 'lr_lrspace']; returning None to avoid wrong channel.")
             return None
         if chosen is not None and chosen != self.lr_phys_key:
             logger.info(f"[EvalDataResolver] Requested LR key '{self.lr_phys_key}' not found; using '{chosen}' instead for {date}")
