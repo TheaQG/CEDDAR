@@ -782,14 +782,23 @@ def get_final_gen_dataloader(
     full_domain_dims_str_hr = f"{full_domain_dims[0]}x{full_domain_dims[1]}" if full_domain_dims is not None else "full_domain"
     full_domain_dims_str_lr = f"{full_domain_dims[0]}x{full_domain_dims[1]}" if full_domain_dims is not None else "full_domain"
     crop_region_hr = cfg['highres']['cutout_domains'] if cfg['highres']['cutout_domains'] is not None else "full_region"
-    crop_region_lr = lr_cutout_domains_eff if lr_cutout_domains_eff is not None else (cfg['lowres']['cutout_domains'] if cfg['lowres']['cutout_domains'] is not None else "full_region")
     crop_region_hr_str = crop_bounds_to_stats_str(crop_region_hr, order="yyxx")
-    if str(spatial_mode).lower() == 'large_domain':
-        crop_region_lr_str = crop_bounds_to_stats_str(crop_region_lr, order="yyxx")
-    else:
-        crop_region_lr_str = crop_region_hr_str
+    crop_region_lr = lr_cutout_domains_eff if lr_cutout_domains_eff is not None else (
+        cfg['lowres']['cutout_domains'] if cfg['lowres']['cutout_domains'] is not None else "full_region"
+    )
 
-    
+    # Match get_dataloader(): HR config cutouts are [y1, y2, x1, x2] -> yyxx,
+    # while resolved effective LR bounds are internal [x1, x2, y1, y2] -> xxyy.
+    if str(spatial_mode).lower() == 'colocated':
+        crop_region_lr_stat_str = crop_bounds_to_stats_str(crop_region_hr, order="yyxx")
+    else:
+        crop_region_lr_stat_str = crop_bounds_to_stats_str(crop_region_lr, order="xxyy")
+
+    logger.info(
+        f"[get_final_gen_dataloader][stats] spatial_mode={spatial_mode} | "
+        f"HR crop={crop_region_hr} -> {crop_region_hr_str} | "
+        f"LR crop={crop_region_lr} -> {crop_region_lr_stat_str}"
+    )
 
     # Back transforms (kept for completeness; dataset may use them)
     _ = build_back_transforms_from_stats(
@@ -802,7 +811,7 @@ def get_final_gen_dataloader(
         lr_vars             = cfg['lowres']['condition_variables'],
         lr_model            = cfg['lowres']['model'],
         domain_str_lr       = full_domain_dims_str_lr,
-        crop_region_str_lr  = crop_region_lr_str,
+        crop_region_str_lr  = crop_region_lr_stat_str,
         lr_scaling_methods  = cfg['lowres']['scaling_methods'],
         lr_buffer_frac      = cfg['lowres'].get('buffer_frac', 0.0),
         split               = cfg['transforms'].get('scaling_split', 'train'),
@@ -1352,12 +1361,13 @@ def get_scheduler(cfg, optimizer):
         scheduler = ReduceLROnPlateau(optimizer,
                                       mode='min',
                                       factor=cfg['training']['lr_scheduler_params']['factor'],
-                                      patience=cfg['training']['lr_scheduler_params']['patience'],
-                                      verbose=True)
+                                      patience=cfg['training']['lr_scheduler_params']['patience']
+                                      )
     elif lr_scheduler_type == 'CosineAnnealing':
         scheduler = CosineAnnealingLR(optimizer,
                                       T_max=cfg['training']['lr_scheduler_params']['T_max'],
-                                      eta_min=cfg['training']['lr_scheduler_params']['eta_min'])
+                                      eta_min=cfg['training']['lr_scheduler_params']['eta_min']
+                                      )
     elif lr_scheduler_type == None:
         scheduler = None
         logger.warning("No learning rate scheduler specified. Using the optimizer's default learning rate.")
