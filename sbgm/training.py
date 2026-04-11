@@ -1218,11 +1218,15 @@ class TrainingPipeline_general:
                         probs=torch.sigmoid(wet_logits).detach(),
                         targets=wet_target.detach(),
                         epoch=current_epoch,
+                        step=idx,
                         prefix='train',
                         save_path=self.path_diagnostics,
+                        title=f"RainGate reliability curve (train, epoch {current_epoch}, batch {idx})",
                     )
                 except Exception as e:
-                    logger.warning(f"[rain_gate][train] Could not save reliability curve at epoch {current_epoch}, batch {idx}. Error: {e}")
+                    logger.warning(
+                        f"[rain_gate][train] Could not save reliability curve at epoch {current_epoch}, batch {idx}. Error: {e}"
+                    )
 
             hr = x
             lr_hr = lr_ups_baseline
@@ -1877,16 +1881,18 @@ class TrainingPipeline_general:
 
         full_domain_dims_str_hr = f"{self.full_domain_dims_hr[0]}x{self.full_domain_dims_hr[1]}" if self.full_domain_dims_hr is not None else "full_domain"
         full_domain_dims_str_lr = f"{self.full_domain_dims_lr[0]}x{self.full_domain_dims_lr[1]}" if self.full_domain_dims_lr is not None else "full_domain"
-        crop_region_hr_str = crop_bounds_to_stats_str(self.crop_region_hr, order="yyxx")
 
-        paper2 = (cfg.get('paper2', {}) or {})
-        spatial = (paper2.get('spatial_context', {}) or {})
-        spatial_mode = str(spatial.get('mode', '')).lower()
-        if spatial_mode == 'large_domain' and (self.full_domain_dims_lr is not None):
-            lr_crop_bounds_eff = [0, self.full_domain_dims_lr[1], 0, self.full_domain_dims_lr[0]]
-        else:
-            lr_crop_bounds_eff = self.crop_region_lr
-        crop_region_lr_str = crop_bounds_to_stats_str(lr_crop_bounds_eff, order="xxyy")
+        crop_region_hr_str = getattr(self, 'hr_stats_crop_str', None)
+        if not crop_region_hr_str:
+            crop_region_hr_str = crop_bounds_to_stats_str(self.crop_region_hr, order="yyxx")
+
+        crop_region_lr_str = getattr(self, 'lr_stats_crop_str', None)
+        if not crop_region_lr_str:
+            crop_region_lr_str = crop_bounds_to_stats_str(self.crop_region_lr, order="yyxx")
+
+        logger.info(
+            f"[monitor] Using stats crop strings: HR={crop_region_hr_str} | LR={crop_region_lr_str}"
+        )
 
         back_transforms = build_back_transforms_from_stats(
             hr_var=cfg['highres']['variable'],
@@ -1901,12 +1907,9 @@ class TrainingPipeline_general:
             crop_region_str_lr=crop_region_lr_str,
             lr_scaling_methods=cfg['lowres']['scaling_methods'],
             lr_buffer_frac=cfg['lowres']['buffer_frac'] if 'buffer_frac' in cfg['lowres'] else 0.0,
-            scaling_split=str(cfg.get('transforms', {}).get('scaling_split', 'train')),
-            stats_load_dir=cfg['data_handling']['stats_load_dir'],
-            use_dual_lr=bool(cfg.get('lowres', {}).get('dual_lr', False)),
-            lr_main_var_scale=str(cfg.get('lowres', {}).get('lr_main_var_scale', 'LR')),
-            use_hrspace_for_non_main=bool(cfg.get('lowres', {}).get('use_hrspace_for_non_main', False)),
-            main_condition=cfg.get('lowres', {}).get('main_condition_variable', None),
+            split=str(cfg.get('transforms', {}).get('scaling_split', 'train')),
+            stats_dir_root=cfg['paths']['stats_load_dir'],
+            eps=self.global_prcp_eps
         )
 
         member_outputs = []
@@ -1914,14 +1917,25 @@ class TrainingPipeline_general:
             for _ in range(member_count):
                 if edm_on:
                     gen_out = sampler_fn(
-                        model=model_ref,
-                        shape=x[:1].shape,
+                        score_model=model_ref,
+                        batch_size=1,
+                        num_steps=cfg.get('edm', {}).get('sampling_steps', 18),
+                        device=self.device,
+                        img_size=cfg['highres']['data_size'][0],
                         y=y[:1] if y is not None else None,
                         cond_img=cond_images[:1] if cond_images is not None else None,
                         lsm_cond=lsm_cond[:1] if lsm_cond is not None else None,
                         topo_cond=topo_cond[:1] if topo_cond is not None else None,
+                        sigma_min=float(cfg.get('edm', {}).get('sigma_min', 0.002)),
+                        sigma_max=float(cfg.get('edm', {}).get('sigma_max', 80)),
+                        rho=float(cfg.get('edm', {}).get('rho', 7.0)),
+                        S_churn=float(cfg.get('edm', {}).get('S_churn', 0.0)),
+                        S_min=float(cfg.get('edm', {}).get('S_min', 0.0)),
+                        S_max=float(cfg.get('edm', {}).get('S_max', float('inf'))),
+                        S_noise=float(cfg.get('edm', {}).get('S_noise', 1.0)),
                         lr_ups=lr_ups_baseline[:1] if lr_ups_baseline is not None else None,
-                        cfg=cfg,
+                        cfg_guidance=cfg.get('classifier_free_guidance', {}) if cfg.get('classifier_free_guidance', {}).get('enabled', False) else None,
+                        sigma_star=float(cfg.get('edm', {}).get('sigma_star', 1.0)),
                     )
                 else:
                     gen_out = sampler_fn(
@@ -2026,17 +2040,14 @@ class TrainingPipeline_general:
 
         full_domain_dims_str_hr = f"{self.full_domain_dims_hr[0]}x{self.full_domain_dims_hr[1]}" if self.full_domain_dims_hr is not None else "full_domain"
         full_domain_dims_str_lr = f"{self.full_domain_dims_lr[0]}x{self.full_domain_dims_lr[1]}" if self.full_domain_dims_lr is not None else "full_domain"
-        crop_region_hr_str = crop_bounds_to_stats_str(self.crop_region_hr, order="yyxx")
 
-        paper2 = (cfg.get('paper2', {}) or {})
-        spatial = (paper2.get('spatial_context', {}) or {})
-        spatial_mode = str(spatial.get('mode', '')).lower()
-        if spatial_mode == 'large_domain' and (self.full_domain_dims_lr is not None):
-            lr_crop_bounds_eff = [0, self.full_domain_dims_lr[1], 0, self.full_domain_dims_lr[0]]
-        else:
-            lr_crop_bounds_eff = self.crop_region_lr
+        crop_region_hr_str = getattr(self, 'hr_stats_crop_str', None)
+        if not crop_region_hr_str:
+            crop_region_hr_str = crop_bounds_to_stats_str(self.crop_region_hr, order="yyxx")
 
-        crop_region_lr_str = crop_bounds_to_stats_str(lr_crop_bounds_eff, order="xxyy")
+        crop_region_lr_str = getattr(self, 'lr_stats_crop_str', None)
+        if not crop_region_lr_str:
+            crop_region_lr_str = crop_bounds_to_stats_str(self.crop_region_lr, order="yyxx")
 
         scaling_split = str(cfg.get('transforms', {}).get('scaling_split', 'train'))
         if epoch == 1:
