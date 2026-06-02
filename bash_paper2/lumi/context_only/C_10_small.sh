@@ -2,7 +2,7 @@
 #SBATCH --job-name=C_10_small
 #SBATCH --output=logs/slurm_C_10_small_%x_%j.log
 #SBATCH --error=logs/slurm_C_10_small_%x_%j.err
-#SBATCH --account=project_465002493
+#SBATCH --account=project_465002737
 #SBATCH --partition=standard-g
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=4
@@ -29,7 +29,7 @@ module load singularity-userfilesystems singularity-CPEbits
 CONTAINER=/scratch/project_465002493/containers/images/my_torch_container_with_plotting.sif
 
 # --- Paths ---
-SCRATCH="/scratch/${SLURM_JOB_ACCOUNT}"
+SCRATCH="/scratch/project_465002493" #"/scratch/${SLURM_JOB_ACCOUNT}"
 USER_DIR="$SCRATCH/$USER"
 ROOT_DIR="$USER_DIR/Code/CEDDAR"
 CONFIG_DIR="$ROOT_DIR/sbgm/config/paper2"

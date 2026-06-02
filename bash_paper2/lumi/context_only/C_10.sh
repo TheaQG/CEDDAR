@@ -2,7 +2,7 @@
 #SBATCH --job-name=C_10
 #SBATCH --output=logs/slurm_C_10_%x_%j.log
 #SBATCH --error=logs/slurm_C_10_%x_%j.err
-#SBATCH --account=project_465002493
+#SBATCH --account=project_465002737
 #SBATCH --partition=standard-g
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=4
@@ -29,7 +29,7 @@ module load singularity-userfilesystems singularity-CPEbits
 CONTAINER=/scratch/project_465002493/containers/images/my_torch_container_with_plotting.sif
 
 # --- Paths ---
-SCRATCH="/scratch/${SLURM_JOB_ACCOUNT}"
+SCRATCH="/scratch/project_465002493" #"/scratch/${SLURM_JOB_ACCOUNT}"
 USER_DIR="$SCRATCH/$USER"
 ROOT_DIR="$USER_DIR/Code/CEDDAR"
 CONFIG_DIR="$ROOT_DIR/sbgm/config/paper2"
@@ -83,7 +83,7 @@ unset MAMBA_ROOT_PREFIX
 # Runtime mode selection
 # ------------------------------------------------------------------
 export DEBUG_SINGLE_GPU=0 #"${DEBUG_SINGLE_GPU:-1}" 
-export DDP_MULTI_GPU=1 #"${DDP_MULTI_GPU:-0}"
+export DDP_MULTI_GPU=0 #"${DDP_MULTI_GPU:-0}"
 export ENABLE_ROCM_MONITORING="${ENABLE_ROCM_MONITORING:-0}"
 export ROCM_MONITOR_INTERVAL_SEC="${ROCM_MONITOR_INTERVAL_SEC:-60}"
 
@@ -153,6 +153,8 @@ else
     echo "[INFO] Launching single-process run on 1 GPU"
     srun singularity exec "$CONTAINER" bash --noprofile --norc -lc "
         ${COMMON_CONTAINER_ENV}
-        python -m sbgm.cli.main_app --mode full_pipeline --config_path $CFG --make_plots
+        python -m sbgm.cli.main_app --mode generate --config_path $CFG --make_plots && \
+        python -m sbgm.cli.main_app --mode evaluate --config_path $CFG --make_plots
     "
 fi
+        # python -m sbgm.cli.main_app --mode full_pipeline --config_path $CFG --make_plots

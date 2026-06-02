@@ -193,7 +193,7 @@ training:
   ema_decay: 0.998 # Decay rate for EMA. 0.999-0.9995 is a good range for per-step decay with batch size 16-32. Lower for smaller batches, higher for larger batches.
   weight_decay: 0.000001 # Weight decay for regularization
   ema_warmup_steps: 1000 # Number of warmup steps for EMA
-  epochs: 200 # Number of training epochs
+  epochs: 400 # Number of training epochs
   loss_type: sdfweighted # Type of loss function to use NOTE: change the name in code
   sdf_weighted_loss: true # Whether to use SDF weighted loss
   optimizer: adamw # Optimizer to use for training (adam, adamw, sgd) (adamw for better decay)
