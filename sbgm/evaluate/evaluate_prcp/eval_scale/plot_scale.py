@@ -187,17 +187,7 @@ def plot_scale_psd(scale_root: Path, eval_cfg: Any | None = None) -> None:
     gen_hr_high_ratio = _safe_ratio(gen_high, hr_high)
     lr_hr_low_ratio   = _safe_ratio(lr_low, hr_low)
     lr_hr_high_ratio  = _safe_ratio(lr_high, hr_high)
-    # 6. Write to CSV
-    ratios_path = tables / "scale_psd_band_ratios_avg.csv"
-    with open(ratios_path, "w") as f:
-        f.write("series,band,power,ratio_to_hr\n")
-        f.write(f"HR,low-k,{hr_low:.6e},1.0\n")
-        f.write(f"HR,high-k,{hr_high:.6e},1.0\n")
-        f.write(f"GEN,low-k,{gen_low:.6e},{gen_hr_low_ratio:.4f}\n")
-        f.write(f"GEN,high-k,{gen_high:.6e},{gen_hr_high_ratio:.4f}\n")
-        if np.isfinite(lr_low) or np.isfinite(lr_high):
-            f.write(f"LR,low-k,{lr_low:.6e},{lr_hr_low_ratio:.4f}\n")
-            f.write(f"LR,high-k,{lr_high:.6e},{lr_hr_high_ratio:.4f}\n")
+    # Keep these ratios local to the plot for annotation only.
 
     # --- slope fits in log10(k) vs log10(P) ---
     def _fit_slope(k_arr: np.ndarray, p_arr: np.ndarray, mask: np.ndarray) -> tuple[float, float, float, float, float]:
@@ -234,12 +224,7 @@ def plot_scale_psd(scale_root: Path, eval_cfg: Any | None = None) -> None:
     else:
         slope_rows += _collect_slopes("LR", lr_mean)
 
-    # write slopes to CSV
-    slopes_path = tables / "scale_psd_slopes_avg.csv"
-    with open(slopes_path, "w") as f:
-        f.write("series,range,slope,intercept,r2,kmin,kmax\n")
-        for s, rng, sl, ic, r2, kmin, kmax in slope_rows:
-            f.write(f"{s},{rng},{sl:.6f},{ic:.6f},{r2:.4f},{kmin:.6e},{kmax:.6e}\n")
+    # Keep these low/high-k slopes local to the plot for annotation only.
 
 
     # --- Find HR-LR intersection in log space ---
@@ -393,12 +378,6 @@ def plot_scale_psd(scale_root: Path, eval_cfg: Any | None = None) -> None:
     #         rotation=90,
     #     )
 
-    # --- mark low-k and high-k limits ---
-    ax.axvline(1.0 / low_k_max, color="gray", linestyle="--",
-               linewidth=0.8, alpha=0.7, zorder=ZORDER_ANNOT)
-
-    ax.axvline(1.0 / high_k_min, color="gray", linestyle="--",
-               linewidth=0.8, alpha=0.7, zorder=ZORDER_ANNOT)
 
     # --- mark low-k and high-k limits ---
     lam_low = 1.0 / low_k_max
@@ -560,7 +539,6 @@ def plot_scale_psd(scale_root: Path, eval_cfg: Any | None = None) -> None:
         # ymin, ymax = ax.get_ylim()
         # ax.set_ylim(bottom=5e-6, top=max(ymax, 1e-7))        
 
-    fig.tight_layout(rect=(0.0, 0.0, 0.82, 1.0))
     _savefig(fig, figs / "scale_psd.png", dpi=SET_DPI)
 
 
@@ -1356,7 +1334,6 @@ def plot_iss_curves(scale_root: Path, eval_cfg: Any | None = None) -> None:
         c = j % ncols
         axs[r, c].axis("off")
 
-    fig.tight_layout()
     _savefig(fig, figs / "scale_iss_curves.png", dpi=SET_DPI)
 
 

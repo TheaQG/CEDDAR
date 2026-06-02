@@ -1,4 +1,3 @@
-# sbgm/evaluate/evaluate_prcp/eval_features/evaluate_features.py
 from __future__ import annotations
 from pathlib import Path
 from typing import Sequence, Dict, List, Optional
@@ -38,18 +37,30 @@ def _season_of(d: str) -> str:
 def _group_dates(dates: List[str], group_by: str, seasons: Sequence[str]) -> Dict[str, List[str]]:
     if group_by == "all":
         return {"ALL": dates}
+
     if group_by == "season":
-        out: Dict[str, List[str]] = {s: [] for s in seasons}
+        out: Dict[str, List[str]] = {"ALL": dates}
+        for s in seasons:
+            if s != "ALL":
+                out.setdefault(s, [])
         for d in dates:
             s = _season_of(d)
             if s in out:
                 out[s].append(d)
-        return {s: out.get(s, []) for s in seasons if s in out}
-    # default: year
-    buckets: Dict[str, List[str]] = {}
+        return out
+
+    # default: year, but always include ALL for paper-facing summary
+    buckets: Dict[str, List[str]] = {"ALL": dates}
     for d in dates:
         y = _year_of(d)
         buckets.setdefault(str(y), []).append(d)
+
+    if "ALL" in buckets:
+        years_only = {k: v for k, v in buckets.items() if k != "ALL"}
+        out = {"ALL": buckets["ALL"]}
+        out.update(dict(sorted(years_only.items())))
+        return out
+
     return dict(sorted(buckets.items()))
 
 
@@ -204,6 +215,15 @@ def run_features(
 
     include_lr = bool(getattr(eval_cfg, "feat_include_lr", True))
 
+    FEATURES_COLUMNS = [
+        "group",
+        "GEN_vs_HR_A", "GEN_vs_HR_S", "GEN_vs_HR_L", "GEN_vs_HR_SAL",
+        "LR_vs_HR_A", "LR_vs_HR_S", "LR_vs_HR_L", "LR_vs_HR_SAL",
+        "GEN_ENS_mean_vs_HR_A", "GEN_ENS_mean_vs_HR_S", "GEN_ENS_mean_vs_HR_L", "GEN_ENS_mean_vs_HR_SAL",
+        "GEN_ENS_std_A", "GEN_ENS_std_S", "GEN_ENS_std_L", "GEN_ENS_std_SAL",
+    ]
+    feature_rows: list[dict] = []
+
     # All available dates and grouping
     all_dates: List[str] = list(resolver.list_dates())
     if not all_dates:
@@ -321,5 +341,45 @@ def run_features(
         save_dict = {k: np.asarray(v) for k, v in sal_metrics.items()}
         np.savez_compressed(tables_dir / f"sal_{gname}.npz", **save_dict)
 
+        # --- Collect core SAL metrics summary row (written once after loop) ---
+        def _flatten_sal_dict(prefix, d):
+            flat = {}
+            for k, v in d.items():
+                if isinstance(v, dict):
+                    for kk, vv in v.items():
+                        flat[f"{prefix}_{k}_{kk}"] = vv
+                else:
+                    flat[f"{prefix}_{k}"] = v
+            return flat
+
+        row = {"group": gname}
+
+        # PMM / deterministic
+        if "GEN_vs_HR" in sal_metrics:
+            row.update(_flatten_sal_dict("GEN", {"vs_HR": sal_metrics["GEN_vs_HR"]}))
+
+        if include_lr and "LR_vs_HR" in sal_metrics:
+            row.update(_flatten_sal_dict("LR", {"vs_HR": sal_metrics["LR_vs_HR"]}))
+
+        # Ensemble summaries
+        if "GEN_ENS_vs_HR" in sal_metrics:
+            row.update(_flatten_sal_dict("GEN_ENS_mean", {"vs_HR": sal_metrics["GEN_ENS_vs_HR"]}))
+        if "GEN_ENS_std" in sal_metrics:
+            row.update(_flatten_sal_dict("GEN_ENS_std", sal_metrics["GEN_ENS_std"]))
+
+        for col in FEATURES_COLUMNS:
+            row.setdefault(col, np.nan)
+        feature_rows.append(row)
+
         if make_plots:
             plot_features_all(figs_dir, gname, sal_metrics)
+
+
+    # Write stable paper-facing SAL summary once per run.
+    import csv
+    csv_path = tables_dir / "features_core_metrics.csv"
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=FEATURES_COLUMNS)
+        writer.writeheader()
+        for row in feature_rows:
+            writer.writerow(row)

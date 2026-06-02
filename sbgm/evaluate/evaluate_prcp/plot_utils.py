@@ -18,13 +18,19 @@ def _ensure_dir(path: Path) -> Path:
 
 def _savefig(fig, out_path: Path, dpi: int = 300):
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
+    try:
+        fig.tight_layout()
+    except Exception:
+        pass
     fig.savefig(out_path, dpi=dpi)
+    logger.debug(f"[plot_utils] Saved figure → {out_path}")
     plt.close(fig)
 
 
 def _nice():
-    # lightweight, you can override with your global style later
+    # lightweight styling; only apply once to avoid repeated global overrides
+    if getattr(_nice, "_applied", False):
+        return
     plt.rcParams.update({
         "figure.figsize": (5.5, 4.0),
         "axes.grid": True,
@@ -34,15 +40,16 @@ def _nice():
         "axes.spines.right": False,
         "font.size": 10,
     })
+    _nice._applied = True
 
 def _to_date_safe(s: str) -> Optional[datetime]:
-    s = s.strip()
-    # accept "YYYY-MM-DD" and "YYYYMMDD"
+    s_clean = s.strip()
     try:
-        if len(s) == 8 and s.isdigit():
-            return datetime.strptime(s, "%Y%m%d")
-        return datetime.fromisoformat(s)
+        if len(s_clean) == 8 and s_clean.isdigit():
+            return datetime.strptime(s_clean, "%Y%m%d")
+        return datetime.fromisoformat(s_clean)
     except Exception:
+        logger.debug(f"[plot_utils] Failed to parse date: {s}")
         return None
 
 

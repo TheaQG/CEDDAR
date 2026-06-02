@@ -11,7 +11,7 @@ from sbgm.evaluate.evaluate_prcp.eval_extremes.metrics_extremes import (
     percentiles_and_wetfreq, SeriesBundle, pooled_pixel_percentiles_and_wetfreq,
     pooled_wet_hit_rate, build_daily_series_ensemble, pooled_pixel_percentiles_and_wetfreq_ens,
     pooled_wet_hit_rate_ens, pooled_wet_hit_rate_ens_member_mean, percentiles_and_wetfreq_ens_member_mean,
-    _p_label
+    percentiles_and_wetfreq_ens_member_mean_std, _p_label
 )
 from sbgm.evaluate.evaluate_prcp.eval_extremes.plot_extremes import plot_extremes
 
@@ -21,6 +21,43 @@ def _ensure_dir(p: Path) -> Path:
     p.mkdir(parents=True, exist_ok=True)
     return p
 
+def _safe_float_str(x) -> str:
+    try:
+        v = float(x)
+        if np.isfinite(v):
+            return f"{v:.6f}"
+    except Exception:
+        pass
+    return ""
+
+
+def _safe_int_str(x) -> str:
+    try:
+        return str(int(x))
+    except Exception:
+        return ""
+
+
+def _append_core_metric_row(rows: list[str], which: str, metrics: dict) -> None:
+    rows.append(
+        ",".join([
+            which,
+            _safe_float_str(metrics.get("p99")),
+            _safe_float_str(metrics.get("p99_9")),
+            _safe_float_str(metrics.get("rx1day")),
+            _safe_float_str(metrics.get("rx5day")),
+            _safe_float_str(metrics.get("wet_freq")),
+            _safe_float_str(metrics.get("wet_hit_rate")),
+            _safe_int_str(metrics.get("n")),
+            _safe_float_str(metrics.get("p99_std")),
+            _safe_float_str(metrics.get("p99_9_std")),
+            _safe_float_str(metrics.get("rx1day_std")),
+            _safe_float_str(metrics.get("rx5day_std")),
+            _safe_float_str(metrics.get("wet_freq_std")),
+            _safe_float_str(metrics.get("wet_hit_rate_std")),
+            _safe_int_str(metrics.get("n_members")),
+        ])
+    )
 
 def run_extremes(
     resolver,
@@ -168,6 +205,10 @@ def run_extremes(
                 f"HR nans: {np.isnan(sb.hr).sum()}, GEN nans: {np.isnan(sb.gen).sum()}" +
                 (f", LR nans: {np.isnan(sb.lr).sum()}" if sb.lr is not None else "")
                )
+    core_metrics_rows = [
+        "which,p99,p99_9,rx1day,rx5day,wet_freq,wet_hit_rate,n,p99_std,p99_9_std,rx1day_std,rx5day_std,wet_freq_std,wet_hit_rate_std,n_members"
+    ]
+    rxk_core: Dict[str, Dict[str, float]] = {}
 
     np.savez_compressed(
         tables / "ext_daily_series.npz",
@@ -194,6 +235,7 @@ def run_extremes(
                     ",".join([f"rl_{int(r)}y" for r in gev_rps]) + "," +
                     ",".join([f"rl_{int(r)}y_lo" for r in gev_rps]) + "," +
                     ",".join([f"rl_{int(r)}y_hi" for r in gev_rps])]
+
         for which, series in series_list:
             for k in rxks:
                 rx = rxk_from_series(series, k=k, block_id=block_id)
@@ -207,6 +249,7 @@ def run_extremes(
                         [f"{v:.6f}" for v in fit["rl_lo"]] + \
                         [f"{v:.6f}" for v in fit["rl_hi"]]
                     gev_rows.append(",".join(row))
+                    rxk_core.setdefault(which, {})[f"rx{int(k)}day"] = float(fit["rl"][0])
                 except Exception as e:
                     logger.warning(f"[extremes] GEV failed for {which} Rx{k}: {e}")
         # ---- Save ensemble uncertainty bands for Rxk/GEV ----                
@@ -239,6 +282,9 @@ def run_extremes(
                         [f"{v:.6f}" for v in rl_lo] + \
                         [f"{v:.6f}" for v in rl_hi]
                     gev_rows.append(",".join(row))
+                    rxk_core.setdefault("GEN_ENS", {})[f"rx{int(k)}day"] = float(rl_mean[0])
+                    rxk_core.setdefault("GEN_ENS", {})[f"rx{int(k)}day_std"] = float(rl_std[0])
+                    rxk_core.setdefault("GEN_ENS", {})["n_members"] = int(rls.shape[0])
                     # store per-k stats (keyed by k)
                     gev_ens_stats[f"rl_mean_rx{k}"] = np.array(rl_mean, dtype=float)
                     gev_ens_stats[f"rl_p10_rx{k}"]  = np.array(rl_lo, dtype=float)
@@ -345,6 +391,7 @@ def run_extremes(
         p_labels = [_p_label(p) for p in tail_ps]
         tails_header = "which," + ",".join(p_labels) + ",wet_freq,wet_hit_rate,n_days"
         tails_rows = [tails_header]
+        tails_core: Dict[str, Dict[str, float]] = {}
 
         # Optional uncertainty table for ablation comparisons (kept separate to avoid breaking ext_tails.csv parsing)
         tails_uq_header = "which," + ",".join([f"{lab}_std" for lab in p_labels]) + ",wet_freq_std,wet_hit_rate_std,n_members"
@@ -378,6 +425,13 @@ def run_extremes(
                         str(int(pooled[which]['n_points']))
                     ]
                 ))
+                tails_core[which] = {
+                    "p99": float(pooled[which].get("P99", np.nan)),
+                    "p99_9": float(pooled[which].get("P99.9", np.nan)),
+                    "wet_freq": float(pooled[which].get("wet_freq", np.nan)),
+                    "wet_hit_rate": float(wet_hit),
+                    "n": int(pooled[which].get("n_points", 0)),
+                }
             if ens_sb is not None:
                 ens_pool = percentiles_and_wetfreq_ens_member_mean(
                     resolver, dates, mask_hw=resolver.load_mask(dates[0]),
@@ -398,6 +452,13 @@ def run_extremes(
                             f"{ens_pool['wet_freq']:.6f}", f"{ens_hit:.6f}", str(int(ens_pool['n_points']))
                         ]
                     ))
+                    tails_core["GEN_ENS"] = {
+                        "p99": float(ens_pool.get("P99", np.nan)),
+                        "p99_9": float(ens_pool.get("P99.9", np.nan)),
+                        "wet_freq": float(ens_pool.get("wet_freq", np.nan)),
+                        "wet_hit_rate": float(ens_hit),
+                        "n": int(ens_pool.get("n_points", 0)),
+                    }
                     # Also compute std for hit-rate and persist stds for plotting error bars
                     from sbgm.evaluate.evaluate_prcp.eval_extremes.metrics_extremes import pooled_wet_hit_rate_ens_member_stats
                     hit_mean, hit_std = pooled_wet_hit_rate_ens_member_stats(
@@ -420,6 +481,11 @@ def run_extremes(
                                 str(nm),
                             ]
                         ))
+                        tails_core.setdefault("GEN_ENS", {})["p99_std"] = float(ens_pool.get("P99_std", np.nan))
+                        tails_core.setdefault("GEN_ENS", {})["p99_9_std"] = float(ens_pool.get("P99.9_std", np.nan))
+                        tails_core.setdefault("GEN_ENS", {})["wet_freq_std"] = float(wet_std) if np.isfinite(wet_std) else np.nan
+                        tails_core.setdefault("GEN_ENS", {})["wet_hit_rate_std"] = float(hit_std) if np.isfinite(hit_std) else np.nan
+                        tails_core.setdefault("GEN_ENS", {})["n_members"] = int(nm)
                     except Exception as e_uq:
                         logger.warning(f"[extremes] Could not append tails uncertainty row: {e_uq}")
                     try:                    
@@ -450,10 +516,82 @@ def run_extremes(
                         f"{t['wet_freq']:.6f}", f"{wet_hit:.6f}", str(int(t['n_days']))
                     ]
                 ))
+                tails_core[which] = {
+                    "p99": float(t.get("P99", np.nan)),
+                    "p99_9": float(t.get("P99.9", np.nan)),
+                    "wet_freq": float(t.get("wet_freq", np.nan)),
+                    "wet_hit_rate": float(wet_hit),
+                    "n": int(t.get("n_days", 0)),
+                }
+
+            if ens_sb is not None:
+                try:
+                    ens_mean = percentiles_and_wetfreq_ens_member_mean(
+                        resolver, dates, mask_hw=resolver.load_mask(dates[0]),
+                        wet_thr=wet_thr, p_list=tail_ps,
+                        n_members=getattr(eval_cfg, "ensemble_n_members", None),
+                        seed=int(getattr(eval_cfg, "ensemble_member_seed", 1234)),
+                    )
+                    ens_std = percentiles_and_wetfreq_ens_member_mean_std(
+                        resolver, dates, mask_hw=resolver.load_mask(dates[0]),
+                        wet_thr=wet_thr, p_list=tail_ps,
+                        n_members=getattr(eval_cfg, "ensemble_n_members", None),
+                        seed=int(getattr(eval_cfg, "ensemble_member_seed", 1234)),
+                    )
+                    ens_hit = pooled_wet_hit_rate_ens_member_mean(
+                        resolver, dates, mask_hw=resolver.load_mask(dates[0]),
+                        wet_thr=wet_thr,
+                        n_members=getattr(eval_cfg, "ensemble_n_members", None),
+                        seed=int(getattr(eval_cfg, "ensemble_member_seed", 1234)),
+                    )
+                    from sbgm.evaluate.evaluate_prcp.eval_extremes.metrics_extremes import pooled_wet_hit_rate_ens_member_stats
+                    _, hit_std = pooled_wet_hit_rate_ens_member_stats(
+                        resolver, dates, mask_hw=resolver.load_mask(dates[0]),
+                        wet_thr=wet_thr,
+                        n_members=getattr(eval_cfg, "ensemble_n_members", None),
+                        seed=int(getattr(eval_cfg, "ensemble_member_seed", 1234)),
+                    )
+                    nm = int(getattr(ens_sb, "gen_members").shape[0])
+                    tails_core["GEN_ENS"] = {
+                        "p99": float(ens_mean.get("P99", np.nan)),
+                        "p99_9": float(ens_mean.get("P99.9", np.nan)),
+                        "wet_freq": float(ens_mean.get("wet_freq", np.nan)),
+                        "wet_hit_rate": float(ens_hit),
+                        "n": int(ens_mean.get("n_days", 0)),
+                        "p99_std": float(ens_std.get("P99", np.nan)),
+                        "p99_9_std": float(ens_std.get("P99.9", np.nan)),
+                        "wet_freq_std": float(ens_std.get("wet_freq", np.nan)),
+                        "wet_hit_rate_std": float(hit_std) if np.isfinite(hit_std) else np.nan,
+                        "n_members": nm,
+                    }
+                    perc_vals_ens = [f"{ens_mean[label]:.6f}" for label in p_labels]
+                    tails_rows.append(",".join(
+                        ["GEN_ENS"] + perc_vals_ens + [
+                            f"{ens_mean['wet_freq']:.6f}",
+                            f"{ens_hit:.6f}",
+                            str(int(ens_mean['n_points'])) if 'n_points' in ens_mean else str(int(ens_mean.get('n_days', 0))),
+                        ]
+                    ))
+                    tails_uq_rows.append(",".join(
+                        ["GEN_ENS"] +
+                        [f"{float(ens_std.get(label, np.nan)):.6f}" if np.isfinite(ens_std.get(label, np.nan)) else "" for label in p_labels] +
+                        [
+                            (f"{float(ens_std.get('wet_freq', np.nan)):.6f}" if np.isfinite(ens_std.get('wet_freq', np.nan)) else ""),
+                            (f"{float(hit_std):.6f}" if np.isfinite(hit_std) else ""),
+                            str(nm),
+                        ]
+                    ))
+                except Exception as e_ens_series:
+                    logger.warning(f"[extremes] Could not compute ensemble domain-series tail summary: {e_ens_series}")
         (tables / "ext_tails.csv").write_text("\n".join(tails_rows))
+        for which, vals in tails_core.items():
+            if which in rxk_core:
+                vals.update(rxk_core[which])
+            _append_core_metric_row(core_metrics_rows, which, vals)
         # Write uncertainty CSV for ensemble tails if any rows
         if len(tails_uq_rows) > 1:
             (tables / "ext_tails_uncertainty.csv").write_text("\n".join(tails_uq_rows))
+        (tables / "ext_core_metrics.csv").write_text("\n".join(core_metrics_rows))
     else:
         logger.info("[extremes] Skipping tails since 'tails' not in task_list.")
 

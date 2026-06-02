@@ -12,6 +12,8 @@ from sbgm.evaluate.evaluate_prcp.eval_scale.metrics_scale import (
     compute_fss_at_scales,
     compute_iss_at_scales,
     align_psd_on_k,
+    fit_loglog_psd_slope,
+    compute_bandpass_filtered_correlation,
 )
 
 from sbgm.evaluate.evaluate_prcp.eval_scale.plot_scale import (
@@ -73,7 +75,18 @@ def run_scale(
     compute_lr_iss: bool = bool(getattr(eval_cfg, "compute_lr_iss", compute_lr_fss))
 
     low_k_max: float = float(getattr(eval_cfg, "low_k_max", 1.0 / 200.0))
-    high_k_min: float = float(getattr(eval_cfg, "high_k_min", 1.0 / 20.0))
+    # Default to continuous bands unless explicitly overridden in config:
+    #   low  = [0, low_k_max]          -> λ >= 200 km by default
+    #   mid  = [mid_k_min, mid_k_max]  -> 200 km down to 20 km by default
+    #   high = [high_k_min, inf)       -> λ <= 20 km by default
+    # with mid starting where low ends, and high starting where mid ends.
+    mid_k_min_cfg = getattr(eval_cfg, "mid_k_min", None)
+    mid_k_max_cfg = getattr(eval_cfg, "mid_k_max", None)
+    high_k_min_cfg = getattr(eval_cfg, "high_k_min", None)
+
+    mid_k_min: float = float(mid_k_min_cfg) if mid_k_min_cfg is not None else low_k_max
+    mid_k_max: float = float(mid_k_max_cfg) if mid_k_max_cfg is not None else (1.0 / 20.0)
+    high_k_min: float = float(high_k_min_cfg) if high_k_min_cfg is not None else mid_k_max
 
     # --- ensemble switches (optional) ---
     use_ensemble: bool = bool(getattr(eval_cfg, "use_ensemble", True))
@@ -81,6 +94,12 @@ def run_scale(
     ensemble_member_seed = int(getattr(eval_cfg, "ensemble_member_seed", 1234))
 
     logger.info(f"[eval_scale] use_ensemble={use_ensemble}, n_members={ensemble_n_members}, seed={ensemble_member_seed}")
+
+    scale_bands: Dict[str, tuple[float | None, float | None]] = {
+        "low": (0.0, low_k_max),
+        "mid": (mid_k_min, mid_k_max),
+        "high": (high_k_min, None),
+    }
 
     dates: List[str] = list(resolver.list_dates())
     if not dates:
@@ -129,6 +148,8 @@ def run_scale(
     # Ensemble summaries (per (thr, scale) collect member means per day → then grand mean/std)
     fss_ens_store: Dict[tuple[float, float], List[float]] = {}
     iss_ens_store: Dict[tuple[float, float], List[float]] = {}
+
+    band_corr_store: Dict[str, List[float]] = {k: [] for k in scale_bands.keys()}
 
     # ================================================================================
     # 3. Loop over dates
@@ -246,6 +267,22 @@ def run_scale(
                 logger.warning(
                     f"[eval_scale] LR for {d} has shape {orig_shape} -> coerced to {tuple(lr.shape)} "
                     f"but still != HR shape {(H, W)}. Will use it for PSD (with lr_dx_km) but SKIP LR FSS/ISS baseline.")
+
+        # GEN↔LR band-pass filtered correlations on the common HR grid.
+        if lr_for_fss is not None:
+            try:
+                corr_dict = compute_bandpass_filtered_correlation(
+                    gen,
+                    lr_for_fss,
+                    dx_km=hr_dx_km,
+                    bands=scale_bands,
+                    mask_2d=mask,
+                )
+                for band_name, corr_val in corr_dict.items():
+                    if np.isfinite(corr_val):
+                        band_corr_store.setdefault(band_name, []).append(float(corr_val))
+            except Exception as e_corr:
+                logger.warning(f"[eval_scale] Failed GEN↔LR band-pass correlation for {d}: {e_corr}")
 
         # ================================================================================
         # 3a. PSD computation and comparison
@@ -525,6 +562,34 @@ def run_scale(
             dates=np.array(dates, dtype="U"),
             lr_nyquist=np.array(0.0 if lr_nyquist is None else lr_nyquist),
         )
+
+        # Three-band PSD slope summary on the aggregated mean curves.
+        psd_slopes_lines = ["which,band,kmin,kmax,slope,intercept,r2,n_points"]
+        curve_map = {
+            "HR": psd_hr_arr.mean(axis=0),
+            "GEN": psd_gen_arr.mean(axis=0),
+        }
+        if psd_have_lr:
+            curve_map["LR"] = psd_lr_arr.mean(axis=0)
+            curve_map["LR_HRGRID"] = psd_lr_hr_arr.mean(axis=0)
+
+        for which_name, psd_vals in curve_map.items():
+            for band_name, (kmin, kmax) in scale_bands.items():
+                kmin_eff = 0.0 if kmin is None else float(kmin)
+                kmax_eff = float(np.max(k_ref)) if kmax is None else float(kmax)
+                fit = fit_loglog_psd_slope(k_ref, psd_vals, kmin=kmin_eff, kmax=kmax_eff)
+                psd_slopes_lines.append(",".join([
+                    which_name,
+                    band_name,
+                    f"{kmin_eff:.8f}",
+                    f"{kmax_eff:.8f}",
+                    f"{fit['slope']:.6f}" if np.isfinite(fit['slope']) else "",
+                    f"{fit['intercept']:.6f}" if np.isfinite(fit['intercept']) else "",
+                    f"{fit['r2']:.6f}" if np.isfinite(fit['r2']) else "",
+                    str(int(fit['n_points'])),
+                ]))
+        (tables_dir / "scale_psd_slopes_3band.csv").write_text("\n".join(psd_slopes_lines))
+
     if use_ensemble:
         logger.info(
             f"[eval_scale] Ensemble availability: ok={ens_dates_ok}, badshape={ens_dates_badshape}, missing={ens_dates_missing} (out of {len(dates)} dates)")
@@ -558,6 +623,25 @@ def run_scale(
             psd_gen_ens_ci_lo=gen_ens_ci_lo, # [K]
             psd_gen_ens_ci_hi=gen_ens_ci_hi, # [K]
         )
+
+        # Append three-band slopes for ensemble-mean PSD.
+        psd_slopes_path = tables_dir / "scale_psd_slopes_3band.csv"
+        if psd_slopes_path.exists():
+            with open(psd_slopes_path, "a") as f:
+                for band_name, (kmin, kmax) in scale_bands.items():
+                    kmin_eff = 0.0 if kmin is None else float(kmin)
+                    kmax_eff = float(np.max(k_ref)) if kmax is None else float(kmax)
+                    fit = fit_loglog_psd_slope(k_ref, gen_ens_mean, kmin=kmin_eff, kmax=kmax_eff)
+                    f.write("\n" + ",".join([
+                        "GEN_ENS_MEAN",
+                        band_name,
+                        f"{kmin_eff:.8f}",
+                        f"{kmax_eff:.8f}",
+                        f"{fit['slope']:.6f}" if np.isfinite(fit['slope']) else "",
+                        f"{fit['intercept']:.6f}" if np.isfinite(fit['intercept']) else "",
+                        f"{fit['r2']:.6f}" if np.isfinite(fit['r2']) else "",
+                        str(int(fit['n_points'])),
+                    ]))
 
     (tables_dir / "scale_fss_daily.csv").write_text("\n".join(fss_lines))
     (tables_dir / "scale_iss_daily.csv").write_text("\n".join(iss_lines))
@@ -674,6 +758,19 @@ def run_scale(
         iss_summ_lines.append(",".join(row))
     (tables_dir / "scale_iss_summary.csv").write_text("\n".join(iss_summ_lines))
 
+    # GEN↔LR band-pass filtered correlation summary.
+    band_corr_lines = ["pair,band,corr_mean,corr_std,n_dates"]
+    for band_name in ("low", "mid", "high"):
+        vals = np.asarray(band_corr_store.get(band_name, []), dtype=float)
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            band_corr_lines.append(f"GEN_vs_LR,{band_name},,,0")
+        else:
+            mean_v = float(vals.mean())
+            std_v = float(vals.std(ddof=1)) if vals.size > 1 else 0.0
+            band_corr_lines.append(f"GEN_vs_LR,{band_name},{mean_v:.6f},{std_v:.6f},{int(vals.size)}")
+    (tables_dir / "scale_bandpass_corr_avg.csv").write_text("\n".join(band_corr_lines))
+
     # --- Compact overview table across metrics ---
     try:
         import statistics as _st
@@ -705,7 +802,8 @@ def run_scale(
                 overview.append(f"ISS_ens,mean,{_st.mean(all_ens):.6f}")
         # pointers to PSD summaries (written by plotter)
         overview.append("PSD,band_ratio_csv,scale_psd_band_ratios_avg.csv")
-        overview.append("PSD,slopes_csv,scale_psd_slopes_avg.csv")
+        overview.append("PSD,slopes_csv,scale_psd_slopes_3band.csv")
+        overview.append("CORR,bandpass_csv,scale_bandpass_corr_avg.csv")
         (tables_dir / "scale_overview.csv").write_text("\n".join(overview))
     except Exception as e:
         logger.warning(f"[eval_scale] Failed to write overview CSV: {e}")

@@ -20,7 +20,7 @@
 
 from __future__ import annotations
 from pathlib import Path
-from typing import Optional, Sequence, Dict, Tuple
+from typing import Optional, Sequence, Dict, Tuple, Any
 
 import numpy as np
 import torch
@@ -521,4 +521,135 @@ def compare_psd_triplet(
     out["low_k_max"] = float(low_k_max)
     out["high_k_min"] = float(high_k_min)
 
+    return out
+
+# ================================================================================
+# 2c. Three-band PSD slopes and band-pass correlations
+# ================================================================================
+
+def fit_loglog_psd_slope(
+    k: np.ndarray,
+    psd: np.ndarray,
+    *,
+    kmin: float,
+    kmax: float,
+) -> Dict[str, Any]:
+    """Fit slope of log10(PSD) vs log10(k) within a frequency band."""
+    k = np.asarray(k, dtype=float)
+    psd = np.asarray(psd, dtype=float)
+    m = (
+        np.isfinite(k)
+        & np.isfinite(psd)
+        & (k > 0.0)
+        & (psd > 0.0)
+        & (k >= float(kmin))
+        & (k <= float(kmax))
+    )
+    n = int(np.count_nonzero(m))
+    if n < 2:
+        return {"slope": np.nan, "intercept": np.nan, "r2": np.nan, "n_points": n}
+
+    x = np.log10(k[m])
+    y = np.log10(psd[m])
+    slope, intercept = np.polyfit(x, y, 1)
+    y_hat = slope * x + intercept
+    ss_res = float(np.sum((y - y_hat) ** 2))
+    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+    r2 = np.nan if ss_tot <= 0.0 else 1.0 - ss_res / ss_tot
+    return {
+        "slope": float(slope),
+        "intercept": float(intercept),
+        "r2": float(r2) if np.isfinite(r2) else np.nan,
+        "n_points": n,
+    }
+
+
+@torch.no_grad()
+def bandpass_filter_fft_2d(
+    field_2d: torch.Tensor | np.ndarray,
+    *,
+    dx_km: float,
+    kmin: float | None = None,
+    kmax: float | None = None,
+) -> torch.Tensor:
+    """Ideal FFT band-pass filter on a 2D field using isotropic radial wavenumber."""
+    x = torch.as_tensor(field_2d, dtype=torch.float32)
+    while x.dim() > 2 and x.shape[0] == 1:
+        x = x.squeeze(0)
+    if x.dim() != 2:
+        raise ValueError(f"bandpass_filter_fft_2d expects [H,W], got {tuple(x.shape)}")
+
+    H, W = x.shape
+    device = x.device
+    ky = torch.fft.fftfreq(H, d=dx_km, device=device)
+    kx = torch.fft.fftfreq(W, d=dx_km, device=device)
+    Ky, Kx = torch.meshgrid(ky, kx, indexing="ij")
+    Kr = torch.sqrt(Kx ** 2 + Ky ** 2)
+
+    keep = torch.ones_like(Kr, dtype=torch.bool)
+    if kmin is not None:
+        keep &= (Kr >= float(kmin))
+    if kmax is not None:
+        keep &= (Kr <= float(kmax))
+
+    X = torch.fft.fft2(x)
+    X = X * keep
+    y = torch.fft.ifft2(X).real
+    return y
+
+
+@torch.no_grad()
+def masked_pattern_correlation(
+    a: torch.Tensor | np.ndarray,
+    b: torch.Tensor | np.ndarray,
+    *,
+    mask_2d: torch.Tensor | np.ndarray | None = None,
+) -> float:
+    """Pearson correlation between two 2D fields with optional mask."""
+    a_t = torch.as_tensor(a, dtype=torch.float32)
+    b_t = torch.as_tensor(b, dtype=torch.float32)
+    while a_t.dim() > 2 and a_t.shape[0] == 1:
+        a_t = a_t.squeeze(0)
+    while b_t.dim() > 2 and b_t.shape[0] == 1:
+        b_t = b_t.squeeze(0)
+    if a_t.shape != b_t.shape or a_t.dim() != 2:
+        raise ValueError(f"masked_pattern_correlation expects matching [H,W] fields, got {tuple(a_t.shape)} and {tuple(b_t.shape)}")
+
+    valid = torch.isfinite(a_t) & torch.isfinite(b_t)
+    if mask_2d is not None:
+        m = torch.as_tensor(mask_2d, dtype=torch.bool)
+        while m.dim() > 2 and m.shape[0] == 1:
+            m = m.squeeze(0)
+        if m.shape == a_t.shape:
+            valid &= m
+
+    if int(valid.sum().item()) < 3:
+        return float("nan")
+
+    av = a_t[valid]
+    bv = b_t[valid]
+    av = av - av.mean()
+    bv = bv - bv.mean()
+    denom = torch.sqrt((av ** 2).sum() * (bv ** 2).sum())
+    if not torch.isfinite(denom) or float(denom.item()) <= 0.0:
+        return float("nan")
+    corr = (av * bv).sum() / denom
+    return float(corr.item())
+
+
+@torch.no_grad()
+def compute_bandpass_filtered_correlation(
+    gen_2d: torch.Tensor | np.ndarray,
+    lr_2d: torch.Tensor | np.ndarray,
+    *,
+    dx_km: float,
+    bands: Dict[str, Tuple[float | None, float | None]],
+    mask_2d: torch.Tensor | np.ndarray | None = None,
+) -> Dict[str, float]:
+    """Compute GEN↔LR correlations after band-pass filtering in each band."""
+    out: Dict[str, float] = {}
+    for band_name, (kmin, kmax) in bands.items():
+        gen_f = bandpass_filter_fft_2d(gen_2d, dx_km=dx_km, kmin=kmin, kmax=kmax)
+        lr_f = bandpass_filter_fft_2d(lr_2d, dx_km=dx_km, kmin=kmin, kmax=kmax)
+        out[band_name] = masked_pattern_correlation(gen_f, lr_f, mask_2d=mask_2d)
     return out

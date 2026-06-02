@@ -663,6 +663,38 @@ def run_probabilistic(
     ])
     # Write CSV and a human-readable TXT
     (tables_dir / "prob_summary.csv").write_text("\n".join([",".join(r) for r in summary_rows]))
+    # --- Compact paper-facing probabilistic summary table ---
+    prob_core_rows = [
+        [
+            "which",
+            "crps_mean",
+            "crps_std",
+            "pit_ks_D",
+            "pit_n",
+            "pmm_mae_mean",
+            "pmm_mae_std",
+            "spread_skill_slope",
+            "spread_skill_pearson_r",
+            "rankhist_max_abs_z",
+            "spatial_crps_land_mean",
+            "n_dates",
+        ],
+        [
+            "GEN_ENS",
+            f"{_mm(crps_daily):.6f}",
+            f"{_ss(crps_daily):.6f}",
+            f"{pit_KS_D:.6f}",
+            f"{int(pit_all.size)}",
+            f"{_mm(pmm_daily):.6f}" if pmm_daily.size else "",
+            f"{_ss(pmm_daily):.6f}" if pmm_daily.size else "",
+            f"{ss_slope:.6f}",
+            f"{ss_r:.6f}",
+            f"{rank_max_abs_z:.6f}",
+            f"{overall_spatial_crps_mean:.6f}",
+            f"{N_dates}",
+        ],
+    ]
+    (tables_dir / "prob_core_metrics.csv").write_text("\n".join([",".join(r) for r in prob_core_rows]))
     (tables_dir / "prob_summary.txt").write_text(
         "Probabilistic evaluation summary\n"
         f"N_dates: {N_dates}\n"

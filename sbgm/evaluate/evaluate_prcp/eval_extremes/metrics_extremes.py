@@ -650,6 +650,39 @@ def percentiles_and_wetfreq_ens_member_mean(resolver, dates, mask_hw=None, wet_t
     out["wet_freq_std"] = float(np.std(wets)) if wets else float("nan")
     return out
 
+def percentiles_and_wetfreq_ens_member_mean_std(resolver, dates, mask_hw=None, wet_thr=1.0, p_list=(95.0,99.0), n_members=None, seed=1234):
+    """Return std across ensemble members for pooled-pixel percentile and wet-frequency statistics.
+
+    This mirrors `percentiles_and_wetfreq_ens_member_mean(...)`, but returns only the
+    across-member standard deviations for each requested percentile and for wet frequency.
+    Keys match the non-suffixed labels used elsewhere, e.g. {"P99": std, "wet_freq": std}.
+    """
+    out = percentiles_and_wetfreq_ens_member_mean(
+        resolver,
+        dates,
+        mask_hw=mask_hw,
+        wet_thr=wet_thr,
+        p_list=p_list,
+        n_members=n_members,
+        seed=seed,
+    )
+    if out is None:
+        return None
+
+    std_out: Dict[str, Any] = {}
+    for p in p_list:
+        label = _p_label(p)
+        v = out.get(label + "_std", np.nan)
+        std_out[label] = float(v) if np.isfinite(v) else np.nan
+    v_w = out.get("wet_freq_std", np.nan)
+    std_out["wet_freq"] = float(v_w) if np.isfinite(v_w) else np.nan
+    if "n_points" in out:
+        try:
+            std_out["n_points"] = int(out["n_points"])
+        except Exception:
+            pass
+    return std_out
+
 def pooled_wet_hit_rate_ens_member_mean(resolver, dates, mask_hw=None, wet_thr=1.0, n_members=None, seed=1234):
     """Compute wet-hit rate per member vs HR, then average across members."""
     import torch

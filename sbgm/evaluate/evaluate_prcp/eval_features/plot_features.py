@@ -1,4 +1,3 @@
-# sbgm/evaluate/evaluate_prcp/eval_features/plot_features.py
 from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
@@ -59,7 +58,6 @@ def plot_features_all(figdir: Path, group: str, sal_metrics: dict) -> None:
     ax.legend(frameon=True)
     ax.grid(True, ls=":", alpha=0.6)
 
-    fig.tight_layout()
     _ensure_dir(figdir)
     _savefig(fig, figdir / f"features_sal_{group}.png", dpi=SET_DPI)
     plt.close(fig)

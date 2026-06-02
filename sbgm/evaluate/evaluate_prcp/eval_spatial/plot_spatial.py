@@ -53,29 +53,11 @@ def _draw_single(
 
     arr = np.asarray(data)
 
-    # If we have a DK land mask matching the field, we:
-    #  - compute/plot with a flipped version for consistent map orientation
-    #  - set ocean pixels to NaN so they don't affect the color scaling
-    #  - draw a light ocean background + hatch to emphasize land-only focus
-    mask_raw = None
-    mask_plot = None
-    if dk_mask is not None and dk_mask.shape == arr.shape:
-        mask_raw = dk_mask.astype(bool)
-        # Display orientation (matches imshow(origin="upper")): flip so north is up as in other figures
-        mask_plot = mask_raw
-        arr_plot = arr.astype(float, copy=False)
-        # ocean -> NaN (so colormap ignores it)
-        arr_plot[~mask_plot] = np.nan
-        # ocean background (orientation-safe): use imshow with the same origin as the data
-        # try:
-        #     ocean_plot = (~mask_plot).astype(float)
-        #     # show ocean as a light gray background; land stays transparent
-        #     ocean_plot[ocean_plot == 0] = np.nan
-        #     ax.imshow(ocean_plot, cmap=plt.get_cmap("Greys"), vmin=0.0, vmax=1.0, alpha=0.25) # type: ignore
-        # except Exception:
-        #     pass
-    else:
-        arr_plot = arr
+    # Display with the same north-up orientation as the DK outline.
+    # Do not force-mask the ocean here: when eval_land_only=True the ocean is
+    # already NaN in the saved arrays; when eval_land_only=False the ocean should
+    # remain visible.
+    arr_plot = np.flipud(arr.astype(float, copy=False))
 
     # Ensure NaNs are transparent so the ocean background shows through
     try:
@@ -93,17 +75,11 @@ def _draw_single(
     # Keep this so all spatial plots have the same orientation as elsewhere
     # ax.invert_yaxis()
 
-    if mask_plot is not None:
-        # Use the same orientation as the displayed image (origin="upper")
-        overlay_outline(ax, np.flipud(mask_plot))
-    elif dk_mask is not None:
+    if dk_mask is not None and dk_mask.shape == arr.shape:
         overlay_outline(ax, np.flipud(dk_mask))
 
     if add_stats:
-        if mask_plot is not None:
-            flat = arr_plot[mask_plot]
-        else:
-            flat = arr_plot.ravel()
+        flat = arr_plot.ravel()
         flat = flat[np.isfinite(flat)]
         if flat.size > 0:
             mu = float(np.nanmean(flat))
@@ -157,10 +133,10 @@ def plot_spatial_maps(eval_root: str | Path) -> None:
 
     for group, src_map in sorted(buckets.items()):
         # Load available sources (HR, EnsMean, EnsStd, LR)
-        npz_hr      = _load_npz(tables, f"spatial_hr_{group}")        if "hr"  in src_map else None
-        npz_ensmean = _load_npz(tables, f"spatial_ensmean_{group}")   if "ensmean" in src_map or "ens" in src_map else _load_npz(tables, f"spatial_ensmean_{group}")
-        npz_ensstd  = _load_npz(tables, f"spatial_ensstd_{group}")    if "ensstd"  in src_map or "ens" in src_map else _load_npz(tables, f"spatial_ensstd_{group}")
-        npz_lr      = _load_npz(tables, f"spatial_lr_{group}")        if "lr"  in src_map else None
+        npz_hr      = _load_npz(tables, f"spatial_hr_{group}")
+        npz_ensmean = _load_npz(tables, f"spatial_ensmean_{group}")
+        npz_ensstd  = _load_npz(tables, f"spatial_ensstd_{group}")
+        npz_lr      = _load_npz(tables, f"spatial_lr_{group}")
 
         for var in variables:
             arrs: List[np.ndarray] = []
@@ -187,10 +163,7 @@ def plot_spatial_maps(eval_root: str | Path) -> None:
                 if a is None:
                     continue
                 aa = np.asarray(a)
-                if dk_mask is not None and dk_mask.shape == aa.shape:
-                    vals = aa[dk_mask.astype(bool)]
-                else:
-                    vals = aa.reshape(-1)
+                vals = aa.reshape(-1)
                 vals = vals[np.isfinite(vals)]
                 if vals.size > 0:
                     stack_chunks.append(vals)

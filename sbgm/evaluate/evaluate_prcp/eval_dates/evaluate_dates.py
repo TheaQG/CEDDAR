@@ -86,5 +86,5 @@ def run_dates(
         n_members=int(n_members),
         cmap=str(cmap),
         percentile=float(percentile),
-        land_only=bool(land_only if hasattr(eval_cfg, "eval_land_only") else True),
+        land_only=bool(land_only),
     )

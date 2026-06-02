@@ -251,13 +251,11 @@ def plot_dates_montages(
     lr_cmap = base_cmap
 
     dk_outline = get_dk_lsm_outline()
-    # flip upside down for plotting
-    if dk_outline is not None:
-        dk_outline = np.flipud(dk_outline)
+    # Keep the original outline here; each panel is flipped explicitly before plotting.
 
     # --- ocean background styling (match dataset_tester look) ---
     # dk_outline is a boolean land mask; ocean is ~land.
-    ocean_mask = (~dk_outline) if (dk_outline is not None) else None
+    ocean_mask = (~dk_outline) if (dk_outline is not None and land_only) else None
 
     def _set_bad_transparent(cmap_obj):
         try:
@@ -269,14 +267,15 @@ def plot_dates_montages(
             pass
         return cmap_obj
 
-    # Use a transparent 'bad' color so NaNs (ocean when land_only=True) show the background.
-    hr_cmap = _set_bad_transparent(hr_cmap)
+    # Use a transparent 'bad' color only when land pixels are explicitly isolated.
+    if land_only:
+        hr_cmap = _set_bad_transparent(hr_cmap)
 
     def _draw_hatched_ocean(ax):
         if ocean_mask is None:
             return
         try:
-            m = ocean_mask.astype(int)
+            m = np.flipud(ocean_mask.astype(int))
             # light grey base
             ax.contourf(m, levels=[0.5, 1.5], colors=["#f3f3f3"], alpha=1.0)
             # hatch overlay
@@ -290,7 +289,7 @@ def plot_dates_montages(
         if ocean_mask is None:
             return
         try:
-            m = ocean_mask.astype(int)
+            m = np.flipud(ocean_mask.astype(int))
             ax.contourf(m, levels=[0.5, 1.5], colors=["#f3f3f3"], alpha=float(alpha))
         except Exception:
             return
@@ -369,20 +368,21 @@ def plot_dates_montages(
         def draw(ax, img, title, is_lr=False, metric_text: str | None = None):
             if img is None:
                 ax.axis("off"); return
+            
+            img_plot = img # np.flipud(np.asarray(img, dtype=float))
 
-            # Backgrounds:
-            # - HR + generated panels: hatched ocean (and NaNs are transparent via set_bad)
-            # - LR panel: keep full field visible but de-emphasize ocean with a light tint
-            if is_lr:
-                _draw_lr_ocean_tint(ax, alpha=0.35)
-            else:
-                _draw_hatched_ocean(ax)
+            # Backgrounds are only used when land_only=True.
+            if land_only:
+                if is_lr:
+                    _draw_lr_ocean_tint(ax, alpha=0.35)
+                else:
+                    _draw_hatched_ocean(ax)
 
             # Slight transparency for LR field to match the conditioning look
             alpha_img = 0.85 if is_lr else 1.0
 
             im = ax.imshow(
-                img,
+                img_plot,
                 origin="lower",
                 vmin=vmin,
                 vmax=vmax,
@@ -390,7 +390,8 @@ def plot_dates_montages(
                 alpha=alpha_img,
                 interpolation="nearest",
             )
-            overlay_outline(ax, dk_outline)
+            if dk_outline is not None and dk_outline.shape == img_plot.shape:
+                overlay_outline(ax, dk_outline)
             ax.set_xticks([]); ax.set_yticks([])
 
             if r == 0:
@@ -410,7 +411,15 @@ def plot_dates_montages(
                     bbox=dict(facecolor="white", alpha=0.70, edgecolor="none", pad=1.4),
                 )
 
-            _add_colorbar_and_boxplot(fig, ax, im, img, boxplot=True, ylim=(vmin, vmax), boxplot_mask=dk_outline)
+            _add_colorbar_and_boxplot(
+                fig,
+                ax,
+                im,
+                img_plot,
+                boxplot=True,
+                ylim=(vmin, vmax),
+                boxplot_mask=(np.flipud(dk_outline) if (land_only and dk_outline is not None and dk_outline.shape == img_plot.shape) else None),
+            )
 
         if include_lr:
             draw(axs[r, c], lr, "LR (ERA5)", is_lr=True); c += 1

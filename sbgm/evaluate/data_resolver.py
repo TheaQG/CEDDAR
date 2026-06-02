@@ -196,7 +196,7 @@ class EvalDataResolver:
             x = d[desired]
             chosen = desired
         elif desired is not None:
-            logger.info(f"[EvalDataResolver] Requested LR key '{desired}' not found in {p}; returning None to avoid wrong channel.")
+            logger.debug(f"[EvalDataResolver] Requested LR key '{desired}' not found in {p}; returning None to avoid wrong channel.")
             return None
         else:
             # no preference set → prefer canonical local LR, then explicit local/context variants,
@@ -207,10 +207,10 @@ class EvalDataResolver:
                     chosen = k
                     break
         if x is None:
-            logger.info(f"[EvalDataResolver] No LR arrays found in {p} for any of keys ['lr', 'lr_local', 'lr_context', 'lr_lrspace']; returning None to avoid wrong channel.")
+            logger.debug(f"[EvalDataResolver] No LR arrays found in {p} for any of keys ['lr', 'lr_local', 'lr_context', 'lr_lrspace']; returning None to avoid wrong channel.")
             return None
         if chosen is not None and chosen != self.lr_phys_key:
-            logger.info(f"[EvalDataResolver] Requested LR key '{self.lr_phys_key}' not found; using '{chosen}' instead for {date}")
+            logger.debug(f"[EvalDataResolver] Requested LR key '{self.lr_phys_key}' not found; using '{chosen}' instead for {date}")
 
         x_arr = np.asarray(x)
         # Guard against object arrays (commonly created if someone saved None into the npz)
@@ -300,6 +300,10 @@ class EvalDataResolver:
                     rm = rm.squeeze(0)
             if rm.shape == m.shape:
                 m = m & rm
+            else:
+                logger.warning(
+                    f"[EvalDataResolver] ROI mask shape {tuple(rm.shape)} does not match land-sea mask shape {tuple(m.shape)} for date {date}; skipping ROI intersection."
+                )
 
 
         return m

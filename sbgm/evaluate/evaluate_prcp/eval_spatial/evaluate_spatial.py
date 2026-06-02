@@ -39,6 +39,11 @@ def _season_of(d: str) -> str:
     if m in (6, 7, 8):  return "JJA"
     return "SON"
 
+def _n_years_in_dates(dates: Sequence[str]) -> int:
+    years = sorted({_year_of(d) for d in dates})
+    return max(1, len(years))
+
+
 # ---- ensemble loading helper ----
 def _load_members_for_date(resolver, date: str) -> List[torch.Tensor]:
     """
@@ -108,6 +113,8 @@ def run_spatial(
     rxk_days = tuple(getattr(eval_cfg, "spatial_rxk_days", (1, 5)))
     pct_list = tuple(getattr(eval_cfg, "spatial_percentiles", (95.0, 99.0)))
 
+    include_all_group = bool(getattr(eval_cfg, "spatial_include_all_group", True))
+
     # Loaders
     def loader(label: str):
         if label == "hr":
@@ -128,19 +135,32 @@ def run_spatial(
     def split_dates(dates: List[str]) -> Dict[str, List[str]]:
         if group_by == "all":
             return {"ALL": dates}
+
+        out: Dict[str, List[str]] = {}
+        if include_all_group:
+            out["ALL"] = list(dates)
+
         if group_by == "season":
-            out: Dict[str, List[str]] = {s: [] for s in seasons}
+            season_buckets: Dict[str, List[str]] = {s: [] for s in seasons if s != "ALL"}
             for d in dates:
                 s = _season_of(d)
-                if s in out:
-                    out[s].append(d)
-            return {s: out.get(s, []) for s in seasons if s in out}
+                if s in season_buckets:
+                    season_buckets[s].append(d)
+            for s in seasons:
+                if s == "ALL":
+                    continue
+                if s in season_buckets:
+                    out[s] = season_buckets[s]
+            return out
+
         # default: by year
-        buckets: Dict[str, List[str]] = {}
+        year_buckets: Dict[str, List[str]] = {}
         for d in dates:
             y = _year_of(d)
-            buckets.setdefault(str(y), []).append(d)
-        return dict(sorted(buckets.items()))
+            year_buckets.setdefault(str(y), []).append(d)
+        for y in sorted(year_buckets.keys()):
+            out[y] = year_buckets[y]
+        return out
 
     groups = split_dates(all_dates)
     logger.info("[spatial] Groups: %s", ", ".join(f"{k}({len(v)})" for k, v in groups.items()))
@@ -224,15 +244,26 @@ def run_spatial(
                     agg_mean[k] = torch.nanmean(stk, dim=0)
                     agg_std[k]  = torch.sqrt(torch.nanmean((stk - agg_mean[k])**2, dim=0))
 
+                if gname == "ALL" and "sum" in agg_mean:
+                    n_years = _n_years_in_dates(kept_dates)
+                    agg_mean["sum"] = agg_mean["sum"] / float(n_years)
+                    agg_std["sum"] = agg_std["sum"] / float(n_years)
+
                 save_maps_npz(tables_dir / f"spatial_ensmean_{gname}.npz", **agg_mean)
                 save_maps_npz(tables_dir / f"spatial_ensstd_{gname}.npz",  **agg_std)
+                sum_norm = (
+                    f"mean_annual_sum_over_{_n_years_in_dates(kept_dates)}_years"
+                    if gname == "ALL" else "raw_group_sum"
+                )
                 (tables_dir / f"spatial_ensmean_{gname}.meta.txt").write_text(
                     f"source=ensmean\ngroup={gname}\nn_days={len(kept_dates)}\nM={M}\n"
                     f"wet_thr_mm={wet_thr}\nrxk_days={list(rxk_days)}\npercentiles={list(pct_list)}\n"
+                    f"sum_normalization={sum_norm}\n"
                 )
                 (tables_dir / f"spatial_ensstd_{gname}.meta.txt").write_text(
                     f"source=ensstd\ngroup={gname}\nn_days={len(kept_dates)}\nM={M}\n"
                     f"wet_thr_mm={wet_thr}\nrxk_days={list(rxk_days)}\npercentiles={list(pct_list)}\n"
+                    f"sum_normalization={sum_norm}\n"
                 )
                 group_maps["ensmean"] = agg_mean
                 group_maps["ensstd"]  = agg_std
@@ -254,8 +285,17 @@ def run_spatial(
                 percentiles=pct_list,
                 rxk_days=rxk_days,
             )
+
+            if gname == "ALL" and "sum" in maps:
+                n_years = _n_years_in_dates(kept)
+                maps["sum"] = maps["sum"] / float(n_years)
+
             npz_path = tables_dir / f"spatial_{src}_{gname}.npz"
             save_maps_npz(npz_path, **maps)
+            sum_norm = (
+                f"mean_annual_sum_over_{_n_years_in_dates(kept)}_years"
+                if gname == "ALL" else "raw_group_sum"
+            )
             (tables_dir / f"spatial_{src}_{gname}.meta.txt").write_text(
                 f"source={src}\n"
                 f"group={gname}\n"
@@ -263,6 +303,7 @@ def run_spatial(
                 f"wet_thr_mm={wet_thr}\n"
                 f"rxk_days={list(rxk_days)}\n"
                 f"percentiles={list(pct_list)}\n"
+                f"sum_normalization={sum_norm}\n"
             )
             group_maps[src] = maps
 

@@ -6,6 +6,7 @@ import torch
 
 from sbgm.utils import get_model_string
 from sbgm.evaluate.evaluation import EvaluationConfig, EvaluationRunner
+from sbgm.evaluate.evaluation_summary.build_summary import build_and_write_summary
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,28 @@ def _default_eval_dir(cfg) -> Path:
     model_str = get_model_string(cfg)
     sample_root = cfg["paths"]["sample_dir"]
     return Path(sample_root) / "evaluation" / model_str
+
+
+def _normalize_run_dir(user_dir: str | Path | None, default_dir: Path, cfg) -> Path:
+    """Resolve a user-provided eval/gen directory to the model-specific run directory.
+
+    Behavior:
+      - if `user_dir` is None -> use `default_dir`
+      - if `user_dir` already points to the model-specific directory -> keep it
+      - otherwise treat `user_dir` as a base root and append the model string
+    """
+    if user_dir is None:
+        return default_dir
+
+    p = Path(user_dir)
+    model_str = get_model_string(cfg)
+
+    # Already model-specific.
+    if p.name == model_str:
+        return p
+
+    # Treat as base directory and append the model-specific run folder.
+    return p / model_str
 
 
 def evaluation_main(cfg):
@@ -51,6 +74,35 @@ def evaluation_main(cfg):
             return None
         return list(tl) if isinstance(tl, (list, tuple)) else None
 
+    def _summary_pillars_from_tasks(task_names: list[str]) -> list[str]:
+        mapping = {
+            "prcp_distributional": "distributional",
+            "prcp_extremes": "extremes",
+            "prcp_features": "features",
+            "prcp_scale": "scale",
+            "prcp_probabilistic": "probabilistic",
+            "prcp_spatial": "climatological",
+            "prcp_temporal": "temporal",
+            "prcp_dates": "dates",
+        }
+        out: list[str] = []
+        for t in task_names:
+            key = mapping.get(str(t).strip().lower())
+            if key is not None and key not in out:
+                out.append(key)
+        return out
+
+    def _attach_summary_paths(cfg_obj: dict, gen_root_path: Path, eval_root_path: Path) -> None:
+        cfg_obj["gen_root"] = str(gen_root_path)
+        cfg_obj["eval_root"] = str(eval_root_path)
+        cfg_obj["generated_root"] = str(gen_root_path)
+        cfg_obj["evaluation_root"] = str(eval_root_path)
+        paths = cfg_obj.setdefault("paths", {})
+        if isinstance(paths, dict):
+            paths["generation_dir"] = str(gen_root_path)
+            paths["generated_samples_dir"] = str(gen_root_path)
+            paths["evaluation_dir"] = str(eval_root_path)
+
     # standard flags
     do_prob = bool(fe.get("do_prob", True))
     do_scale = bool(fe.get("do_scale", True))
@@ -64,6 +116,11 @@ def evaluation_main(cfg):
     gen_dir = fe.get("gen_dir", None)
     eval_dir = fe.get("eval_dir", None)
 
+    # directories
+    gen_root = _normalize_run_dir(gen_dir, _default_gen_dir(cfg), cfg)
+    eval_root = _normalize_run_dir(eval_dir, _default_eval_dir(cfg), cfg)
+    eval_root.mkdir(parents=True, exist_ok=True)
+
     # seeds like old version
     seed = int(fe.get("seed", 1234))
     torch.manual_seed(seed)
@@ -72,11 +129,6 @@ def evaluation_main(cfg):
 
     # device is still read from your YAML
     device = torch.device(cfg["training"]["device"])
-
-    # directories
-    gen_root = Path(gen_dir) if gen_dir is not None else _default_gen_dir(cfg)
-    eval_root = Path(eval_dir) if eval_dir is not None else _default_eval_dir(cfg)
-    eval_root.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"[evaluation_main] gen_root: {gen_root}")
     logger.info(f"[evaluation_main] eval_root: {eval_root}")
@@ -277,6 +329,24 @@ def evaluation_main(cfg):
     )
 
     runner.run(tasks=tasks)
+
+    # Build a compact paper-oriented summary after the modular evaluation run.
+    write_summary = bool(fe.get("write_summary", True))
+    if write_summary:
+        try:
+            _attach_summary_paths(cfg, gen_root, eval_root)
+            summary_pillars = _summary_pillars_from_tasks(tasks)
+            if summary_pillars:
+                summary_out = build_and_write_summary(
+                    cfg=cfg,
+                    pillars=summary_pillars,
+                    out_path=eval_root / "summary" / "evaluation_summary.json",
+                )
+                logger.info(f"[evaluation_main] Wrote paper-oriented summary to: {summary_out}")
+            else:
+                logger.info("[evaluation_main] No summary-compatible pillars requested; skipping evaluation summary build.")
+        except Exception as e:
+            logger.exception(f"[evaluation_main] Failed to build/write evaluation summary: {e}")
 
     logger.info(f"[evaluation_main_new] Done. Outputs at: {eval_root}")
     return eval_root

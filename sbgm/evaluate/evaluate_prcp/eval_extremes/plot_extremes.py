@@ -82,6 +82,7 @@ def _read_csv(path: Path):
 def plot_return_levels(gev_csv: Path, out_png: Path, bo: Optional[Dict[str, Any]] = None):
     hdr, rows = _read_csv(gev_csv)
     if not rows:
+        logger.warning(f"[plot_return_levels] No rows found in {gev_csv}; skipping plot.")
         return
 
     rps = [int(c[3:-1]) for c in hdr if c.startswith("rl_") and c.endswith("y")]
@@ -176,7 +177,6 @@ def plot_return_levels(gev_csv: Path, out_png: Path, bo: Optional[Dict[str, Any]
                     _kw["lw"] = 1.4
                 ax.plot(rps, rl, label=label, **_kw, **style)
 
-    fig.tight_layout()
     _savefig(fig, out_png, dpi=SET_DPI)
     plt.close(fig)
 
@@ -184,6 +184,7 @@ def plot_return_levels(gev_csv: Path, out_png: Path, bo: Optional[Dict[str, Any]
 def plot_pot(para_csv: Path, out_png: Path, bo: Optional[Dict[str, Any]] = None):
     hdr, rows = _read_csv(para_csv)
     if not rows:
+        logger.warning(f"[plot_pot] No rows found in {para_csv}; skipping plot.")
         return
     rps = [int(c[3:-1]) for c in hdr if c.startswith("rl_") and c.endswith("y")]
     _nice()
@@ -275,7 +276,6 @@ def plot_pot(para_csv: Path, out_png: Path, bo: Optional[Dict[str, Any]] = None)
             if "lw" not in style and "linewidth" not in style:
                 _kw["lw"] = 1.4
             ax.plot(rps, rl, label=label, **_kw, **style)
-    fig.tight_layout()
     _savefig(fig, out_png, dpi=SET_DPI)
     plt.close(fig)
 
@@ -283,6 +283,7 @@ def plot_pot(para_csv: Path, out_png: Path, bo: Optional[Dict[str, Any]] = None)
 def plot_tails(tails_csv: Path, out_png: Path, bo: Optional[Dict[str, Any]] = None):
     hdr, rows = _read_csv(tails_csv)
     if not rows:
+        logger.warning(f"[plot_tails] No rows found in {tails_csv}; skipping plot.")
         return
     # header: which, Pxx..., wet_freq, wet_hit_rate, n_days
     tables = tails_csv.parent
@@ -497,7 +498,6 @@ def plot_tails(tails_csv: Path, out_png: Path, bo: Optional[Dict[str, Any]] = No
                 ax_hit.bar([xr], [hit],    width=w_b, fill=False, edgecolor=edgecolor, linewidth=1.3, hatch=hatch, zorder=6)
         ax_tails.legend(fontsize=8, loc="best")
 
-    fig.tight_layout()
     _savefig(fig, out_png, dpi=SET_DPI)
     plt.close(fig)
 
