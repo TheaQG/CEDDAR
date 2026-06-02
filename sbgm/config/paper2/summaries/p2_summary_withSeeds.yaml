@@ -1,0 +1,210 @@
+paths:
+  evaluation_root: "/scratch/project_465002493/quistgaa/Code/CEDDAR/models_and_samples/generated_samples/evaluation"
+  output_dir: "/scratch/project_465002493/quistgaa/Code/CEDDAR/paper2_summary_outputs_new_noP"
+
+selection:
+  model_prefixes:
+    - "V0"
+    - "C_"
+    - "D_"
+  recursive: false
+
+baseline:
+  prefix: "V0__"
+  seed_prefixes:
+    - "V0__"
+    - "V0__seed"
+  seed_run_order:
+    - "V0"
+    - "V0__seed2"
+    - "V0__seed3"
+  uncertainty_band: "minmax"   # minmax | std
+  include_baseline_mean_row: true
+
+grouping:
+  order:
+    - "baseline"
+    - "baseline_mean"
+    - "context_only"
+    - "single_var_small"
+    - "single_var_large"
+    - "physics"
+    - "physics_no_prcp"
+
+  colors:
+    baseline: "#D55E00"
+    baseline_mean: "#B2182B"
+    context_only: "#009E73"
+    single_var_small: "#56B4E9"
+    single_var_large: "#0072B2"
+    physics: "#E69F00"
+    physics_no_prcp: "#CC79A7"
+
+  labels:
+    baseline: "Baseline"
+    baseline_mean: "Baseline\nmean"
+    context_only: "Context"
+    single_var_small: "Single 0"
+    single_var_large: "Single 1"
+    physics: "Physics"
+    physics_no_prcp: "No prcp."
+
+  special_rules:
+    physics_no_prcp:
+      enabled: true
+      rule: "no_P_between_D_and___HR_"
+      split_out: true
+
+  exclude_groups:
+    - "physics_no_prcp"
+
+  # exclude_models:
+  #   physics_no_prcp:
+  #     - "V0_D_0"
+  #     - "V0_D_1"
+  #     - "V0_D_2"
+
+
+ordering:
+  baseline:
+    - "V0"
+    - "V0__seed2"
+    - "V0__seed3"
+
+  single_var_small:
+    - "V0_C_0"
+    - "V0_I_0"
+    - "V0_M_0"
+    - "V0_T_0"
+    - "V0_Z_0"
+
+  single_var_large:
+    - "V0_C_1"
+    - "V0_I_1"
+    - "V0_M_1"
+    - "V0_T_1"
+    - "V0_Z_1"
+
+metrics:
+  pillars:
+    distributional:
+      - "distributional.wasserstein"
+      - "distributional.ks_stat"
+    probabilistic:
+      - "probabilistic.crps_mean"
+      - "probabilistic.pit_ks_D"
+    scale:
+      - "scale.iss_primary"
+      - "scale.slope_low"
+      # - "scale.slope_mid"
+      - "scale.slope_high"
+      - "scale.corr_gen_lr_low"
+      # - "scale.corr_gen_lr_mid"
+      - "scale.corr_gen_lr_high"
+    extremes:
+      - "extremes.p99"
+      - "extremes.p99_9"
+      # - "extremes.rx1day"
+      - "extremes.rx5day"
+    features:
+      - "features.gen_ens_SAL"
+    climatological:
+      - "climatological.annual_sum_mean"
+      - "climatological.annual_sum_std"
+    temporal:
+      - "temporal.lag1_gen"
+      - "temporal.wet_mean_length_gen"
+      # - "temporal.dry_mean_length_gen"
+
+  target_rules:
+    zero:
+      - "distributional.wasserstein"
+      - "distributional.ks_stat"
+      - "probabilistic.crps_mean"
+      - "probabilistic.pit_ks_D"
+      - "features.gen_ens_SAL"
+    one:
+      - "scale.iss_primary"
+      - "scale.corr_gen_lr_low"
+      - "scale.corr_gen_lr_mid"
+      - "scale.corr_gen_lr_high"
+    hr_reference:
+      - "scale.slope_low"
+      - "scale.slope_mid"
+      - "scale.slope_high"
+      - "extremes.p99"
+      - "extremes.p99_9"
+      - "extremes.rx1day"
+      - "extremes.rx5day"
+      - "climatological.annual_sum_mean"
+      - "climatological.annual_sum_std"
+      - "temporal.lag1_gen"
+      - "temporal.wet_mean_length_gen"
+      - "temporal.dry_mean_length_gen"
+
+  hr_reference_map:
+    "scale.slope_low": "scale.hr_slope_low"
+    "scale.slope_mid": "scale.hr_slope_mid"
+    "scale.slope_high": "scale.hr_slope_high"
+    "extremes.p99": "extremes.hr_p99"
+    "extremes.p99_9": "extremes.hr_p99_9"
+    "extremes.rx1day": "extremes.hr_rx1day"
+    "extremes.rx5day": "extremes.hr_rx5day"
+    "climatological.annual_sum_mean": "climatological.hr_annual_sum_mean"
+    "climatological.annual_sum_std": "climatological.hr_annual_sum_std"
+    "temporal.lag1_gen": "temporal.lag1_hr"
+    "temporal.wet_mean_length_gen": "temporal.wet_mean_length_hr"
+    "temporal.dry_mean_length_gen": "temporal.dry_mean_length_hr"
+
+plots:
+  make:
+    - "absolute_heatmap"
+    - "target_heatmap"
+    - "better_than_baseline_heatmap"
+    - "better_than_baseline_spread_heatmap"
+    - "better_than_v0_heatmap"
+    - "better_than_v0_spread_heatmap"
+    - "absolute_pillar_panels"
+    - "delta_pillar_panels"
+    - "delta_target_pillar_panels"
+
+  dpi: 300
+  figsize:
+    heatmap: [14, 10]
+    pillar_panel: [14, 9]
+
+  colormaps:
+    absolute_heatmap: "cividis"
+    target_heatmap: "cividis"
+    better_than_baseline_heatmap: "RdYlBu_r"
+    better_than_baseline_spread_heatmap: "RdYlBu_r"
+    better_than_v0_heatmap: "RdYlBu_r"
+    better_than_v0_spread_heatmap: "RdYlBu_r"
+
+  heatmaps:
+    normalize_per_metric: true
+    show_group_boxes: true
+    include_baseline_mean_row: true
+
+  per_model_panels:
+    share_y_within_metric: true
+    show_group_backgrounds: true
+    show_hr_target_line: true
+    show_hr_band_if_available: true
+    show_seed_errorbars: false
+
+  delta_panels:
+    show_baseline_band: true
+    show_baseline_runs: true
+    mark_baseline_runs: true
+    show_group_backgrounds: true
+    show_model_spread_if_available: true
+    show_model_spread_if_available: false
+seeds:
+  mode: "mean"   # "none" = show all seeds, "mean" = aggregate seeds per model
+  colors:
+    seed1: "#1f77b4"
+    seed2: "#ff7f0e"
+    seed3: "#2ca02c"
+  point_alpha: 0.60
+  bar_alpha: 0.45

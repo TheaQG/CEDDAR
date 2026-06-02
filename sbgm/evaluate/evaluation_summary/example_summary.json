@@ -1,0 +1,331 @@
+{
+  "run_id": "D_IP_1__HR_prcp_DANRA__SIZE_128x128__LR_prcp_ewvf_nwvf_ERA5__LOSS_sdfweighted__HEADS_4__TIMESTEPS_56",
+  "model_key": "D_IP_1__HR_prcp_DANRA__SIZE_128x128__LR_prcp_ewvf_nwvf_ERA5__LOSS_sdfweighted__HEADS_4__TIMESTEPS_56",
+  "eval_root": "/scratch/project_465002493/quistgaa/Code/CEDDAR/models_and_samples/generated_samples/evaluation/D_IP_1__HR_prcp_DANRA__SIZE_128x128__LR_prcp_ewvf_nwvf_ERA5__LOSS_sdfweighted__HEADS_4__TIMESTEPS_56",
+  "generated_root": "/scratch/project_465002493/quistgaa/Code/CEDDAR/models_and_samples/generated_samples/generation/D_IP_1__HR_prcp_DANRA__SIZE_128x128__LR_prcp_ewvf_nwvf_ERA5__LOSS_sdfweighted__HEADS_4__TIMESTEPS_56",
+  "config_path": null,
+  "metadata": {
+    "summary_version": 1,
+    "available_pillars": [
+      "climatological",
+      "dates",
+      "distributional",
+      "extremes",
+      "features",
+      "probabilistic",
+      "scale",
+      "temporal"
+    ],
+    "requested_pillars": [
+      "probabilistic",
+      "scale",
+      "extremes",
+      "distributional",
+      "climatological",
+      "temporal",
+      "features",
+      "dates"
+    ]
+  },
+  "pillars": {
+    "probabilistic": {
+      "name": "probabilistic",
+      "metrics": {
+        "primary_comparison": "GEN_ENS",
+        "crps_mean": 0.920705,
+        "crps_std": 1.214553,
+        "pit_ks_D": 0.064994,
+        "pit_n": 11976704,
+        "pmm_mae_mean": 1.404252,
+        "pmm_mae_std": 1.727059,
+        "spread_skill_slope": 0.866227,
+        "spread_skill_pearson_r": 0.902291,
+        "rankhist_max_abs_z": 231.283547,
+        "spatial_crps_land_mean": 0.920705,
+        "n_dates": 731,
+        "n_metric_rows": 1
+      },
+      "artifacts": {
+        "root": "prcp/probabilistic",
+        "core_metrics_csv": "tables/prob_core_metrics.csv",
+        "summary_csv": "tables/prob_summary.csv",
+        "summary_txt": "tables/prob_summary.txt",
+        "crps_daily_csv": "tables/prob_crps_daily.csv",
+        "pit_values_npz": "tables/prob_pit_values.npz",
+        "rank_hist_npz": "tables/prob_rank_histogram.npz",
+        "spread_skill_csv": "tables/prob_spread_skill.csv",
+        "spread_skill_plot": "figures/prob_spread_skill.png",
+        "energy_variogram_plot": "figures/prob_energy_variogram.png"
+      },
+      "notes": []
+    },
+    "scale": {
+      "name": "scale",
+      "metrics": {
+        "primary_psd_comparison": "GEN_ENS_MEAN",
+        "slope_low": -2.326312,
+        "slope_low_r2": 0.999026,
+        "slope_low_n_points": 4,
+        "slope_mid": -2.297294,
+        "slope_mid_r2": 0.993258,
+        "slope_mid_n_points": 7,
+        "slope_high": -5.01792,
+        "slope_high_r2": 0.994332,
+        "slope_high_n_points": 34,
+        "hr_slope_low": -1.885308,
+        "hr_slope_low_r2": 0.956095,
+        "hr_slope_low_n_points": 4,
+        "hr_slope_mid": -2.731742,
+        "hr_slope_mid_r2": 0.998179,
+        "hr_slope_mid_n_points": 7,
+        "hr_slope_high": -5.648004,
+        "hr_slope_high_r2": 0.989852,
+        "hr_slope_high_n_points": 34,
+        "lr_slope_low": -5.25977,
+        "lr_slope_low_r2": 0.997391,
+        "lr_slope_low_n_points": 4,
+        "lr_slope_mid_n_points": 0,
+        "lr_slope_high_n_points": 0,
+        "n_slope_rows": 15,
+        "corr_gen_lr_low": 0.671677,
+        "corr_gen_lr_low_std": 0.239157,
+        "corr_gen_lr_low_n_dates": 731,
+        "corr_gen_lr_mid": 0.398156,
+        "corr_gen_lr_mid_std": 0.232018,
+        "corr_gen_lr_mid_n_dates": 709,
+        "corr_gen_lr_high": 0.379585,
+        "corr_gen_lr_high_std": 0.23644,
+        "corr_gen_lr_high_n_dates": 709,
+        "n_band_corr_rows": 3,
+        "n_iss_rows": 4,
+        "primary_iss_threshold_mm": "1.00",
+        "iss_primary": 0.479684,
+        "iss_primary_scale_km": 5.0
+      },
+      "artifacts": {
+        "root": "prcp/scale",
+        "psd_curves_npz": "tables/scale_psd_curves.npz",
+        "psd_summary_csv": "tables/scale_psd_summary.csv",
+        "psd_slopes_csv": "tables/scale_psd_slopes_3band.csv",
+        "bandpass_corr_csv": "tables/scale_bandpass_corr_avg.csv",
+        "fss_summary_csv": "tables/scale_fss_summary.csv",
+        "iss_summary_csv": "tables/scale_iss_summary.csv",
+        "overview_csv": "tables/scale_overview.csv",
+        "psd_plot": "figures/scale_psd.png",
+        "psd_lowhigh_plot": "figures/scale_psd_lowhigh.png",
+        "fss_plot": "figures/scale_fss.png"
+      },
+      "notes": [
+        "PSD slope band 'mid' for 'LR' is undersampled (n_points=0); interpret with caution.",
+        "PSD slope band 'high' for 'LR' is undersampled (n_points=0); interpret with caution."
+      ]
+    },
+    "extremes": {
+      "name": "extremes",
+      "metrics": {
+        "primary_comparison": "GEN_ENS",
+        "p99": 18.003292,
+        "p99_9": 37.734157,
+        "rx1day": 16.121795,
+        "rx5day": 34.20122,
+        "wet_freq": 0.34515,
+        "wet_hit_rate": 0.732429,
+        "p99_std": 0.412277,
+        "p99_9_std": 2.22436,
+        "rx1day_std": 4.323348,
+        "rx5day_std": 1.674761,
+        "wet_freq_std": 0.004192,
+        "wet_hit_rate_std": 0.007225,
+        "n": 11976704,
+        "n_members": 32,
+        "hr_p99": 20.913351,
+        "hr_p99_9": 38.820392,
+        "hr_rx1day": 21.271155,
+        "hr_rx5day": 45.660899,
+        "hr_wet_freq": 0.383172,
+        "hr_wet_hit_rate": 1.0,
+        "lr_p99": 20.776903,
+        "lr_p99_9": 32.256877,
+        "lr_rx1day": 21.021348,
+        "lr_rx5day": 47.150486,
+        "lr_wet_freq": 0.501218,
+        "lr_wet_hit_rate": 0.945761,
+        "n_metric_rows": 4
+      },
+      "artifacts": {
+        "root": "prcp/extremes",
+        "core_metrics_csv": "tables/ext_core_metrics.csv",
+        "tails_csv": "tables/ext_tails.csv",
+        "tails_uncertainty_csv": "tables/ext_tails_uncertainty.csv",
+        "rxk_gev_csv": "tables/ext_rxk_gev.csv",
+        "pot_gpd_csv": "tables/ext_pot_gpd.csv",
+        "daily_series_npz": "tables/ext_daily_series.npz",
+        "meta_npz": "tables/ext_meta.npz",
+        "rxk_gev_ens_stats_npz": "tables/ext_rxk_gev_ens_stats.npz",
+        "pot_gpd_ens_stats_npz": "tables/ext_pot_gpd_ens_stats.npz",
+        "tails_ens_bands_npz": "tables/ext_tails_ens_bands.npz",
+        "tails_plot": "figures/ext_tails.png",
+        "gev_plot": "figures/ext_rxk_gev.png",
+        "pot_plot": "figures/ext_pot_gpd.png"
+      },
+      "notes": []
+    },
+    "distributional": {
+      "name": "distributional",
+      "metrics": {
+        "primary_comparison": "gen_pmm",
+        "wasserstein": 0.498497,
+        "ks_stat": 0.085442,
+        "ks_p": 0.0,
+        "kl_hr_to_x": 0.009077,
+        "lr_wasserstein": 0.675983,
+        "delta_wasserstein_vs_lr": -0.17748599999999998,
+        "lr_ks_stat": 0.286952,
+        "lr_ks_p": 0.0,
+        "lr_kl_hr_to_x": 0.029083,
+        "n_metric_rows": 2
+      },
+      "artifacts": {
+        "root": "prcp/distributional",
+        "metrics_csv": "tables/dist_metrics.csv",
+        "bins_csv": "tables/dist_bins.csv",
+        "pooled_samples_npz": "tables/dist_pooled_samples.npz",
+        "daily_npz": "tables/dist_daily.npz",
+        "ensemble_hist_npz": "tables/dist_member_histograms.npz",
+        "pooled_plot": "figures/dist_pooled.png",
+        "seasonal_plot": "figures/dist_seasons.png"
+      },
+      "notes": []
+    },
+    "climatological": {
+      "name": "climatological",
+      "metrics": {
+        "primary_source": "ensmean",
+        "primary_group": "ALL",
+        "annual_sum_mean": 699.3543701171875,
+        "annual_sum_std": 98.98711395263672,
+        "annual_sum_total": 11458222.0,
+        "hr_annual_sum_mean": 877.1588134765625,
+        "hr_annual_sum_std": 146.65576171875,
+        "hr_annual_sum_total": 14371370.0,
+        "lr_annual_sum_mean": 1106.91064453125,
+        "lr_annual_sum_std": 172.85205078125,
+        "lr_annual_sum_total": 18135624.0,
+        "annual_sum_by_year": {
+          "2019": {
+            "sum_mean": 736.34912109375,
+            "sum_std": 98.21453857421875,
+            "sum_total": 12064344.0
+          },
+          "2020": {
+            "sum_mean": 662.3596801757812,
+            "sum_std": 102.11442565917969,
+            "sum_total": 10852101.0
+          }
+        },
+        "hr_annual_sum_by_year": {
+          "2019": {
+            "sum_mean": 930.514404296875,
+            "sum_std": 141.5004119873047,
+            "sum_total": 15245548.0
+          },
+          "2020": {
+            "sum_mean": 823.80322265625,
+            "sum_std": 158.46929931640625,
+            "sum_total": 13497192.0
+          }
+        },
+        "lr_annual_sum_by_year": {
+          "2019": {
+            "sum_mean": 1165.6689453125,
+            "sum_std": 167.6076202392578,
+            "sum_total": 19098320.0
+          },
+          "2020": {
+            "sum_mean": 1048.15234375,
+            "sum_std": 183.55889892578125,
+            "sum_total": 17172928.0
+          }
+        },
+        "n_metric_rows": 18
+      },
+      "artifacts": {
+        "root": "prcp/spatial",
+        "summary_csv": "tables/spatial_summary.csv",
+        "hr_all_npz": "tables/spatial_hr_ALL.npz",
+        "ensmean_all_npz": "tables/spatial_ensmean_ALL.npz",
+        "ensstd_all_npz": "tables/spatial_ensstd_ALL.npz",
+        "lr_all_npz": "tables/spatial_lr_ALL.npz"
+      },
+      "notes": []
+    },
+    "temporal": {
+      "name": "temporal",
+      "metrics": {
+        "lag1_hr": 0.36459434302023813,
+        "lag1_gen": 0.3285966176936123,
+        "lag1_lr": 0.3903772036696363,
+        "delta_lag1_gen_vs_hr": -0.03599772532662582,
+        "wet_mean_length_hr": 3.0,
+        "wet_mean_length_gen": 2.896849609921863,
+        "wet_mean_length_lr": 4.22,
+        "dry_mean_length_hr": 3.1333333333333337,
+        "dry_mean_length_gen": 3.302562146296105,
+        "dry_mean_length_lr": 3.019607843137255,
+        "pair_wet_jsd_genens_hr": 0.13181947622901338,
+        "pair_wet_ks_genens_hr": 0.049098636575151455,
+        "pair_dry_jsd_genens_hr": 0.10750063588318146,
+        "pair_dry_ks_genens_hr": 0.05062041302987963,
+        "pair_wet_jsd_lr_hr": 0.2518665961528902,
+        "pair_dry_jsd_lr_hr": 0.18042276205221597
+      },
+      "artifacts": {
+        "root": "prcp/temporal",
+        "metrics_npz": "tables/temporal_metrics_2019.npz"
+      },
+      "notes": []
+    },
+    "features": {
+      "name": "features",
+      "metrics": {
+        "primary_group": "ALL",
+        "gen_A": -0.22568841426932842,
+        "gen_S": 0.04983449244909775,
+        "gen_L": 0.031111587547847555,
+        "gen_SAL": 0.233209493487745,
+        "gen_ens_A": -0.2256456535725317,
+        "gen_ens_S": 0.046445408528267965,
+        "gen_ens_L": 0.03473623889783819,
+        "gen_ens_SAL": 0.34747006441973305,
+        "gen_ens_A_std": 0.013280607393708331,
+        "gen_ens_S_std": 0.273812684236046,
+        "gen_ens_L_std": 0.02601955866226124,
+        "gen_ens_SAL_std": 0.09680431596122255,
+        "lr_A": 0.23159653798200514,
+        "lr_S": 0.6646723386793952,
+        "lr_L": 0.07707464871767539,
+        "lr_SAL": 0.7080725779789386,
+        "n_metric_rows": 3,
+        "available_groups": [
+          "ALL",
+          "2019",
+          "2020"
+        ]
+      },
+      "artifacts": {
+        "root": "prcp/features",
+        "core_metrics_csv": "tables/features_core_metrics.csv",
+        "all_plot": "figures/features_sal_ALL.png"
+      },
+      "notes": []
+    },
+    "dates": {
+      "name": "dates",
+      "metrics": {},
+      "artifacts": {},
+      "notes": [
+        "Scaffold only: dates summary extraction not implemented yet."
+      ]
+    }
+  }
+}
