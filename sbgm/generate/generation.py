@@ -710,7 +710,11 @@ class GenerationRunner:
             lr_phys = None
             dates = samples['date'] if ('date' in samples and isinstance(samples['date'], (list, tuple)) and len(samples['date']) > 0) else [f"idx{idx:04d}"]
             date0 = dates[0]  # use first date for naming
-            logger.info(f"[generation] Generating for date {date0} ({idx+1}/{len(gen_dataloader)}) with ensemble size {M}.")
+            _log_this_date = (idx < 3) or (((idx + 1) % 50) == 0) or ((idx + 1) == len(gen_dataloader))
+            if _log_this_date:
+                logger.info(f"[generation] Generating for date {date0} ({idx+1}/{len(gen_dataloader)}) with ensemble size {M}.")
+            else:
+                logger.debug(f"[generation] Generating for date {date0} ({idx+1}/{len(gen_dataloader)}) with ensemble size {M}.")
             # Extract model-space tensors
             x_gen, y_gen, cond_images_gen, lsm_hr_gen, lsm_gen, sdf_gen, topo_gen, hr_points_gen, lr_points_gen = extract_samples(samples, self.device)
             # ------------------------------------------------------------
@@ -774,7 +778,7 @@ class GenerationRunner:
 
             if idx == 0:
                 try:
-                    logger.info(
+                    logger.debug(
                         "[generation][cond] cond_images_gen=%s, local_cond=%s, lsm_cond=%s, topo_cond=%s",
                         None if cond_images_gen is None else tuple(cond_images_gen.shape),
                         None if local_cond is None else tuple(local_cond.shape),
@@ -816,19 +820,19 @@ class GenerationRunner:
                     static_lsm = self._get_static_lsm()
                     if static_lsm is not None:
                         lsm0 = static_lsm
-                        logger.info("[generation] Using static LSM fallback for date %s", dates[0])
+                        logger.debug("[generation] Using static LSM fallback for date %s", dates[0])
 
                 if lsm0 is not None:                    
                     # Always save per-date mask if saving is enabled
                     if save:
                         _save_npz(self.out_root / 'lsm' / f'{dates[0]}.npz', lsm_hr=lsm0.numpy())
-                        logger.info("[generation] Saved per-date land mask → %s", self.out_root / 'lsm' / f'{dates[0]}.npz')
+                        logger.debug("[generation] Saved per-date land mask → %s", self.out_root / 'lsm' / f'{dates[0]}.npz')
                     # Set/compare canonical mask, and save canonical on first encounter if saving
                     if self._first_lsm is None:
                         self._first_lsm = lsm0.clone()
                         if self.stationary_cutout and save:
                             _save_npz(self.out_root / 'meta' / 'land_mask.npz', lsm_hr=lsm0.numpy())
-                            logger.info("[generation] Saved canonical land mask → %s", self.out_root / 'meta' / 'land_mask.npz')
+                            logger.debug("[generation] Saved canonical land mask → %s", self.out_root / 'meta' / 'land_mask.npz')
                     else:
                         if not torch.equal(self._first_lsm, lsm0):
                             self._lsm_stationary_ok = False
@@ -842,34 +846,34 @@ class GenerationRunner:
                     raise ValueError("predict_residual=True but local_cond is None; cannot build lr_ups baseline.")
                 lr_ups_baseline = self._build_lr_ups_baseline(local_cond).to(self.device)
 
-                # Convert LR baseline into HR z-space if needed (mirrors training intent)
-                try:
-                    logger.info(
-                        "[generation] run(): LR->HR baseline conversion stats: spatial_mode=%s | lr_domain=%s | lr_crop=%s | hr_domain=%s | hr_crop=%s",
-                        getattr(self, '_spatial_mode', 'unknown'),
-                        self._dom_lr_str,
-                        self._crop_lr_str,
-                        self._dom_hr_str,
-                        self._crop_hr_str,
-                    )
-                    lr_ups_baseline = lr_baseline_to_hr_zspace(
-                        lr_local,
-                        hr_scaling_method=self._hr_method_for_target,
-                        lr_scaling_method=self._lr_method_for_target,
-                        stats_dir_root=self._stats_root,
-                        hr_model=self.cfg['highres']['model'],
-                        lr_model=self.cfg['lowres']['model'],
-                        var=self.hr_var,
-                        domain_str_hr=self._dom_hr_str,
-                        crop_region_str_hr=self._crop_hr_str,
-                        domain_str_lr=self._dom_lr_str,
-                        crop_region_str_lr=self._crop_lr_str,
-                        split='train',
-                        eps=self.cfg['transforms'].get('prcp_eps', 0.01),
-                    )
-                except TypeError:
-                    # if your helper has an older signature in this repo state
-                    lr_ups_baseline = lr_baseline_to_hr_zspace(lr_local, self.back_transforms)
+                # # Convert LR baseline into HR z-space if needed (mirrors training intent)
+                # try:
+                #     logger.info(
+                #         "[generation] run(): LR->HR baseline conversion stats: spatial_mode=%s | lr_domain=%s | lr_crop=%s | hr_domain=%s | hr_crop=%s",
+                #         getattr(self, '_spatial_mode', 'unknown'),
+                #         self._dom_lr_str,
+                #         self._crop_lr_str,
+                #         self._dom_hr_str,
+                #         self._crop_hr_str,
+                #     )
+                #     lr_ups_baseline = lr_baseline_to_hr_zspace(
+                #         lr_local,
+                #         hr_scaling_method=self._hr_method_for_target,
+                #         lr_scaling_method=self._lr_method_for_target,
+                #         stats_dir_root=self._stats_root,
+                #         hr_model=self.cfg['highres']['model'],
+                #         lr_model=self.cfg['lowres']['model'],
+                #         var=self.hr_var,
+                #         domain_str_hr=self._dom_hr_str,
+                #         crop_region_str_hr=self._crop_hr_str,
+                #         domain_str_lr=self._dom_lr_str,
+                #         crop_region_str_lr=self._crop_lr_str,
+                #         split='train',
+                #         eps=self.cfg['transforms'].get('prcp_eps', 0.01),
+                #     )
+                # except TypeError:
+                #     # if your helper has an older signature in this repo state
+                #     lr_ups_baseline = lr_baseline_to_hr_zspace(lr_local, self.back_transforms)
 
                 lr_ups_baseline = lr_ups_baseline.to(self.device)
 
@@ -961,13 +965,13 @@ class GenerationRunner:
                 if self.gen_config.save_space in ('model', 'both'):
                     _save_npz(self.out_root / 'ensembles_model' / f'{date0}.npz', ens=ens_model)  # model space 
                     _save_npz(self.out_root / 'pmm_model' / f'{date0}.npz', pmm=pmm_full)  # model space
-                    logger.info("[generation] Saved ensembles_model → %s", self.out_root / 'ensembles_model' / f'{date0}.npz')
-                    logger.info("[generation] Saved pmm_model → %s", self.out_root / 'pmm_model' / f'{date0}.npz')
+                    logger.debug("[generation] Saved ensembles_model → %s", self.out_root / 'ensembles_model' / f'{date0}.npz')
+                    logger.debug("[generation] Saved pmm_model → %s", self.out_root / 'pmm_model' / f'{date0}.npz')
                     # Keep legacy dirs if saving model space
                     _save_npz(self.out_root / 'ensembles' / f'{date0}.npz', ens=ens_model)  # model space 
                     _save_npz(self.out_root / 'pmm' / f'{date0}.npz', pmm=pmm_full)  # model space
-                    logger.info("[generation] Saved ensembles (legacy) → %s", self.out_root / 'ensembles' / f'{date0}.npz')
-                    logger.info("[generation] Saved pmm (legacy) → %s", self.out_root / 'pmm' / f'{date0}.npz')
+                    logger.debug("[generation] Saved ensembles (legacy) → %s", self.out_root / 'ensembles' / f'{date0}.npz')
+                    logger.debug("[generation] Saved pmm (legacy) → %s", self.out_root / 'pmm' / f'{date0}.npz')
 
                 # Save (physical space) for evaluation
                 if self.gen_config.save_space in ('physical', 'both'):
@@ -976,8 +980,8 @@ class GenerationRunner:
                     else:
                         _save_npz(self.out_root / 'ensembles_phys' / f'{date0}.npz', ens=gen_phys)  # physical space ens | pmm_model | 
                         _save_npz(self.out_root / 'pmm_phys' / f'{date0}.npz', pmm=pmm_phys)  # physical space
-                        logger.info("[generation] Saved ensembles_phys → %s", self.out_root / 'ensembles_phys' / f'{date0}.npz')
-                        logger.info("[generation] Saved pmm_phys → %s", self.out_root / 'pmm_phys' / f'{date0}.npz')
+                        logger.debug("[generation] Saved ensembles_phys → %s", self.out_root / 'ensembles_phys' / f'{date0}.npz')
+                        logger.debug("[generation] Saved pmm_phys → %s", self.out_root / 'pmm_phys' / f'{date0}.npz')
 
             def _m(x):
                 return float(torch.nanmean(x)) if (x is not None and torch.is_tensor(x)) else None
@@ -1041,7 +1045,7 @@ class GenerationRunner:
                         except Exception as e:
                             logger.warning(f"[generation] Failed to back-transform lr_ups_baseline (HR-zspace) for {date0}: {e}")
                     else:
-                        logger.info(f"[generation] Missing bt_lr_hrspace; skipping physical inversion of lr_ups_baseline for {date0}")
+                        logger.debug(f"[generation] Missing bt_lr_hrspace; skipping physical inversion of lr_ups_baseline for {date0}")
 
                 hr_phys_ref = hr
                 if callable(self.bt_hr) and hr_phys_ref is not None:
@@ -1063,9 +1067,9 @@ class GenerationRunner:
                         lr_context=lr_context_phys,
                         lr_ups_baseline=lr_ups_phys,
                     )
-                    logger.info("[generation] Saved lr_hr_phys → %s", self.out_root / "lr_hr_phys" / f"{date0}.npz")
+                    logger.debug("[generation] Saved lr_hr_phys → %s", self.out_root / "lr_hr_phys" / f"{date0}.npz")
 
-                logger.info(
+                logger.debug(
                     "[generation] %s LR means (phys): lr=%s lr_local=%s lr_context=%s lr_ups_baseline=%s",
                     date0,
                     None if lr_phys_canonical is None else float(torch.as_tensor(lr_phys_canonical).float().mean().item()),
@@ -1099,7 +1103,7 @@ class GenerationRunner:
                     "hr_phys": _cpu(hr_phys),           # [1,1,H,W] or None
                     "lr_phys": _cpu(lr_phys),           # [1, 1,H,W] or None
                 })
-                logger.info("[generation] Appended quicklook payload for %s", date0)
+                logger.debug("[generation] Appended quicklook payload for %s", date0)
 
             n_days += 1
             # Stop early if a cap is configured

@@ -259,9 +259,7 @@ def quicklook_from_runner(cfg):
                 cbar.set_label(str(ql["cbar_label"]))
 
         fig.suptitle(f"{date}", fontsize=11)
-        # With constrained_layout=True, avoid tight_layout to prevent engine conflicts with colorbar.
-        # Adjust top margin to make space for the suptitle.
-        fig.subplots_adjust(top=0.90)
+        # With constrained_layout=True, do not call subplots_adjust/tight_layout here.
 
         if bool(save_png):
             fig.savefig(str(out_dir / f"{date}_quicklook.png"), dpi=150)
