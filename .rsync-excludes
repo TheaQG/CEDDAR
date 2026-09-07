@@ -7,7 +7,7 @@ runs/
 figures/
 repro/
 repro_private/
-bash_paper1/
+# bash_paper1/
 
 # logs
 logs/
