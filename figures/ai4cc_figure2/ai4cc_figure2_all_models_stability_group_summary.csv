@@ -1,0 +1,4 @@
+configuration_group,n_configurations,core_group_median_gap,expanded_group_median_gap,pillar_balanced_group_median_gap
+context/single-variable,11,0.5883357007356068,0.536028833349616,0.5144393867605594
+precipitation-conditioned physics set,6,0.4192411354019018,0.4484625689700703,0.4289796941407462
+no-P,2,1.0282696224371464,1.0524468193876977,0.8022342771647635

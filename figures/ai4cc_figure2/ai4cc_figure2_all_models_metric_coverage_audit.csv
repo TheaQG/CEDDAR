@@ -1,0 +1,33 @@
+metric,metric_label,pillar,registry,n_numeric_runs,n_configurations,has_target_or_reference,status
+distributional.wasserstein,Wasserstein distance,Distributional,core,41,20,True,available
+distributional.ks_stat,KS statistic,Distributional,core,41,20,True,available
+probabilistic.crps_mean,CRPS,Probabilistic,core,41,20,True,available
+probabilistic.pit_ks_D,PIT KS statistic,Probabilistic,core,41,20,True,available
+scale.iss_primary,Integrated skill score,Scale,core,41,20,True,available
+scale.slope_low,Low-scale PSD slope,Scale,core,41,20,True,available
+scale.slope_mid,Mid-scale PSD slope,Scale,core,41,20,True,available
+scale.slope_high,High-scale PSD slope,Scale,core,41,20,True,available
+scale.corr_gen_lr_low,Low-scale GEN–LR correlation,Scale,core,37,18,False,available
+scale.corr_gen_lr_mid,Mid-scale GEN–LR correlation,Scale,core,37,18,False,available
+scale.corr_gen_lr_high,High-scale GEN–LR correlation,Scale,core,37,18,False,available
+extremes.p99,99th percentile,Extremes,core,41,20,True,available
+extremes.p99_9,99.9th percentile,Extremes,core,41,20,True,available
+extremes.rx1day,RX1day,Extremes,core,41,20,True,available
+extremes.rx5day,RX5day,Extremes,core,41,20,True,available
+features.gen_ens_SAL,SAL,Features,core,41,20,True,available
+climatological.annual_sum_mean,Mean annual precipitation,Climatological,core,41,20,True,available
+climatological.annual_sum_std,Spatial SD of annual precipitation,Climatological,core,41,20,True,available
+temporal.lag1_gen,Lag-1 autocorrelation,Temporal,core,41,20,True,available
+temporal.wet_mean_length_gen,Mean wet-spell length,Temporal,core,41,20,True,available
+temporal.dry_mean_length_gen,Mean dry-spell length,Temporal,core,41,20,True,available
+probabilistic.spatial_crps_land_mean,Land-only spatial CRPS,Probabilistic,expanded_addition,41,20,True,available
+probabilistic.rankhist_max_abs_z,Rank-histogram max |z|,Probabilistic,expanded_addition,41,20,True,available
+probabilistic.spread_skill_slope,Spread-skill slope,Probabilistic,expanded_addition,41,20,True,available
+extremes.wet_freq,Wet-day frequency,Extremes,expanded_addition,41,20,True,available
+extremes.wet_hit_rate,Wet-day hit rate,Extremes,expanded_addition,41,20,True,available
+features.gen_ens_S,SAL structure component,Features,expanded_addition,41,20,True,available
+features.gen_ens_A,SAL amplitude component,Features,expanded_addition,41,20,True,available
+features.gen_ens_L,SAL location component,Features,expanded_addition,41,20,True,available
+temporal.pair_wet_jsd_genens_hr,Wet-spell duration JSD,Temporal,expanded_addition,41,20,True,available
+temporal.pair_dry_jsd_genens_hr,Dry-spell duration JSD,Temporal,expanded_addition,41,20,True,available
+seasonal_or_monthly_precipitation,Seasonal/monthly precipitation diagnostics,Climatological,desired_future_addition,0,0,False,not available in evaluation_summary.json; requires raw evaluation

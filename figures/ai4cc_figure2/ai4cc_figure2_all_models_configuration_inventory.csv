@@ -1,0 +1,24 @@
+configuration,available_seeds,n_summaries,is_special,has_complete_pair,all_paired_status
+C_10,"1,2",2,False,True,included
+C_10_noSDF,1,1,True,False,special/test or noSDF ablation
+D_IP_1,"1,2",2,False,True,included
+D_MTCP_1,"1,2",2,False,True,included
+D_MTC_1,"1,2",2,False,True,included
+D_MTP_0,"1,2",2,False,True,included
+D_MTP_1,"1,2",2,False,True,included
+D_MT_1,"1,2",2,False,True,included
+D_MZIP_0,1,1,False,False,incomplete seed-1/seed-2 pair
+D_MZIP_1,"1,2",2,False,True,included
+D_MZP_1,"1,2",2,False,True,included
+V0,"1,2,3",3,False,True,included
+V0_C_0,"1,2",2,False,True,included
+V0_C_1,"1,2",2,False,True,included
+V0_I_0,"1,2",2,False,True,included
+V0_I_1,"1,2",2,False,True,included
+V0_M_0,"1,2",2,False,True,included
+V0_M_1,"1,2",2,False,True,included
+V0_T_0,"1,2",2,False,True,included
+V0_T_1,"1,2",2,False,True,included
+V0_Z_0,"1,2",2,False,True,included
+V0_Z_1,"1,2",2,False,True,included
+test_V0_noSDF,1,1,True,False,special/test or noSDF ablation
