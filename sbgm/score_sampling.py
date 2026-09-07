@@ -40,11 +40,14 @@ def edm_sampler(score_model,
                 ramp_end_frac: float = 0.85,       # end of ramp as fraction of steps (0..1)
                 ramp_start_sigma: float | None = None,  # optional: start ramp when sigma <= this
                 ramp_end_sigma: float | None = None,    # optional: end ramp when sigma <= this
+                capture: dict | None = None,
                 ):
   """
       Karras EDM sampler with Heun updates.
       Expects score_model(x_t, sigma, cond_img=..., lsm_cond=..., topo_cond=..., y=..., lr_ups=...) -> x0_hat.
       Returns a tensor shaped like the model outputs (i.e. a sample batch, shape (B, C, H, W)).
+      If capture is enabled, returns (x, capture_out), where capture_out contains selected
+      intermediate sampler states moved to CPU for lightweight post-processing/sonification.
   """
   # Move all conditional tensors to the correct device
   def to_dev(t): return None if t is None else t.to(device)
@@ -209,6 +212,14 @@ def edm_sampler(score_model,
   B = int(batch_size)
   # Initial sample: Gaussian noise with sigma_max stddev
   x = torch.randn(B, C_out, H, W, device=device) * float(sigma_max)
+  # NOTE: ISSUE HERE! The current definition "x = torch.randn(B, C_out, H, W, device=device) * float(sigma_max)" 
+  #                   makes the model receive a noise level that does not match the actual noise in x at the 
+  #                   first step. That can bias trajectory and make sigma* experiments less valid.
+  #                   Fix:
+  #                   # Initial sample must match the first effective sigma actually used by the sampler
+  #                   sigma_init = float(sigmas[0])
+  #                   x = torch.randn(B, C_out, H, W, device=device) * sigma_init
+
 
   if lr_ups is not None and (lr_ups.shape[0] != x.shape[0] or lr_ups.shape[2:] != x.shape[2:]):
       raise ValueError(f"lr_ups shape {lr_ups.shape} does not match the expected batch size {x.shape[0]} and spatial shape {x.shape[2:]}")
@@ -254,6 +265,40 @@ def edm_sampler(score_model,
   diag = isinstance(cfg_diagnostics, dict) and cfg_diagnostics.get("per_batch_stats", False)
   diag_every = int(cfg_diagnostics.get("log_every", max(1, num_steps // 4))) if (diag and isinstance(cfg_diagnostics, dict)) else 0
   
+  # Optional lightweight trajectory capture for outreach/sonification/video generation.
+  # This is passive: it does not change sampler numerics unless explicitly enabled.
+  # Captured tensors are detached, moved to CPU, and usually restricted to one batch member.
+  capture_enabled = isinstance(capture, dict) and bool(capture.get("enabled", False))
+  capture_every = int(capture.get("every", 1)) if capture_enabled else 1
+  capture_batch_index = int(capture.get("batch_index", 0)) if capture_enabled else 0
+  capture_dtype = str(capture.get("dtype", "float32")).lower() if capture_enabled else "float32"
+  capture_sources = capture.get("sources", ("x_in", "denoised", "x")) if capture_enabled else ()
+  capture_sources = tuple(capture_sources)
+  capture_out = None
+  if capture_enabled:
+    capture_out = {
+      "step": [],
+      "sigma": [],
+      "sigma_hat": [],
+      "sigma_next": [],
+      "x_in": [],
+      "denoised": [],
+      "x_euler": [],
+      "x": [],
+    }
+
+  def _capture_tensor(name: str, value: torch.Tensor | None) -> None:
+    if (not capture_enabled) or capture_out is None or name not in capture_sources or value is None:
+      return
+    if capture_batch_index < 0 or capture_batch_index >= value.shape[0]:
+      raise IndexError(f"capture batch_index={capture_batch_index} is outside tensor batch size {value.shape[0]}")
+    item = value[capture_batch_index].detach().cpu()
+    if capture_dtype == "float16":
+      item = item.to(torch.float16)
+    elif capture_dtype == "float32":
+      item = item.to(torch.float32)
+    capture_out[name].append(item)
+
   for i in range(num_steps):
     sigma = sigmas[i]
     sigma_next = sigmas[i + 1]
@@ -275,12 +320,25 @@ def edm_sampler(score_model,
 
     denoised = _denoise_with_cfg(x_in, sigma_hat_vec)
 
+    do_capture = capture_enabled and (i % max(capture_every, 1) == 0 or i in (0, num_steps - 1))
+    if do_capture and capture_out is not None:
+      capture_out["step"].append(int(i))
+      capture_out["sigma"].append(float(sigma))
+      capture_out["sigma_hat"].append(float(sigma_hat))
+      capture_out["sigma_next"].append(float(sigma_next))
+      _capture_tensor("x_in", x_in)
+      _capture_tensor("denoised", denoised)
+
     d = (x_in - denoised) / sigma_hat # Score-based derivative
 
     # Euler step 
     x_euler = x_in + (sigma_next - sigma_hat) * d
+    if do_capture:
+      _capture_tensor("x_euler", x_euler)
     if i == num_steps - 1:
       x = x_euler
+      if do_capture:
+        _capture_tensor("x", x)
       break
 
     # Heun correction (2nd order Runge-Kutta)
@@ -289,6 +347,8 @@ def edm_sampler(score_model,
     d_next = (x_euler - denoised_next) / sigma_next
 
     x = x_in + (sigma_next - sigma_hat) * 0.5 * (d + d_next)
+    if do_capture:
+      _capture_tensor("x", x)
 
 
     # Diagnostics logging
@@ -300,6 +360,17 @@ def edm_sampler(score_model,
   
   if diag:
     tensor_stats(x, "sampling/final_x")
+
+  if capture_enabled and capture_out is not None:
+    packed = {}
+    for key, values in capture_out.items():
+      if key in {"step", "sigma", "sigma_hat", "sigma_next"}:
+        packed[key] = torch.tensor(values)
+      elif len(values) > 0:
+        packed[key] = torch.stack(values, dim=0)
+      else:
+        packed[key] = torch.empty(0)
+    return x, packed
 
   return x
 
