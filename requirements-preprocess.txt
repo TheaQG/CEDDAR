@@ -1,0 +1,6 @@
+# Optional data-correlation/download tools; not required for model inference.
+-r requirements.txt
+scikit-learn==1.2.2
+cdsapi
+# ERA5 regridding also needs the CDO executable installed by the host administrator.
+# Archive `python -m pip freeze` after installing these optional tools.

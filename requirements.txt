@@ -1,45 +1,14 @@
-# ==============================================
-# Core numeric and array libraries
-# ==============================================
-numpy
-scipy
-xarray
-
-# ==============================================
-# IO and data formats
-# ==============================================
-zarr
-netCDF4
-
-# ==============================================
-# PyTorch ecosystem (CPU or GPU)
-# ==============================================
-torch
-torchvision
-
-# ==============================================
-# Configuration and YAML
-# ==============================================
-omegaconf
-pyyaml
-
-# ==============================================
-# Plotting and mapping
-# ==============================================
-matplotlib
-
-# ==============================================
-# Climate data processing tools
-# ==============================================
-cdsapi
-cdo
-
-# ==============================================
-# Progress bars
-# ==============================================
-tqdm
-
-# ==============================================
-# Machine learning utilities
-# ==============================================
-scikit-learn
+# Python 3.11 reference environment for model training, inference and evaluation.
+# ATMO CPU wheel installation: see repro/README.md. Keep torch/torchvision paired.
+# These are revision validation pins, not recovered historical LUMI versions.
+torch==2.2.0
+torchvision==0.17.0
+numpy==1.25.2
+scipy==1.11.4
+zarr==2.13.3
+numcodecs==0.11.0
+netCDF4==1.6.5
+omegaconf==2.3.0
+PyYAML==6.0.1
+matplotlib==3.7.1
+tqdm==4.65.0
