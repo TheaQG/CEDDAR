@@ -681,6 +681,9 @@ class TrainingPipeline_general:
             logger.info(f"→ Loaded model weights into the main model from checkpoint {checkpoint_path}")
         else:
             raise KeyError(f"Checkpoint at {checkpoint_path} does not contain 'network_params' or 'ema_network_params'.")
+        from sbgm.provenance import checkpoint_info
+        key = 'ema_network_params' if load_ema and ema_sd is not None else 'network_params'
+        self.model._ceddar_checkpoint = checkpoint_info(checkpoint_path, key)
         
         # Load rain-gate parameters if present in checkpoint
         try:

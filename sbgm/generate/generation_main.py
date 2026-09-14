@@ -1,3 +1,4 @@
+from sbgm.provenance import checkpoint_info
 import os 
 import logging
 import numpy as np
@@ -79,6 +80,7 @@ def generation_main(cfg):
         raise KeyError(f"Checkpoint missing '{sd_key}' (available keys: {list(ckpt.keys())}): {ckpt_path}")
 
     model.load_state_dict(ckpt[sd_key])
+    model._ceddar_checkpoint = checkpoint_info(ckpt_path, sd_key)
     model.eval()
     logger.info(f"[generation_main] Loaded checkpoint ({sd_key}): {ckpt_path}")
 

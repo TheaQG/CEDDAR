@@ -162,6 +162,9 @@ def train_main(cfg):
         logger.info(f"          ▸ Number of non-trainable parameters in model: {sum(p.numel() for p in model.parameters() if not p.requires_grad):,}")
 
     # Perform training
+    from sbgm.provenance import write_provenance
+    write_provenance(cfg['paths']['log_dir'], cfg, stage="training", device=device,
+                     checkpoint=getattr(model, "_ceddar_checkpoint", None))
     logger.info(f"\n\n          === STARTING TRAINING MAIN LOOP ===\n")
     pipeline.train(train_dataloader,
                    val_dataloader,

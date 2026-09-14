@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from venv import logger
 import numpy as np
+from sbgm.provenance import checkpoint_info
 import torch
 import matplotlib.pyplot as plt
 
@@ -88,6 +89,7 @@ def quicklook_from_runner(cfg):
     model, ckpt_dir, ckpt_name = get_model(cfg)
     ckpt = torch.load(os.path.join(ckpt_dir, ckpt_name), map_location=device)
     model.load_state_dict(ckpt["network_params"])
+    model._ceddar_checkpoint = checkpoint_info(os.path.join(ckpt_dir, ckpt_name), "network_params")
     model.eval()
 
     # --- Data (full loader, then subselect) ---

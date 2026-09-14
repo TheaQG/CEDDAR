@@ -1,3 +1,4 @@
+from sbgm.provenance import checkpoint_info
 import os
 import logging
 from pathlib import Path
@@ -140,6 +141,7 @@ def generation_sampler_grid_main(cfg):
     if "network_params" not in ckpt:
         raise KeyError(f"Checkpoint missing 'network_params': {ckpt_path}")
     model.load_state_dict(ckpt["network_params"])
+    model._ceddar_checkpoint = checkpoint_info(ckpt_path, "network_params")
     model.eval()
     logger.info(f"[generation_sampler_grid_main] Loaded checkpoint: {ckpt_path}")
 

@@ -22,6 +22,8 @@ from tqdm import tqdm
 from sbgm.special_transforms import build_back_transforms_from_stats, lr_baseline_to_hr_zspace
 from sbgm.utils import extract_samples, get_model_string
 from sbgm.score_sampling import edm_sampler
+from sbgm.provenance import effective_sampler_settings, write_provenance
+from sbgm.runtime import external_output
 from sbgm.monitoring import (
     report_precip_extremes,
 )
@@ -125,7 +127,8 @@ class GenerationRunner:
         self.model = model
         self.cfg = cfg
         self.device = device
-        self.out_root = out_root
+        self.quicklook = quicklook
+        self.out_root = external_output(out_root)
         # Ensure base output root exists even for quicklook (no subdirs yet=> 
         self.out_root.mkdir(parents=True, exist_ok=True)
         self.gen_config = gen_config
@@ -599,7 +602,7 @@ class GenerationRunner:
 
             # Sample ensemble (model space)
             if self._sampler_kind == 'edm':
-                generated = self._sampler_fn(
+                sampler_kwargs = dict(
                     score_model=self.model,
                     batch_size=M,
                     num_steps=steps,
@@ -620,6 +623,15 @@ class GenerationRunner:
                     cfg_guidance=guidance_cfg if guidance_cfg.get('enabled', False) else None,
                     sigma_star=float(edm_cfg.get('sigma_star', 1.0)),
                 )
+                if n_days == 0 and (save or self.quicklook):
+                    write_provenance(
+                        self.out_root / 'meta', self.cfg, stage="generation",
+                        device=next(self.model.parameters()).device,
+                        checkpoint=getattr(self.model, "_ceddar_checkpoint", None),
+                        sampler=effective_sampler_settings(self._sampler_fn, sampler_kwargs),
+                        first_date=str(date0), ensemble_size=M,
+                    )
+                generated = self._sampler_fn(**sampler_kwargs)
             else:
                 raise NotImplementedError("Currently only EDM sampler is supported in generation.")
             
