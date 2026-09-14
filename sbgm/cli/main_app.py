@@ -20,6 +20,9 @@ import logging
 
 
 
+from sbgm.runtime import setup_environment
+setup_environment()  # Before plotting imports, so caches are external too.
+
 from sbgm.utils import get_model_string, load_config
 from sbgm.logging_utils import (
     cfg_hash, make_run_name, ensure_run_dir,
@@ -120,6 +123,10 @@ def main():
     logger.info("Log file        : %s", log_path)
     logger.info("Model key       : %s", model_name)
     logger.info("Cfg hash        : %s", h)
+
+    if args.dry_run:
+        logger.info("Configuration and environment check complete; no model work requested.")
+        return
 
     # Imports kept here to avoid circular imports
     from sbgm.cli import (

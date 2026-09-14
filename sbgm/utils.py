@@ -499,6 +499,8 @@ def load_config(config_path):
     """
         Loads and resolves an OmegaConf configuration
     """
+    from sbgm.runtime import setup_environment, validate_output_paths
+    setup_environment()
     if not OmegaConf.has_resolver("env"):
         OmegaConf.register_new_resolver("env", lambda x: os.environ.get(x))
     
@@ -508,6 +510,7 @@ def load_config(config_path):
     cfg = OmegaConf.load(config_path)
     cfg = OmegaConf.to_container(cfg, resolve=True)
     cfg = OmegaConf.create(cfg)
+    validate_output_paths(cfg)
 
     return cfg
 
