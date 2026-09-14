@@ -69,6 +69,7 @@ def main():
     parser.add_argument("--skip_evaluation", action="store_true")
     parser.add_argument("--make_plots", action="store_true", help="If set, make publication-ready plots after evaluation.")
     parser.add_argument("--dry_run", action="store_true", help="If set, no actual training/generation/evaluation will be performed, only config parsing and logging setup.")
+    parser.add_argument("--device", choices=["cpu", "cuda"], help="Override training.device for this invocation")
     args = parser.parse_args()
 
 
@@ -83,6 +84,8 @@ def main():
         else:
             raise RuntimeError("Expected a DictConfig or a single-element ListConfig containing a DictConfig for cfg.")
     cfg = cast(DictConfig, cfg)
+    if args.device is not None:
+        cfg.training.device = args.device
 
     # # Apply baseline CLI overrides if provided
     # if args.baseline_type is not None:

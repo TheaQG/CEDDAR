@@ -990,7 +990,8 @@ def get_model(cfg):
     logger.info(f"Input channels: {input_channels}")
     logger.info(f"Output channels: {output_channels}")
 
-    device = get_device()
+    # Honour an explicit CPU choice even on a CUDA host; otherwise retain auto-selection.
+    device = torch.device('cpu') if cfg.get('training', {}).get('device') == 'cpu' else get_device()
 
     # === Model architecture knobs (decoder upsampling/norm/activation) ===
     model_cfg = cfg.get('model', {})
