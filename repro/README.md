@@ -11,8 +11,9 @@ paths for your account; run the install commands from the repository root:
 
 ```bash
 python3.11 -m venv /external/envs/ceddar-revision
-source /external/envs/ceddar-revision/bin/activate
-python -m pip install torch==2.2.0 torchvision==0.17.0 --index-url https://download.pytorch.org/whl/cpu
+source /external/envs/ceddar-revision/bin/activate.csh
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install torch==2.2.0 torchvision==0.17.0 --extra-index-url https://download.pytorch.org/whl/cpu
 python -m pip install -r requirements.txt
 python -m pip check
 mkdir -p /external/CEDDAR_runs/environment
