@@ -20,3 +20,16 @@ container/modules and external Slurm log destinations. It was not validated by t
 CPU infrastructure revision. Previous runtime/metric ranges were not verified
 acceptance criteria and have been removed. Real-data training and GPU validation
 remain separate from the synthetic smoke test.
+
+Purpose: Does a reduced but scientifically meaningful CEDDAR experiment behave sensibly?
+
+Runs with:
+    - Real data
+    - Trains model from scratch
+    - Generation
+    - Evaluation
+    - 15 epochs
+    - 8 ensemble members
+    - Up to 20 dates
+    - Several evaluation tasks
+Is a potentially substantial CPU job
