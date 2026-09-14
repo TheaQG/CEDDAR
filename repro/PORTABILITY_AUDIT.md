@@ -31,6 +31,23 @@ paths require following the owning root in the table above. Historical templates
 not globally rewritten: changing dozens of unrelated HPC/download jobs would obscure
 the small, reviewable model-infrastructure change.
 
+Concrete baseline examples (line numbers in `v1.0.2`):
+
+- `bash_component_study/B1s/run_B1_G.sh:51-60`: reconstructs `/scratch/.../Code/CEDDAR`
+  and places samples/checkpoints/evaluation/logs underneath it; line 71 creates `logs`
+  relative to the submission directory.
+- `sbgm/logging_utils.py:106,129,132`: opens the same RUN config/JSON/Markdown paths
+  with `w`, replacing provenance from previous invocations.
+- `data_analysis_pipeline/stats_analysis/data_stats_pipeline.py:34-35`: figure/statistics
+  fallbacks are `.`.
+- `data_analysis_pipeline/correlations/correlation_pipeline.py:97-106`: figure/statistics
+  fallbacks are relative paths followed by directory creation.
+
+The baseline inventory contains 3,776 candidate matches across 220 files (including
+comments and repeated classifications), not 3,776 independently confirmed writers.
+The inventory script reads Git blobs from `--ref v1.0.2`, so revision edits do not
+shift its evidence lines. `revision.txt` records the full commit it inspected.
+
 ## Dependencies
 
 Actual model/data/evaluation imports: torch, torchvision, numpy, scipy, zarr,
@@ -57,6 +74,11 @@ Version pins document the local Python 3.11 reference environment used for valid
 they do not claim to reconstruct the historical LUMI environment. The ATMO Linux
 environment must be installed and smoke-tested separately. Record the complete
 installed package set per run; CPU/CUDA/ROCm wheels are platform-specific.
+Local `pip check` additionally found missing Torch transitive dependency `fsspec`
+and unrelated `xmip`/`pysal` dependency conflicts. The functional checks passed in
+that environment, but it is not a clean installation validation. Normal installation
+of the requirements resolves Torch's declared dependencies; run `pip check` in a
+fresh ATMO environment and preserve its resolved freeze before scientific runs.
 
 ## Existing repro workflows
 

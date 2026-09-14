@@ -24,9 +24,14 @@ PATTERNS = {
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--ref", default="v1.0.2", help="Frozen Git reference to inspect")
     args = parser.parse_args()
+    if args.output.resolve().is_relative_to(ROOT):
+        parser.error('--output must be outside the source repository')
     args.output.mkdir(parents=True, exist_ok=True)
-    files = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
+    commit = subprocess.check_output(["git", "rev-parse", args.ref], cwd=ROOT).decode().strip()
+    (args.output / 'revision.txt').write_text(commit + '\n')
+    files = subprocess.check_output(["git", "ls-tree", "-r", "--name-only", "-z", commit], cwd=ROOT).decode().split("\0")
     with (args.output / "paths.tsv").open("w") as f, (args.output / "imports.tsv").open("w") as g:
         paths, imports = csv.writer(f, delimiter="\t"), csv.writer(g, delimiter="\t")
         paths.writerow(["file", "line", "kind", "comment", "source"])
@@ -35,7 +40,7 @@ def main():
             p = ROOT / name
             if p.suffix not in {".py", ".sh", ".yaml", ".yml"}:
                 continue
-            source = p.read_text()
+            source = subprocess.check_output(["git", "show", f"{commit}:{name}"], cwd=ROOT).decode()
             for lineno, line in enumerate(source.splitlines(), 1):
                 for kind, pattern in PATTERNS.items():
                     if re.search(pattern, line):
