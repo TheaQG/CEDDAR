@@ -115,3 +115,7 @@ Requested generation seed is recorded separately from a CPU RNG-state digest: th
 runner does not reseed each sweep point. This is not a full RNG-state checkpoint.
 Preserve output metadata/date lists, input data/statistics versions and original
 checkpoints separately; the manifest hashes the checkpoint, not the entire dataset.
+
+## Sigma* audit and revision
+
+See [the frozen-code audit](../docs/SIGMA_STAR_AUDIT.md) and [revision/ATMO instructions](../docs/SIGMA_STAR_REVISION.md). Prepare an isolated pilot with `bash repro/run_sigma_star.sh prepare --run-dir /external/runs/sigma_star_pilot`; generation and evaluation are separate explicit actions.
