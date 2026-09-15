@@ -18,6 +18,7 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(actual['sigma_star_mode'], 'global')
         self.assertEqual(actual['sigma_star'], 0.95)
         self.assertNotIn('score_model', actual)
+        kwargs['num_steps'] = 8  # Two steps cannot resolve the default late ramp.
         kwargs['sigma_star_mode'] = 'late_ramp'
         self.assertEqual(effective_sampler_settings(edm_sampler, kwargs)['sigma_star_mode'], 'late_ramp')
 

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import hashlib
 import importlib.metadata
 import inspect
+import json
 import os
 from pathlib import Path
 import platform
@@ -16,6 +17,7 @@ import torch
 import yaml
 
 from sbgm.runtime import SOURCE_ROOT, external_output
+from sbgm.sigma_control import build_edm_schedule
 
 
 def checkpoint_info(path, weights_key="network_params"):
@@ -46,6 +48,9 @@ def effective_sampler_settings(sampler, kwargs):
     settings = {k: v for k, v in bound.arguments.items() if k not in tensor_keys}
     settings["device"] = str(settings["device"])
     settings["name"] = sampler.__name__
+    if sampler.__name__ == "edm_sampler":
+        schedule_kwargs = {key: settings[key] for key in inspect.signature(build_edm_schedule).parameters}
+        _, settings["schedule"] = build_edm_schedule(**schedule_kwargs)
     return OmegaConf.to_container(OmegaConf.create(settings), resolve=True)
 
 
@@ -81,3 +86,36 @@ def write_provenance(directory, cfg, *, stage, device=None, checkpoint=None, sam
     with path.open("x") as f:
         yaml.safe_dump(manifest, f, sort_keys=False)
     return path
+
+
+def sigma_generation_metadata(base_dir, grid, cfg):
+    """Read observed sampler calls; config-derived plot labels are not evidence."""
+    from sbgm.sigma_control import sigma_star_kwargs
+    full = cfg.get("full_gen_eval", {})
+    expected = sigma_star_kwargs(cfg.get("edm", {}), full.get("sigma_control", {}))
+    records = []
+    for value in grid:
+        paths = sorted((Path(base_dir) / f"sigma_star={float(value):.2f}" / "meta").glob("*_generation_*.yaml"))
+        if not paths:
+            if full.get("sigma_control", {}).get("require_generation_manifest", False):
+                raise FileNotFoundError(f"Missing generation provenance for sigma*={value}")
+            records.append({"sigma_star": float(value), "sampler": None})
+            continue
+        if len(paths) != 1:
+            raise ValueError(f"Ambiguous generation provenance for sigma*={value}: {paths}")
+        if full.get("sigma_control", {}).get("require_generation_manifest", False):
+            completion = paths[0].parent / "manifest.json"
+            if not completion.is_file() or json.loads(completion.read_text()).get("n_days", 0) < 1:
+                raise ValueError(f"Generation did not complete for sigma*={value}")
+        manifest = yaml.safe_load(paths[0].read_text())
+        sampler = manifest["sampler"]
+        wanted = {**expected, "sigma_star": float(value)}
+        wanted.update({k: cfg['edm'][k] for k in
+                       ('sigma_min', 'sigma_max', 'rho', 'S_churn', 'S_min', 'S_max', 'S_noise')
+                       if k in cfg.get('edm', {})})
+        wanted['num_steps'] = int(cfg.get('edm', {}).get('sampling_steps', 40))
+        for key, value_expected in wanted.items():
+            if sampler.get(key) != value_expected:
+                raise ValueError(f"Generation/evaluation mismatch for {key}: {sampler.get(key)} != {value_expected}")
+        records.append({"sigma_star": float(value), "manifest": str(paths[0]), "sampler": sampler})
+    return records

@@ -440,9 +440,13 @@ def evaluate_sigma_control(
     k_ref_np: np.ndarray | None = None
     psd_acc_lr: DefaultDict[float, list[np.ndarray]] = defaultdict(list)
 
+    strict = bool(_cfg_get(cfg, "full_gen_eval.sigma_control.require_generation_manifest", False))
+    expected_dates = None
     for sigma_star in sigma_star_grid:
         subdir = gen_base_dir / f"sigma_star={float(sigma_star):.2f}"
         if not subdir.exists():
+            if strict:
+                raise FileNotFoundError(subdir)
             logger.warning(f"[sigma_control] Missing generation folder for sigma*={sigma_star:.2f}: {subdir}")
             continue
         logger.info("[sigma_control] σ*=%.2f | reading from %s",
@@ -457,6 +461,10 @@ def evaluate_sigma_control(
         dates = resolver.list_dates()
         if max_dates > 0:
             dates = dates[:max_dates]
+        if strict:
+            if not dates or (expected_dates is not None and dates != expected_dates):
+                raise ValueError("sigma* evaluation requires the same nonempty date list for every grid point")
+            expected_dates = dates
 
         logger.info("[sigma_control] σ*=%.2f | %d dates to evaluate (max_dates=%d)",
             float(sigma_star), len(dates), max_dates)
@@ -470,6 +478,8 @@ def evaluate_sigma_control(
 
             # sanity checks
             if hr is None or pmm is None or ens is None or lr is None:
+                if strict:
+                    raise ValueError(f"Missing physical arrays for {date} at sigma*={sigma_star}")
                 logger.info(f"[sigma_control] Skipping {date} (missing arrays)")
                 continue
 

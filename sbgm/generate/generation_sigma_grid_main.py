@@ -4,11 +4,12 @@ import logging
 from pathlib import Path
 import numpy as np
 import torch
-from typing import Any
 
 from sbgm.training_utils import get_model, get_final_gen_dataloader
 from sbgm.generate.generation import GenerationRunner, GenerationConfig
 from sbgm.utils import get_model_string
+from sbgm.sigma_control import build_edm_schedule, sigma_star_kwargs
+from sbgm.runtime import external_output
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ def _resolve_base_out_dir(cfg) -> Path:
         sample_dir = cfg["paths"]["sample_dir"]
     else:
         raise KeyError("Could not resolve cfg.paths.sample_dir")
-    base = Path(sample_dir) / "generation" / model_name_str
+    base = external_output(Path(sample_dir) / "generation" / model_name_str)
     base.mkdir(parents=True, exist_ok=True)
     return base
 
@@ -51,25 +52,36 @@ def _build_generation_config(cfg, out_root: Path) -> GenerationConfig:
     )
 
 
-# Helper: float or None
-def _float_or_none(x: Any):
-    if x is None:
-        return None
-    try:
-        return float(x)
-    except Exception:
-        return None
-
 def generation_sigma_grid_main(cfg):
     """
     Generate ensembles across a grid of sigma_star values.
     For each sigma_star, outputs go to:
       <sample_dir>/generation/<model_name>/sigma_star=<val>/
     """
+    full = cfg.get('full_gen_eval', {})
+    edm = cfg.get('edm', {})
+    controls = sigma_star_kwargs(edm, full.get('sigma_control', {}))
+    values = full.get('sigma_star_grid', [1.0])
+    grid = [float(values)] if isinstance(values, (int, float)) else [float(v) for v in values]
+    names = [f"sigma_star={v:.2f}" for v in grid]
+    if not grid or len(set(names)) != len(grid):
+        raise ValueError("sigma_star_grid must be nonempty and unique at two-decimal output precision")
+    # Validate every trajectory before loading weights or generating any grid point.
+    for value in grid:
+        build_edm_schedule(
+            num_steps=int(edm.get('sampling_steps', 40)),
+            **{k: edm[k] for k in ('sigma_min', 'sigma_max', 'rho', 'S_churn', 'S_min', 'S_max', 'S_noise') if k in edm},
+            **{**controls, 'sigma_star': value},
+        )
+    base_out = _resolve_base_out_dir(cfg)
+    if any((base_out / name).exists() for name in names):
+        raise FileExistsError(f"Existing sigma* outputs under {base_out}; use a fresh SAMPLE_DIR")
+
     # ----------------------- Seed -----------------------
     seed = int(getattr(getattr(cfg, "full_gen_eval", {}), "seed", 1234) if not isinstance(cfg, dict) else cfg.get("full_gen_eval", {}).get("seed", 1234))
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
     np.random.seed(seed)
 
     # ----------------------- Device -----------------------
@@ -81,7 +93,7 @@ def generation_sigma_grid_main(cfg):
 
     # ----------------------- Model & checkpoint -----------------------
     model, ckpt_dir, ckpt_name = get_model(cfg)
-    ckpt_path = os.path.join(ckpt_dir, ckpt_name)
+    ckpt_path = cfg.get("paths", {}).get("inference_checkpoint") or os.path.join(ckpt_dir, ckpt_name)
     ckpt = torch.load(ckpt_path, map_location=device)
     if "network_params" not in ckpt:
         raise KeyError(f"Checkpoint missing 'network_params': {ckpt_path}")
@@ -124,84 +136,16 @@ def generation_sigma_grid_main(cfg):
 
     gen_dataloader = get_final_gen_dataloader(cfg, split=split_for_dataset)
 
-    # ----------------------- Sigma* values -----------------------
-    full_gen_eval = cfg.get('full_gen_eval', {}) if isinstance(cfg, dict) else getattr(cfg, "full_gen_eval", {})
-    grid = full_gen_eval.get('sigma_star_grid', [1.0]) if isinstance(full_gen_eval, dict) else getattr(full_gen_eval, "sigma_star_grid", [1.0])
-    if isinstance(grid, (float, int)):
-        grid = [float(grid)]
-    grid = [float(x) for x in grid]
-    logger.info(f"[generation_sigma_grid_main] sigma_star_grid = {grid}")
-
-    # ----------------------- Sigma* ramp settings (optional late-step control) -----------------------
-    scfg = full_gen_eval.get('sigma_control', {}) if isinstance(full_gen_eval, dict) else getattr(full_gen_eval, "sigma_control", {})
-    edm_cfg = cfg.get('edm', {}) if isinstance(cfg, dict) else getattr(cfg, "edm", {})
-    ramp_mode = str(scfg.get('sigma_star_mode', edm_cfg.get('sigma_star_mode', 'global')) if isinstance(scfg, dict) else getattr(scfg, "sigma_star_mode", getattr(edm_cfg, "sigma_star_mode", "global")))
-    ramp_start_frac = float(scfg.get('ramp_start_frac', edm_cfg.get('ramp_start_frac', 0.60)) if isinstance(scfg, dict) else getattr(scfg, "ramp_start_frac", getattr(edm_cfg, "ramp_start_frac", 0.60)))
-    ramp_end_frac   = float(scfg.get('ramp_end_frac', edm_cfg.get('ramp_end_frac', 0.85)) if isinstance(scfg, dict) else getattr(scfg, "ramp_end_frac", getattr(edm_cfg, "ramp_end_frac", 0.85)))
-    ramp_start_sigma = _float_or_none(scfg.get('ramp_start_sigma', getattr(getattr(cfg, 'edm', {}), 'ramp_start_sigma', None) if not isinstance(cfg, dict) else cfg.get('edm', {}).get('ramp_start_sigma', None)))
-    ramp_end_sigma   = _float_or_none(scfg.get('ramp_end_sigma',   getattr(getattr(cfg, 'edm', {}), 'ramp_end_sigma',   None) if not isinstance(cfg, dict) else cfg.get('edm', {}).get('ramp_end_sigma',   None)))
-
-    # ----------------------- Base output -----------------------
-    base_out = _resolve_base_out_dir(cfg)
-
-    # ----------------------- Loop over sigma* -----------------------
+    # Keep the original sequential RNG stream; the manifest records this scope.
     for sstar in grid:
-        # 1) Set effective sigma_star in config (read by GenerationRunner via edm_cfg)
-        if isinstance(cfg, dict):
-            cfg.setdefault('edm', {})
-            cfg['edm']['sigma_star'] = float(sstar)
-            # --- Push ramp settings into cfg.edm for sampler ---
-            cfg['edm']['sigma_star_mode'] = ramp_mode
-            cfg['edm']['ramp_start_frac'] = ramp_start_frac
-            cfg['edm']['ramp_end_frac']   = ramp_end_frac
-            cfg['edm']['ramp_start_sigma'] = ramp_start_sigma
-            cfg['edm']['ramp_end_sigma']   = ramp_end_sigma
-        else:
-            if not hasattr(cfg, 'edm'):
-                cfg.edm = type('EDM', (), {})()
-            cfg.edm.sigma_star = float(sstar) # type: ignore
-            cfg.edm.sigma_star_mode = ramp_mode # type: ignore
-            cfg.edm.ramp_start_frac = ramp_start_frac # type: ignore
-            cfg.edm.ramp_end_frac   = ramp_end_frac # type: ignore
-            cfg.edm.ramp_start_sigma = ramp_start_sigma # type: ignore
-            cfg.edm.ramp_end_sigma   = ramp_end_sigma # type: ignore
-
-        # Mirror into full_gen_eval.sigma_control for components that read from there
-        if not hasattr(cfg, 'full_gen_eval') and isinstance(cfg, dict):
-            cfg.setdefault('full_gen_eval', {})
-        if hasattr(cfg, 'full_gen_eval') and not hasattr(cfg.full_gen_eval, 'sigma_control') and not isinstance(cfg, dict): # type: ignore
-            setattr(cfg.full_gen_eval, 'sigma_control', {})
-        sc = cfg['full_gen_eval'].get('sigma_control', {}) if isinstance(cfg, dict) else cfg.full_gen_eval.sigma_control
-        try:
-            sc['sigma_star_mode'] = ramp_mode
-            sc['ramp_start_frac'] = ramp_start_frac
-            sc['ramp_end_frac'] = ramp_end_frac
-            sc['ramp_start_sigma'] = ramp_start_sigma
-            sc['ramp_end_sigma'] = ramp_end_sigma
-        except TypeError:
-            # If sc is an object-like config
-            setattr(sc, 'sigma_star_mode', ramp_mode)
-            setattr(sc, 'ramp_start_frac', ramp_start_frac)
-            setattr(sc, 'ramp_end_frac', ramp_end_frac)
-            setattr(sc, 'ramp_start_sigma', ramp_start_sigma)
-            setattr(sc, 'ramp_end_sigma', ramp_end_sigma)
-
-        logger.info(f"[generation_sigma_grid_main] σ*: {sstar:.2f} | mode={ramp_mode} | ramp_frac=({ramp_start_frac:.2f},{ramp_end_frac:.2f}) | ramp_sigma=({ramp_start_sigma},{ramp_end_sigma})")
-
-        # 2) Subdir for this sigma*
+        cfg['edm'].update(controls)
+        cfg['edm']['sigma_star'] = sstar
         subdir = base_out / f"sigma_star={sstar:.2f}"
-        subdir.mkdir(parents=True, exist_ok=True)
-
-        # 3) Build runner config, pointing to subdir
+        # No resume/overwrite: a directory must represent one sampler invocation.
+        subdir.mkdir(exist_ok=False)
+        logger.info("[generation_sigma_grid_main] sigma*=%s, controls=%s", sstar, controls)
         gen_cfg = _build_generation_config(cfg, subdir)
-
-        # 4) Run generator
-        logger.info(f"[generation_sigma_grid_main] Generating for sigma_star={sstar:.2f} -> {subdir}")
-        try:
-            runner = GenerationRunner(model=model, cfg=cfg, device=device, out_root=subdir, gen_config=gen_cfg)
-        except TypeError as e:
-            logger.warning(f"[generation_sigma_grid_main] GenerationRunner signature issue, retrying without out_root: {e}")
-            runner = GenerationRunner(model=model, cfg=cfg, device=device, gen_config=gen_cfg) # type: ignore
+        runner = GenerationRunner(model=model, cfg=cfg, device=device, out_root=subdir, gen_config=gen_cfg)
         runner.run(gen_dataloader)
 
     logger.info(f"[generation_sigma_grid_main] Done. Outputs at: {base_out}")

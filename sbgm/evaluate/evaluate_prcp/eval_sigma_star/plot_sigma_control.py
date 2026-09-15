@@ -671,7 +671,7 @@ def plot_sigma_control_psd_curves(out_dir: str | Path, sigma_subset=None) -> str
     ax.set_xlim(lam.max()*1.02, min(lam.min()*0.98, 1.0 / lr_nyq if lr_nyq > 0.0 else lam.min()*0.98)) 
     ax.set_xlabel("Wavelength λ (km)")
     ax.set_ylabel("Spectral power")
-    ax.set_title(r"Mean ensemble PSDs vs wavelength across $\sigma^*$")
+    ax.set_title(r"PSD of ensemble mean vs wavelength across $\sigma^*$")
     ax.grid(True, which="both", ls=":", alpha=0.5)
     handles, labels = ax.get_legend_handles_labels()
     uniq = dict(zip(labels, handles))

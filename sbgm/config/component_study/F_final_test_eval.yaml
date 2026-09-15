@@ -205,7 +205,7 @@ edm:
   P_std: 1.2 # Standard deviation of P for EDM
   sigma_data: 1.0 # Data is assumed N(0,1) after normalization
   sigma_min: 0.002 # Minimum sigma for EDM
-  sigma_star: 1.0 # Sigma star for EDM (training)
+  sigma_star: 1.0 # Inference-only schedule multiplier; not a training parameter
   sigma_max: 80 # Maximum sigma for EDM
   rho: 7.0 # Rho parameter for EDM
   # Starting with modest churn, can increase later if samples too smooth
@@ -320,6 +320,8 @@ full_gen_eval:
   sigma_star_grid: [0.80, 0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15, 1.20, 1.25]
 
   sigma_control:
+    # Revision: these controls now reach the sampler. Frozen v1.0.2 used global.
+    sigma_star_initial_state: schedule # legacy_sigma_max only for historical comparisons
     sigma_star_mode: late_ramp
     ramp_start_frac: 0.60
     ramp_end_frac: 0.85

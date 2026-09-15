@@ -9,6 +9,7 @@
 """
 
 from __future__ import annotations
+from sbgm.sigma_control import sigma_star_kwargs
 import json
 import logging
 from dataclasses import dataclass
@@ -621,7 +622,7 @@ class GenerationRunner:
                     S_noise=float(edm_cfg.get('S_noise', self.gen_config.S_noise)),
                     lr_ups=lr_ups_M,
                     cfg_guidance=guidance_cfg if guidance_cfg.get('enabled', False) else None,
-                    sigma_star=float(edm_cfg.get('sigma_star', 1.0)),
+                    **sigma_star_kwargs(edm_cfg),
                 )
                 if n_days == 0 and (save or self.quicklook):
                     write_provenance(

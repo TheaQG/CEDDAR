@@ -6,6 +6,7 @@ import math
 import numpy as np
 
 from sbgm.monitoring import tensor_stats
+from sbgm.sigma_control import build_edm_schedule
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,8 @@ def edm_sampler(score_model,
                 cfg_diagnostics: dict | None = None,
                 *,
                 sigma_star: float = 1.0,
-                # --- scale-aware control (late-step ramp) ---
+                sigma_star_initial_state: str = "schedule",  # or legacy_sigma_max
+                # --- schedule control (global or late-step ramp) ---
                 sigma_star_mode: str = "global",   # "global" or "late_ramp"
                 ramp_start_frac: float = 0.60,     # start of ramp as fraction of steps (0..1)
                 ramp_end_frac: float = 0.85,       # end of ramp as fraction of steps (0..1)
@@ -46,6 +48,18 @@ def edm_sampler(score_model,
       Expects score_model(x_t, sigma, cond_img=..., lsm_cond=..., topo_cond=..., y=..., lr_ups=...) -> x0_hat.
       Returns a tensor shaped like the model outputs (i.e. a sample batch, shape (B, C, H, W)).
   """
+  sigmas, schedule = build_edm_schedule(
+      num_steps=num_steps, sigma_min=float(sigma_min), sigma_max=float(sigma_max),
+      rho=float(rho), S_churn=S_churn, S_min=S_min, S_max=S_max, S_noise=S_noise,
+      sigma_star=sigma_star, sigma_star_mode=sigma_star_mode,
+      ramp_start_frac=ramp_start_frac, ramp_end_frac=ramp_end_frac,
+      ramp_start_sigma=ramp_start_sigma, ramp_end_sigma=ramp_end_sigma,
+      sigma_star_initial_state=sigma_star_initial_state, device=device,
+  )
+  S_min_eff, S_max_eff = schedule["S_min_effective"], schedule["S_max_effective"]
+  logger.info("[sampler] initial_state=%s, initial_std=%s, first_sigma=%s",
+              sigma_star_initial_state, schedule["initial_std"], float(sigmas[0]))
+
   # Move all conditional tensors to the correct device
   def to_dev(t): return None if t is None else t.to(device)
   cond_img, lsm_cond, topo_cond, y, lr_ups = map(to_dev, (cond_img, lsm_cond, topo_cond, y, lr_ups))
@@ -122,73 +136,6 @@ def edm_sampler(score_model,
   drop_lr_ups_in_uncond = bool(cfg_guidance and cfg_guidance.get('drop_lr_ups_in_uncond', False))
   null_lr_ups = _null_lr_like(lr_ups) if (cfg_enabled and lr_ups is not None and drop_lr_ups_in_uncond) else lr_ups
 
-  # Build Karras sigma (noise) schedule (decreasing)
-  def get_sigmas_K(n_steps, s_min, s_max, rho_):
-    i = torch.arange(n_steps, device=device, dtype=torch.float32) # 0, ..., n_steps-1
-    ramp = i / max(n_steps - 1, 1) # in [0, 1]
-    min_inv = s_min ** (1 / rho_) # Karras min
-    max_inv = s_max ** (1 / rho_) # Karras max
-    sig = (max_inv + ramp * (min_inv - max_inv)) ** rho_ # Karras sigma
-    return sig
-  
-  def _smoothstep01(x: torch.Tensor) -> torch.Tensor:
-      # clamp to [0,1] then apply smoothstep 3x^2 - 2x^3
-      x = torch.clamp(x, 0.0, 1.0)
-      return x * x * (3.0 - 2.0 * x)
-    
-  # Build base sigma schedule
-  sigmas = get_sigmas_K(num_steps, float(sigma_min), float(sigma_max), float(rho))
-
-  # === Scale-aware sigma_star inference knob ===
-  if not torch.is_tensor(sigmas):
-      sigmas = torch.tensor(sigmas, dtype=torch.float32, device=device)
-
-  # Build per-step scale factors f_i
-  if sigma_star_mode.lower() == "global":
-      f = torch.full_like(sigmas, float(sigma_star))
-  else:
-      # Late-step ramp: start~end window in which the scale increases from 1 -> sigma_star
-      N = int(sigmas.shape[0])
-
-      if (ramp_start_sigma is not None) and (ramp_end_sigma is not None):
-          # Use sigma thresholds (later steps have smaller sigma)
-          if torch.any(sigmas <= float(ramp_start_sigma)):
-              i0 = int(torch.nonzero(sigmas <= float(ramp_start_sigma), as_tuple=False).min().item())
-          else:
-              i0 = int(0.6 * (N - 1))
-          if torch.any(sigmas <= float(ramp_end_sigma)):
-              i1 = int(torch.nonzero(sigmas <= float(ramp_end_sigma), as_tuple=False).min().item())
-          else:
-              i1 = int(0.85 * (N - 1))
-      else:
-          # Fractional indices
-          i0 = max(0, min(int(round(ramp_start_frac * (N - 1))), N - 1))
-          i1 = max(i0, min(int(round(ramp_end_frac   * (N - 1))), N - 1))
-
-      idx = torch.arange(N, device=device, dtype=torch.float32)
-      denom = max(float(i1 - i0), 1.0)
-      t = (idx - float(i0)) / denom
-      w = _smoothstep01(t)
-      w = torch.where(idx < i0, torch.zeros_like(w), w)
-      w = torch.where(idx > i1, torch.ones_like(w), w)
-      f = 1.0 + (float(sigma_star) - 1.0) * w
-
-  # Apply per-step scaling
-  sigmas = f * sigmas
-
-  # Effective churn window:
-  # - global: keep scaling bounds
-  # - late_ramp: leave bounds in original units; scaled 'sigma' already controls entry.
-  if sigma_star_mode.lower() == "global":
-      S_min_eff = float(S_min) * float(sigma_star)
-      S_max_eff = float(S_max) * float(sigma_star)
-  else:
-      S_min_eff = float(S_min)
-      S_max_eff = float(S_max)
-
-  # Append terminal sigma=0 step
-  sigmas = torch.cat([sigmas, sigmas.new_zeros(1)]) # add sigma=0 for final step
-
   # Infer spatial shape
   shape_hint = None
   for tns in (cond_img, lsm_cond, topo_cond):
@@ -207,8 +154,8 @@ def edm_sampler(score_model,
     C_out = 1
 
   B = int(batch_size)
-  # Initial sample: Gaussian noise with sigma_max stddev
-  x = torch.randn(B, C_out, H, W, device=device) * float(sigma_max)
+  # Initial sample: match the scaled first endpoint, or explicitly reproduce v1.0.2.
+  x = torch.randn(B, C_out, H, W, device=device) * schedule["initial_std"]
 
   if lr_ups is not None and (lr_ups.shape[0] != x.shape[0] or lr_ups.shape[2:] != x.shape[2:]):
       raise ValueError(f"lr_ups shape {lr_ups.shape} does not match the expected batch size {x.shape[0]} and spatial shape {x.shape[2:]}")

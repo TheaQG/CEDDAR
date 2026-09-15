@@ -43,6 +43,7 @@ from sbgm.monitoring import (
     _plot_reliability_curve
     )
 from sbgm.score_sampling import Euler_Maruyama_sampler, pc_sampler, ode_sampler, edm_sampler
+from sbgm.sigma_control import sigma_star_kwargs
 from sbgm.training_utils import get_loss_fn, apply_cfg_dropout
 from sbgm.variable_utils import get_units
 
@@ -1522,7 +1523,7 @@ class TrainingPipeline_general:
                                             S_noise=float(edm_cfg.get('S_noise', 1.0)),
                                             lr_ups=lr_ups_baseline,
                                             cfg_guidance=guidance_cfg if guidance_cfg.get('enabled', False) else None,
-                                            sigma_star=float(edm_cfg.get('sigma_star', 1.0)),
+                                            **sigma_star_kwargs(edm_cfg),
                 )
             elif sampler is not None:
                 generated_samples = sampler(
