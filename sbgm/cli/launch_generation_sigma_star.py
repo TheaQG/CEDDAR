@@ -22,6 +22,9 @@ import sys
 from pathlib import Path
 from typing import List, Optional, cast
 
+from sbgm.runtime import setup_environment
+setup_environment()
+from sbgm.utils import load_config, get_model_string
 from omegaconf import OmegaConf, DictConfig
 
 from sbgm.generate.generation_sigma_grid_main import generation_sigma_grid_main
@@ -117,7 +120,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     # Load OmegaConf config
-    cfg = cast(DictConfig, OmegaConf.load(str(cfg_path)))
+    cfg = cast(DictConfig, load_config(str(cfg_path)))
 
     # Basic sanity check for paths.sample_dir
     if "paths" not in cfg or "sample_dir" not in cfg.paths:

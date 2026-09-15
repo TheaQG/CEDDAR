@@ -21,6 +21,9 @@ import sys
 from pathlib import Path
 from typing import Optional, List, cast
 
+from sbgm.runtime import setup_environment
+setup_environment()
+from sbgm.utils import load_config, get_model_string
 from omegaconf import OmegaConf, DictConfig
 
 from sbgm.evaluate.evaluate_prcp.eval_sigma_star.evaluate_sigma_control import run as run_sigma_star_eval
@@ -37,7 +40,7 @@ def run(cfg: DictConfig, make_plots: bool = True, make_examples: bool = False):
     out_dir = run_sigma_star_eval(cfg, make_plots=make_plots)
 
     if make_examples:
-        model_name = cfg.experiment.name
+        model_name = get_model_string(cfg)
         gen_base = Path(cfg.paths.sample_dir) / "generation" / model_name
         sigma_grid = list(cfg.full_gen_eval.sigma_star_grid)
         plot_sigma_control_examples_grid(            cfg,
@@ -82,7 +85,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         logger.error(f"Config not found: {cfg_path}")
         return 2
 
-    cfg = cast(DictConfig, OmegaConf.load(str(cfg_path)))
+    cfg = cast(DictConfig, load_config(str(cfg_path)))
 
     make_plots = not args.no_plots
     make_examples = bool(args.make_examples)

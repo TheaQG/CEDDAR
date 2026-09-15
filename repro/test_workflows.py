@@ -61,6 +61,32 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn('Missing file:', result.stderr)
             self.assertFalse(output.exists())
 
+    def test_sigma_prepare_isolated_and_never_generates(self):
+        import yaml
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            checkpoint = root / 'renamed checkpoint.pth.tar'
+            checkpoint.write_bytes(b'not loadable; prepare must not load this')
+            run = root / 'sigma run'
+            env = {**os.environ, 'DATA_DIR': tmp, 'STATS_LOAD_DIR': tmp,
+                   'PUBLISHED_CHECKPOINT': str(checkpoint), 'PYTHON': sys.executable,
+                   'SAMPLE_DIR': str(root / 'old smoke samples'), 'DEVICE': 'cpu'}
+            command = ['bash', str(ROOT / 'repro/run_sigma_star.sh'), 'prepare', '--run-dir', str(run)]
+            result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            cfg = yaml.safe_load((run / 'resolved_config.yaml').read_text())
+            self.assertEqual(cfg['paths']['sample_dir'], str(run / 'samples'))
+            self.assertEqual(cfg['paths']['evaluation_dir'], str(run / 'evaluation'))
+            self.assertEqual(cfg['paths']['inference_checkpoint'], str(checkpoint))
+            self.assertEqual(cfg['full_gen_eval']['sigma_control']['sigma_star_mode'], 'late_ramp')
+            self.assertEqual(cfg['full_gen_eval']['sigma_star_grid'], [0.95, 1.0, 1.05])
+            self.assertEqual(cfg['full_gen_eval']['split'], 'valid')
+            self.assertEqual(cfg['training']['device'], 'cpu')
+            self.assertFalse((run / 'samples/generation').exists())
+            result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('never overwritten', result.stderr)
+
     def test_renamed_workflow_references_exist(self):
         for name in ('run_reduced_local.sh', 'run_reduced_lumi.sh'):
             source = (ROOT / 'repro/04_reduced_run' / name).read_text()
