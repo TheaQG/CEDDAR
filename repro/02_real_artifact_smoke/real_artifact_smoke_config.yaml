@@ -20,7 +20,7 @@ experiment:
 paths:
   data_dir: ${env:DATA_DIR} # Directory for input data
   checkpoint_dir: ${env:CKPT_DIR} # Directory for model checkpoints
-  checkpoint_name: sbgm_cfgTest.pth.tar  # Name of the checkpoint file
+  checkpoint_name: null  # The smoke runner loads the explicit --checkpoint path
   sample_dir: ${env:SAMPLE_DIR} # Directory for saving samples
   evaluation_dir: ${env:EVAL_DIR} # Directory for evaluation figures, stats etc.
   log_dir: ${env:LOG_DIR} # Directory for logs
@@ -372,7 +372,7 @@ full_gen_eval:
   do_temp: false
   do_feat: false
   do_dates: true #false
-  plot_only: true
+  plot_only: false # The smoke runner checks saved arrays directly; no plot-only success
 
   # Benchmark overlay settings
   baselines_overlay:

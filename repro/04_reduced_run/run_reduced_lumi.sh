@@ -31,7 +31,7 @@ export ACCOUNT USER_BASE ROOT_DIR CEDDAR_RUNS DATA_BASE DATA_DIR CONTAINER
 set -eo pipefail
 
 echo "----------------------------------------"
-echo " Running CEDDAR 02_reduced_run (LUMI) "
+echo " Running CEDDAR 04_reduced_run (LUMI) "
 echo "----------------------------------------"
 
 # --- Modules ---
@@ -41,7 +41,7 @@ module load singularity-userfilesystems singularity-CPEbits
 module load lumi-tools || true
 
 # --- Container ---
-# User can override when submitting: CONTAINER=/path/to/image.sif sbatch repro/02_reduced_run/run_reduced_lumi.sh
+# User can override when submitting: CONTAINER=/path/to/image.sif sbatch repro/04_reduced_run/run_reduced_lumi.sh
 CONTAINER="${CONTAINER:-${USER_BASE}/images/my_torch_container_with_plotting.sif}"
 
 # --- Paths (defaults; can be overridden at submit time) ---
@@ -55,10 +55,10 @@ CEDDAR_RUNS="${CEDDAR_RUNS:-$USER_DIR/runs/CEDDAR}"
 EXP_DATE="${EXP_DATE:-$(date -u +%Y%m%dT%H%M%SZ)}"
 
 # --- Output dirs (outside of repo) ---
-CKPT_DIR="$CEDDAR_RUNS/repro/02_reduced_run/outputs/checkpoints"
-SAMPLE_DIR="$CEDDAR_RUNS/repro/02_reduced_run/outputs/samples"
+CKPT_DIR="$CEDDAR_RUNS/repro/04_reduced_run/outputs/checkpoints"
+SAMPLE_DIR="$CEDDAR_RUNS/repro/04_reduced_run/outputs/samples"
 EVAL_DIR="$SAMPLE_DIR/evaluation"
-LOG_DIR="$CEDDAR_RUNS/repro/02_reduced_run/outputs/logs"
+LOG_DIR="$CEDDAR_RUNS/repro/04_reduced_run/outputs/logs"
 
 # --- Stats JSONs committed in repo ---
 STATS_LOAD_DIR="$ROOT_DIR/repro/assets/stats/statistics_run/stats"
@@ -90,7 +90,7 @@ mkdir -p "$MIOPEN_DB_DIR"
 export MIOPEN_USER_DB_PATH="$MIOPEN_DB_DIR/userdb.sql"
 export MIOPEN_SYSTEM_DB_PATH="$MIOPEN_DB_DIR/systemdb.sql"
 
-CFG="$ROOT_DIR/repro/02_reduced_run/reduced_run_config.yaml"
+CFG="$ROOT_DIR/repro/04_reduced_run/reduced_run_config.yaml"
 
 echo "[INFO] ROOT_DIR      = $ROOT_DIR"
 echo "[INFO] DATA_DIR      = $DATA_DIR"
@@ -110,4 +110,4 @@ srun singularity exec "$CONTAINER" bash -lc "
   python -m sbgm.cli.main_app --config '${CFG}'
 "
 
-echo "Done. Outputs in: $CEDDAR_RUNS/repro/02_reduced_run/outputs"
+echo "Done. Outputs in: $CEDDAR_RUNS/repro/04_reduced_run/outputs"
