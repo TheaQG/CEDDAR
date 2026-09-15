@@ -1,9 +1,9 @@
-Real training pipeline
+# 03_end_to_end_smoke: planned, not implemented
 
-Tests the complete training lifecycle.
+The future test should exercise real data loading, bounded training/validation,
+checkpoint save/reload, inference, inverse transforms and evaluation. Its workload
+and acceptance checks have not been implemented. The launcher deliberately exits 2;
+an empty script must not be mistaken for a passing training lifecycle test.
 
-Purpose: Can CEDDAR start from real training data, optimise a model, save it, reload it, generate from it, and evaluate the generated output?
-
-Keep real data/preprocessing pipeline but deliberately reduced neural network and workload
-
-Real input --> preprocessing --> training --> validation --> checkpoint save --> checkpoint reload --> generation --> inverse transform --> evaluation --> external artifact + provenance
+Use level 01/02 for inference checks. Level 04 runs an actual reduced training
+experiment and is not an automatic substitute for this bounded test.

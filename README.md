@@ -32,40 +32,25 @@ CEDDAR produces:
 - Probabilistic evaluation maps (e.g., mean CRPS)
 - Date-based diagnostics with CRPS and MAE
 
-The reduced reproducibility run (repro/02_reduced_run) generates figures similar to the examples above.
+The reduced reproducibility run (repro/04_reduced_run) generates figures similar to the examples above.
 
 ---
 
 ## Quickstart (Reproducibility)
 
-Install locally:
-```bash
-pip install -r requirements.txt
-```
+Follow the [portable setup guide](repro/README.md) for the external environment,
+CPU wheels, tcsh/bash syntax and run paths. Then start with:
 
-Download `Data_DiffMod_small` from Zenodo (link to be added) and place it next to the repository:
-```
-project_root/
-    CEDDAR/
-    Data_DiffMod_small/
-```
-
-### 01_small_test (CPU, smoke test)
 ```bash
 bash repro/01_small_test/run_small_test.sh
 ```
 
-### 02_reduced_run (CPU/GPU/LUMI HPC)
-Local (CPU/GPU):
-```bash
-bash repro/02_reduced_run/run_reduced_local.sh  # Local CPU/GPU
-```
-
-LUMI HPC (GPU):
-```bash
-sbatch repro/02_reduced_run/run_reduced_lumi.sh  # LUMI HPC (GPU)
-```
-See the respective README files in repro/ for expected runtimes and sanity ranges.
+Level 01 creates synthetic inputs and random weights; no dataset download is needed.
+[Level 02](repro/02_real_artifact_smoke/README.md) checks a supplied checkpoint against
+real inputs and matching training statistics. Level 03 is reserved/unimplemented.
+[Level 04](repro/04_reduced_run/README.md) deliberately trains on real data; its LUMI
+launcher remains a site-specific template. None of these reproduces manuscript skill
+by passing a smoke check.
 
 ---
 
@@ -73,9 +58,9 @@ See the respective README files in repro/ for expected runtimes and sanity range
 
 CEDDAR is configuration-driven, with modular runners for local and HPC execution, with example usage:
 ```bash
-python -m sbgm.cli.main_app --config path/to/config.yaml --mode training
+bash repro/run_model.sh --config_path path/to/config.yaml --mode train --device cpu
 ```
-For working examples, use the reproducibility workflowa in repro/ or the full ablation and model bash scripts in bash_scripts/ or bash_ablations/.
+For working examples, use the reproducibility workflows in repro/ or the full ablation and model bash scripts in bash_scripts/ or bash_ablations/.
 
 ---
 
