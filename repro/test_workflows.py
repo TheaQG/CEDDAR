@@ -83,6 +83,18 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(cfg['full_gen_eval']['split'], 'valid')
             self.assertEqual(cfg['training']['device'], 'cpu')
             self.assertFalse((run / 'samples/generation').exists())
+            self.assertEqual(cfg['full_gen_eval']['sigma_control']['noise_mode'], 'sequential')
+            paired_run = root / 'paired'
+            paired = subprocess.run(command[:-1] + [str(paired_run), '--config',
+                str(run / 'resolved_config.yaml'), '--noise-mode', 'paired', '--seed', '505'],
+                cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(paired.returncode, 0, paired.stderr)
+            cfg2 = yaml.safe_load((paired_run / 'resolved_config.yaml').read_text())
+            self.assertEqual(cfg2['full_gen_eval']['sigma_control']['noise_mode'], 'paired')
+            self.assertEqual(cfg2['full_gen_eval']['seed'], 505)
+            self.assertEqual(cfg2['paths']['sample_dir'], str(paired_run / 'samples'))
+            self.assertEqual(cfg2['paths']['evaluation_dir'], str(paired_run / 'evaluation'))
+            self.assertEqual(cfg2['diagnostics']['histogram_path'], str(paired_run / 'logs/histograms'))
             result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('never overwritten', result.stderr)
