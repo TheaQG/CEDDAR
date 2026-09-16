@@ -25,6 +25,7 @@ from sbgm.utils import extract_samples, get_model_string
 from sbgm.score_sampling import edm_sampler
 from sbgm.provenance import effective_sampler_settings, write_provenance
 from sbgm.runtime import external_output
+from sbgm.sampling_noise import PROTOCOL, indexed_seed, sampling_noise_mode, tensor_sha256
 from sbgm.monitoring import (
     report_precip_extremes,
 )
@@ -526,6 +527,8 @@ class GenerationRunner:
         logger.info(f"[generation] Using model: {model_name}")
 
         n_days = 0
+        noise_mode = sampling_noise_mode(self.cfg)
+        root_seed = int(self.cfg.get("full_gen_eval", {}).get("seed", self.gen_config.seed))
         edm_cfg = self.cfg.get('edm', {})
         guidance_cfg = self.cfg.get('classifier_free_guidance', {})
         M = int(self.gen_config.ensemble_size)
@@ -624,6 +627,12 @@ class GenerationRunner:
                     cfg_guidance=guidance_cfg if guidance_cfg.get('enabled', False) else None,
                     **sigma_star_kwargs(edm_cfg),
                 )
+                noise_audit = {}
+                if noise_mode == 'paired':
+                    if str(date0).startswith('idx'):
+                        raise ValueError('Paired noise requires an explicit date identifier')
+                    sampler_kwargs.update(noise_seed=indexed_seed(root_seed, f'date:{date0}'),
+                                          noise_audit=noise_audit)
                 if n_days == 0 and (save or self.quicklook):
                     write_provenance(
                         self.out_root / 'meta', self.cfg, stage="generation",
@@ -633,6 +642,19 @@ class GenerationRunner:
                         first_date=str(date0), ensemble_size=M,
                     )
                 generated = self._sampler_fn(**sampler_kwargs)
+                if noise_mode == 'paired' and save:
+                    # Hash the draws actually consumed, including step indices. Hash
+                    # inputs too: paired noise alone does not guarantee paired data.
+                    inputs = {k: tensor_sha256(v) for k, v in sampler_kwargs.items()
+                              if torch.is_tensor(v)}
+                    inputs['hr_reference'] = tensor_sha256(x_hr_1) if x_hr_1 is not None else None
+                    record = dict(protocol=PROTOCOL, root_seed=root_seed, date=str(date0),
+                                  noise_seed=sampler_kwargs['noise_seed'], device=str(self.device),
+                                  torch_version=str(torch.__version__), inputs_sha256=inputs,
+                                  draws=noise_audit)
+                    audit_dir = self.out_root / 'meta' / 'noise'
+                    audit_dir.mkdir(parents=True, exist_ok=True)
+                    (audit_dir / f'{date0}.json').write_text(json.dumps(record, indent=2))
             else:
                 raise NotImplementedError("Currently only EDM sampler is supported in generation.")
             
@@ -831,8 +853,10 @@ class GenerationRunner:
             'ensemble_size': M,
             'sampler_kind': self._sampler_kind,
             'sampler_steps': steps,
-            'seed': int(self.cfg.get('evaluation', {}).get('seed', self.gen_config.seed)),
+            'seed': root_seed if noise_mode == 'paired' else int(self.cfg.get('evaluation', {}).get('seed', self.gen_config.seed)),
             'n_days': n_days,
+            'noise_mode': noise_mode,
+            'noise_protocol': PROTOCOL if noise_mode == 'paired' else None,
             'save_space': self.gen_config.save_space,
             'physical_dtype': self.gen_config.physical_dtype,
             'stationary_cutout_cfg': bool(self.stationary_cutout),

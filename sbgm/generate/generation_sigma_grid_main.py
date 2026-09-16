@@ -10,6 +10,7 @@ from sbgm.generate.generation import GenerationRunner, GenerationConfig
 from sbgm.utils import get_model_string
 from sbgm.sigma_control import build_edm_schedule, sigma_star_kwargs
 from sbgm.runtime import external_output
+from sbgm.sampling_noise import sampling_noise_mode
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ def generation_sigma_grid_main(cfg):
     For each sigma_star, outputs go to:
       <sample_dir>/generation/<model_name>/sigma_star=<val>/
     """
+    sampling_noise_mode(cfg)  # Reject misspellings before any model work.
     full = cfg.get('full_gen_eval', {})
     edm = cfg.get('edm', {})
     controls = sigma_star_kwargs(edm, full.get('sigma_control', {}))
@@ -136,7 +138,8 @@ def generation_sigma_grid_main(cfg):
 
     gen_dataloader = get_final_gen_dataloader(cfg, split=split_for_dataset)
 
-    # Keep the original sequential RNG stream; the manifest records this scope.
+    # No per-alpha process reseeding: sequential keeps its old stream; paired
+    # draws are keyed by date/role/step inside the runner and sampler.
     for sstar in grid:
         cfg['edm'].update(controls)
         cfg['edm']['sigma_star'] = sstar

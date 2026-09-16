@@ -18,6 +18,7 @@ import yaml
 
 from sbgm.runtime import SOURCE_ROOT, external_output
 from sbgm.sigma_control import build_edm_schedule
+from sbgm.sampling_noise import PROTOCOL, sampling_noise_mode
 
 
 def checkpoint_info(path, weights_key="network_params"):
@@ -44,7 +45,7 @@ def effective_sampler_settings(sampler, kwargs):
     """Bind the SAME kwargs used for inference; omitted arguments use Python defaults."""
     bound = inspect.signature(sampler).bind(**kwargs)
     bound.apply_defaults()
-    tensor_keys = {"score_model", "y", "cond_img", "lsm_cond", "topo_cond", "lr_ups"}
+    tensor_keys = {"score_model", "y", "cond_img", "lsm_cond", "topo_cond", "lr_ups", "noise_audit"}
     settings = {k: v for k, v in bound.arguments.items() if k not in tensor_keys}
     settings["device"] = str(settings["device"])
     settings["name"] = sampler.__name__
@@ -62,6 +63,7 @@ def write_provenance(directory, cfg, *, stage, device=None, checkpoint=None, sam
     config = OmegaConf.to_container(OmegaConf.create(cfg), resolve=True)
     full = config.get("full_gen_eval", {})
     state = torch.get_rng_state().numpy().tobytes()
+    noise_mode = sampling_noise_mode(config)
     manifest = {
         "timestamp": now.isoformat(), "stage": stage, "hostname": socket.gethostname(),
         "git": git_info(), "command": sys.argv, "cwd": str(Path.cwd()),
@@ -77,7 +79,10 @@ def write_provenance(directory, cfg, *, stage, device=None, checkpoint=None, sam
         "config": config, "sampler": sampler,
         "rng": {"cpu_state_sha256": hashlib.sha256(state).hexdigest(),
                 "generation_seed_requested": full.get("seed"),
-                "scope": "process/sweep; GenerationRunner does not reset the seed"},
+                "noise_mode": noise_mode,
+                "protocol": PROTOCOL if noise_mode == 'paired' else None,
+                "scope": ("seed/date/role/step; see meta/noise/<date>.json for actual draw hashes"
+                          if noise_mode == 'paired' else "process/sweep; GenerationRunner does not reset the seed")},
         "packages": dict(sorted((d.metadata["Name"], d.version) for d in importlib.metadata.distributions() if d.metadata["Name"])),
         **details,
     }
@@ -109,6 +114,11 @@ def sigma_generation_metadata(base_dir, grid, cfg):
                 raise ValueError(f"Generation did not complete for sigma*={value}")
         manifest = yaml.safe_load(paths[0].read_text())
         sampler = manifest["sampler"]
+        actual_mode = manifest.get('rng', {}).get('noise_mode', 'sequential')
+        if actual_mode != sampling_noise_mode(cfg):
+            raise ValueError(f"Generation/evaluation noise_mode mismatch: {actual_mode}")
+        if actual_mode == 'paired' and manifest['rng']['generation_seed_requested'] != full.get('seed'):
+            raise ValueError('Generation/evaluation paired seed mismatch')
         wanted = {**expected, "sigma_star": float(value)}
         wanted.update({k: cfg['edm'][k] for k in
                        ('sigma_min', 'sigma_max', 'rho', 'S_churn', 'S_min', 'S_max', 'S_noise')

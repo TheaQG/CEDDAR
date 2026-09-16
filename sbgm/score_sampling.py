@@ -7,6 +7,7 @@ import numpy as np
 
 from sbgm.monitoring import tensor_stats
 from sbgm.sigma_control import build_edm_schedule
+from sbgm.sampling_noise import paired_normal
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ def edm_sampler(score_model,
                 cfg_diagnostics: dict | None = None,
                 *,
                 sigma_star: float = 1.0,
+                noise_seed: int | None = None,  # None preserves the sequential RNG stream
+                noise_audit: dict | None = None,
                 sigma_star_initial_state: str = "schedule",  # or legacy_sigma_max
                 # --- schedule control (global or late-step ramp) ---
                 sigma_star_mode: str = "global",   # "global" or "late_ramp"
@@ -107,10 +110,11 @@ def edm_sampler(score_model,
       return torch.zeros_like(y_in).fill_(null_scalar)
     # int/long -> categorical (4, 12, 365 classes)
     return torch.full_like(y_in, null_label_id)
-  def _null_lr_like(t):
+  def _null_lr_like(t, stream):
       if t is None: return None
       if lr_null_strategy == 'noise':
-          return torch.randn_like(t)
+          return (torch.randn_like(t) if noise_seed is None else
+                  paired_normal(t.shape, seed=noise_seed, stream=stream, device=t.device, dtype=t.dtype, audit=noise_audit))
       if lr_null_strategy == 'scalar':
           return t.new_full(t.shape, lr_null_scalar)
       return torch.zeros_like(t)  # 'zero'
@@ -128,13 +132,13 @@ def edm_sampler(score_model,
 
 
   # Build nulls for unconditional branch
-  null_img = _null_lr_like(cond_img) if (cfg_enabled and cond_img is not None) else None
+  null_img = _null_lr_like(cond_img, 'null_cond_img') if (cfg_enabled and cond_img is not None) else None
   null_lsm = _null_geo_like(lsm_cond) if (cfg_enabled and lsm_cond is not None) else None
   null_topo = _null_geo_like(topo_cond) if (cfg_enabled and topo_cond is not None) else None
   null_y = _make_null_y(y) if (cfg_enabled and y is not None) else None
 
   drop_lr_ups_in_uncond = bool(cfg_guidance and cfg_guidance.get('drop_lr_ups_in_uncond', False))
-  null_lr_ups = _null_lr_like(lr_ups) if (cfg_enabled and lr_ups is not None and drop_lr_ups_in_uncond) else lr_ups
+  null_lr_ups = _null_lr_like(lr_ups, 'null_lr_ups') if (cfg_enabled and lr_ups is not None and drop_lr_ups_in_uncond) else lr_ups
 
   # Infer spatial shape
   shape_hint = None
@@ -155,7 +159,10 @@ def edm_sampler(score_model,
 
   B = int(batch_size)
   # Initial sample: match the scaled first endpoint, or explicitly reproduce v1.0.2.
-  x = torch.randn(B, C_out, H, W, device=device) * schedule["initial_std"]
+  initial = (torch.randn(B, C_out, H, W, device=device) if noise_seed is None else
+             paired_normal((B, C_out, H, W), seed=noise_seed, stream='initial',
+                           device=device, dtype=torch.get_default_dtype(), audit=noise_audit))
+  x = initial * schedule["initial_std"]
 
   if lr_ups is not None and (lr_ups.shape[0] != x.shape[0] or lr_ups.shape[2:] != x.shape[2:]):
       raise ValueError(f"lr_ups shape {lr_ups.shape} does not match the expected batch size {x.shape[0]} and spatial shape {x.shape[2:]}")
@@ -209,7 +216,10 @@ def edm_sampler(score_model,
     # Churn (stochasticity injection at high sigmas)
     if (S_min_eff <= float(sigma) <= S_max_eff) and (S_churn > 0):
       gamma = min(S_churn / num_steps, math.sqrt(2.0) - 1.0) # Stochasticity factor
-      eps = torch.randn_like(x) * S_noise # Noise scaled by S_noise
+      noise = (torch.randn_like(x) if noise_seed is None else
+               paired_normal(x.shape, seed=noise_seed, stream=f'churn:{i}',
+                             device=x.device, dtype=x.dtype, audit=noise_audit))
+      eps = noise * S_noise
       sigma_hat = sigma * (1 + gamma) # Increased sigma with stochasticity injection
       x_in = x + eps * torch.sqrt(sigma_hat**2 - sigma**2) # Perturb x_in to x_hat
     else:
