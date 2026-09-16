@@ -20,304 +20,123 @@ from sbgm.plotting_utils import _add_colorbar_and_boxplot, get_dk_lsm_outline, o
 
 SET_DPI = 300
 
-def plot_sigma_control(summary_csv, figures_dir, combined: bool = False, *, error_mode: str = "std", also_write_std: bool = False):
-    """
-    Render sigma*-dependent summary plots.
+def _date_errors(summary_csv, sigma, key, error_mode):
+    """Across-date bars from finite daily values, never substitute STD for SEM."""
+    path = Path(summary_csv).with_name('metrics_by_sigma.csv')
+    errors = np.full(len(sigma), np.nan)
+    if not path.exists():
+        return errors
+    daily = np.atleast_1d(np.genfromtxt(path, delimiter=',', names=True, encoding='utf-8'))
+    if key not in (daily.dtype.names or ()):
+        return errors
+    for i, value in enumerate(sigma):
+        values = daily[key][np.isclose(daily['sigma_star'], value, rtol=0, atol=1e-8)]
+        values = values[np.isfinite(values)]
+        if len(values) >= 2:
+            errors[i] = (values.std(ddof=1) / np.sqrt(len(values)) if error_mode == 'sem'
+                         else values.std(ddof=0))
+    return errors
 
-    Parameters
-    ----------
-    summary_csv : str or Path
-        Path to tables/agg_summary.csv
-    figures_dir : str or Path
-        Directory to write figures (created if missing).
-    combined : bool
-        If True, draw all three panels side-by-side in a single figure and also
-        save individual panels. If False, save only individual panels.
-    """
+
+def plot_sigma_control(summary_csv, figures_dir, combined=False, *, error_mode='std', also_write_std=False):
+    """Plot saved metrics with data-driven limits and explicit unavailable bars."""
+    if error_mode not in ('std', 'sem'):
+        raise ValueError('error_mode must be std or sem')
     figures_dir = Path(figures_dir)
     figures_dir.mkdir(parents=True, exist_ok=True)
-
-    data = np.genfromtxt(summary_csv, delimiter=',', names=True, dtype=None, encoding='utf-8')
-
-    if isinstance(data, np.ndarray) and data.size == 0:
-        logger.warning("[sigma_control.plot] Empty summary CSV: %s", str(summary_csv))
+    data = np.atleast_1d(np.genfromtxt(summary_csv, delimiter=',', names=True, encoding='utf-8'))
+    if not data.size:
         return {}
-
     sigma = np.asarray(data['sigma_star'], dtype=float)
-    r_lp_mean = np.asarray(data['r_lp_mean'], dtype=float)
-    r_lp_std = np.asarray(data['r_lp_std'], dtype=float)
-    slope_gen_mean = np.asarray(data['slope_gen_mean'], dtype=float)
-    slope_gen_std = np.asarray(data['slope_gen_std'], dtype=float)
-    slope_hr_mean = np.asarray(data['slope_hr_mean'], dtype=float)
-    slope_hr_std = np.asarray(data['slope_hr_std'], dtype=float)
-    crps_mean = np.asarray(data['crps_mean'], dtype=float)
-    crps_std = np.asarray(data['crps_std'], dtype=float)
-
-    # Optional: high-k gain (may be absent in old runs)
-    hk_gain_mean = np.asarray(data['hk_gain_mean'], dtype=float) if (data.dtype.names is not None and 'hk_gain_mean' in data.dtype.names) else None
-    hk_gain_std  = np.asarray(data['hk_gain_std'], dtype=float)  if (data.dtype.names is not None and 'hk_gain_std' in data.dtype.names) else None
-
-    # -------------------------
-    # Optional: derive sample counts per sigma* to compute SEM
-    # -------------------------
-    def _sigma_counts_from_metrics_csv(summary_csv_path: Path, sigma_vals: np.ndarray) -> dict[float, int]:
-        """Try to infer N per sigma* from the sibling metrics_by_sigma.csv (same tables dir)."""
-        try:
-            metrics_csv = Path(summary_csv_path).with_name("metrics_by_sigma.csv")
-            if not metrics_csv.exists():
-                return {}
-            mdat = np.genfromtxt(metrics_csv, delimiter=",", names=True, dtype=None, encoding="utf-8")
-            if isinstance(mdat, np.ndarray) and mdat.size == 0:
-                return {}
-            msig = np.asarray(mdat["sigma_star"], dtype=float)
-            out: dict[float, int] = {}
-            for s in np.unique(msig[np.isfinite(msig)]):
-                out[float(s)] = int(np.sum(msig == s))
-            # ensure keys align to provided sigma grid (within tolerance)
-            aligned: dict[float, int] = {}
-            for s in sigma_vals:
-                if float(s) in out:
-                    aligned[float(s)] = out[float(s)]
-                    continue
-                for k, v in out.items():
-                    if abs(float(s) - float(k)) < 1e-6:
-                        aligned[float(s)] = int(v)
-                        break
-            return aligned
-        except Exception:
-            return {}
-
-    def _to_sem(std_arr: np.ndarray, n_per_sigma: np.ndarray) -> np.ndarray:
-        n = np.asarray(n_per_sigma, dtype=float)
-        n = np.where(np.isfinite(n) & (n > 0), n, np.nan)
-        return std_arr / np.sqrt(n)
-
-    # infer N per sigma* (falls back to NaN -> SEM will become NaN and we will fall back to STD)
-    _nmap = _sigma_counts_from_metrics_csv(Path(summary_csv), sigma)
-    n_per_sigma = np.array([_nmap.get(float(s), np.nan) for s in sigma], dtype=float)
-
-    # choose error bars
-    error_mode = (error_mode or "std").lower().strip()
-    if error_mode not in ("std", "sem"):
-        logger.warning("[sigma_control.plot] Unknown error_mode=%s; falling back to 'std'", str(error_mode))
-        error_mode = "std"
-
-    # Compute SEM arrays (may contain NaNs if N unknown)
-    r_lp_sem = _to_sem(r_lp_std, n_per_sigma)
-    slope_gen_sem = _to_sem(slope_gen_std, n_per_sigma)
-    slope_hr_sem = _to_sem(slope_hr_std, n_per_sigma)
-    crps_sem = _to_sem(crps_std, n_per_sigma)
-    hk_gain_sem = _to_sem(hk_gain_std, n_per_sigma) if hk_gain_std is not None else None
-
-    def _pick_err(std_arr: np.ndarray, sem_arr: np.ndarray) -> np.ndarray:
-        # If SEM is requested but cannot be computed (missing N), fall back to STD.
-        if error_mode == "sem":
-            if np.isfinite(sem_arr).any():
-                return sem_arr
-            logger.warning("[sigma_control.plot] SEM requested but N unavailable; using STD error bars")
-        return std_arr
-
-    r_lp_err = _pick_err(r_lp_std, r_lp_sem)
-    slope_gen_err = _pick_err(slope_gen_std, slope_gen_sem)
-    slope_hr_err = _pick_err(slope_hr_std, slope_hr_sem)
-    crps_err = _pick_err(crps_std, crps_sem)
-    hk_gain_err = _pick_err(hk_gain_std, hk_gain_sem) if hk_gain_std is not None and hk_gain_sem is not None else hk_gain_std
-
-    # Colors and styling
-    color_gen = get_color_for_model("pmm")
-    color_hr = get_color_for_model("hr")
-    color_ens = get_color_for_model("ens")
-
-    # Style
+    panels = [
+        ('r_lp', 'Low-pass PMM–LR correlation', 'Correlation (LP ≤ LR Nyquist)', 'hr_lr_corr'),
+        ('slope_gen', 'PSD slope of ensemble mean', 'PSD slope', 'psd_slope'),
+        ('crps', 'Ensemble CRPS', 'CRPS (mm/day)', 'crps'),
+    ]
+    if 'hk_gain_mean' in data.dtype.names:
+        panels.append(('hk_gain', 'High-k power ratio', r'$P_{mean}/P_{HR}$, $k>k_{Nyq}^{LR}$', 'high_k_gain'))
+    metadata = {}
+    meta_path = Path(summary_csv).parent.parent / 'sigma_control_meta.json'
+    if meta_path.exists():
+        import json
+        metadata = json.loads(meta_path.read_text())
+    band = metadata.get('metrics', {}).get('psd_band_km')
+    psd_path = Path(summary_csv).with_name('sigma_psd_curves.npz')
+    if psd_path.is_file():
+        with np.load(psd_path) as arrays:
+            if 'psd_band_km' in arrays:
+                band = arrays['psd_band_km']
     _nice()
-    marker_style = dict(marker="o", markersize=5, lw=1.8, capsize=3)
+    color = get_color_for_model('pmm')
 
-    # Utility for x padding
-    def _xpad(x):
-        if x.size == 0:
-            return (0, 1)
-        lo, hi = float(np.nanmin(x)), float(np.nanmax(x))
-        pad = 0.03 * max(1e-6, hi - lo)
-        return lo - pad, hi + pad
+    def draw(ax, panel):
+        key, title, ylabel, _ = panel
+        values = np.asarray(data[key + '_mean'], dtype=float)
+        errors = _date_errors(summary_csv, sigma, key, error_mode)
+        valid = np.isfinite(values)
+        # Keep markers visible even when a one-date pilot has no estimable bars.
+        ax.plot(sigma, values, color=color, marker='o', lw=1.8, label='Generated')
+        bars = valid & np.isfinite(errors)
+        if bars.any():
+            ax.errorbar(sigma[bars], values[bars], yerr=errors[bars], color=color,
+                        fmt='none', capsize=3)
+        if not valid.any():
+            ax.text(.5, .5, 'No finite values', ha='center', va='center', transform=ax.transAxes)
+        if key == 'slope_gen':
+            hr = np.asarray(data['slope_hr_mean'], dtype=float)
+            if np.isfinite(hr).any():
+                ax.axhline(float(np.nanmean(hr)), color=get_color_for_model('hr'), ls='--', label='DANRA')
+            ylabel = (f'PSD slope ({band[0]:g}–{band[1]:g} km)'
+                      if band is not None else 'PSD slope (band not recorded)')
+            ax.legend(frameon=False)
+        if key == 'hk_gain':
+            lower = values - np.where(np.isfinite(errors), errors, 0)
+            # A linear axis retains zeros or bars that cross zero.
+            if valid.any() and np.all(lower[valid] > 0):
+                ax.set_yscale('log')
+            ax.axhline(1, color='0.3', ls='--', lw=1)
+        if key == 'crps':
+            metrics = metadata.get('metrics', {})
+            threshold = metrics.get('crps_rain_thresh')
+            if threshold is not None:
+                title += f' (HR > {threshold:g} mm/day)'
+            if metrics.get('eval_land_only'):
+                title += '\nland pixels'
+        ax.set_title(title)
+        ax.set_ylabel(ylabel)
+        ax.set_xlabel(r'$\sigma^*$')
+        ax.set_xticks(sigma)
+        pad = .03 * max(float(np.ptp(sigma)), .1)
+        ax.set_xlim(float(sigma.min()) - pad, float(sigma.max()) + pad)
+        ax.margins(y=.12)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
 
-    figpaths = {}
-
-    # --- Combined figure (optional) ---
+    note = ('Nominal SEM across dates (assumes independent dates)' if error_mode == 'sem'
+            else 'Standard deviation across dates') + '; not ensemble spread'
+    note += '\nBars omitted where fewer than two finite dates or daily data unavailable'
+    paths = {}
     if combined:
-        import matplotlib.pyplot as plt
-        ncols = 4 if hk_gain_mean is not None else 3
-        fig, axes = plt.subplots(1, ncols, figsize=(4.6*ncols, 4.5), sharex=False)
-        # Remove repeated x-axis labels on interior panels
-        for a in axes[:-1]:
-            a.set_xlabel("")
-        # 1) Correlation
-        ax = axes[0]
-        ax.errorbar(sigma, r_lp_mean, yerr=r_lp_err, color=color_gen, **marker_style)
-        ax.set_xlabel(r"$\sigma^*$")
-        ax.set_ylabel("LR-GEN correlation\n(LP ≤ LR Nyquist)")
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.margins(y=0.08)
-        ax.set_xlim(*_xpad(sigma))
-        ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
-        ax.tick_params(axis="both", labelsize=11)
-        ax.set_ylim(0.6, 0.82)
-        ax.set_yticks([0.6, 0.65, 0.7, 0.75, 0.8])
-        ax.set_title("Scale-aware correlation")
-        # 2) PSD slope
-        ax = axes[1]
-        ax.errorbar(sigma, slope_gen_mean, yerr=slope_gen_err, color=color_gen, label="Generated", **marker_style)
-        if slope_hr_mean.size > 0 and np.isfinite(slope_hr_mean).any():
-            hr_ref = float(np.nanmean(slope_hr_mean))
-            ax.axhline(hr_ref, color=color_hr, ls="--", lw=1.5, label="DANRA")
-        ax.set_xlabel(r"$\sigma^*$")
-        ax.set_ylabel("PSD slope (5-20 km)")
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.margins(y=0.08)
-        ax.set_xlim(*_xpad(sigma))
-        ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
-        ax.tick_params(axis="both", labelsize=11)
-        ax.set_ylim(-5.4, -4.1)
-        ax.set_yticks([-5.4, -5.0, -4.6, -4.2])
-        ax.legend(frameon=False)
-        ax.set_title("Mesoscale PSD slope")
-        # 3) CRPS
-        ax = axes[2]
-        ax.errorbar(sigma, crps_mean, yerr=crps_err, color=color_ens, **marker_style)
-        ax.set_xlabel(r"$\sigma^*$")
-        ax.set_ylabel("CRPS")
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.margins(y=0.08)
-        ax.set_xlim(*_xpad(sigma))
-        ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
-        ax.tick_params(axis="both", labelsize=11)
-        ax.set_ylim(1.85, 2.20)
-        ax.set_yticks([1.9, 2.0, 2.1, 2.2])
-        ax.set_title(r"Probabilistic skill vs $\sigma^*$")
-        # 4) High-k gain panel if available
-        if hk_gain_mean is not None:
-            ax = axes[3]
-            ax.set_yscale("log")
-            ax.set_ylim(1e-1, 3e7)
-            ax.set_yticks([1e-1, 1e1, 1e3, 1e5, 1e7])
-            ax.get_yaxis().set_major_formatter(matplotlib.ticker.LogFormatterMathtext())
-            ax.errorbar(sigma, hk_gain_mean, yerr=hk_gain_err, color=color_gen, **marker_style)
-            ax.set_xlabel(r"$\sigma^*$")
-            ax.set_ylabel(r"$G_\mathrm{high}$  (P_GEN / P_HR, k > k_\mathrm{Nyq}^{LR})")
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
-            ax.margins(y=0.08)
-            ax.set_xlim(*_xpad(sigma))
-            ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
-            ax.tick_params(axis="both", labelsize=11)
-            ax.set_title("High‑k power gain")
-        fig.tight_layout()
-        out_all = figures_dir / f"sigma_control_overview_{error_mode}.png"
-        _savefig(fig, out_all, dpi=300)
-        figpaths["overview"] = str(out_all)
-
-    # --- Individual panels ---
-    import matplotlib.pyplot as plt
-    # 1) Correlation
-    fig = plt.figure()
-    ax = plt.gca()
-    ax.errorbar(sigma, r_lp_mean, yerr=r_lp_err, color=color_gen, **marker_style)
-    ax.set_xlabel(r"$\sigma^*$")
-    ax.set_ylabel("LR-GEN correlation (LP ≤ LR Nyquist)")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.margins(y=0.08)
-    ax.set_xlim(*_xpad(sigma))
-    ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
-    ax.tick_params(axis="both", labelsize=11)
-    ax.set_ylim(0.6, 0.82)
-    ax.set_yticks([0.6, 0.65, 0.7, 0.75, 0.8])
-    ax.set_title(r"Scale-aware correlation vs $\sigma^*$")
-    figpaths[f"corr_{error_mode}"] = str(figures_dir / f"hr_lr_corr_vs_sigma_{error_mode}.png")
-    _savefig(fig, Path(figpaths[f"corr_{error_mode}"]), dpi=SET_DPI)
-
-    # 2) PSD slope
-    fig = plt.figure()
-    ax = plt.gca()
-    ax.errorbar(sigma, slope_gen_mean, yerr=slope_gen_err, color=color_gen, label="Generated", **marker_style)
-    if slope_hr_mean.size > 0 and np.isfinite(slope_hr_mean).any():
-        hr_ref = float(np.nanmean(slope_hr_mean))
-        ax.axhline(hr_ref, color=color_hr, ls="--", lw=1.5, label="DANRA")
-    ax.set_xlabel(r"$\sigma^*$")
-    ax.set_ylabel("PSD slope (5-20 km)")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.margins(y=0.08)
-    ax.set_xlim(*_xpad(sigma))
-    ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
-    ax.tick_params(axis="both", labelsize=11)
-    ax.set_ylim(-5.4, -4.1)
-    ax.set_yticks([-5.4, -5.0, -4.6, -4.2])
-    ax.set_title(r"PSD slope vs $\sigma^*$")
-    ax.legend(frameon=False)
-    figpaths[f"slope_{error_mode}"] = str(figures_dir / f"psd_slope_vs_sigma_{error_mode}.png")
-    _savefig(fig, Path(figpaths[f"slope_{error_mode}"]), dpi=SET_DPI)
-
-    # 3) CRPS
-    fig = plt.figure()
-    ax = plt.gca()
-    ax.errorbar(sigma, crps_mean, yerr=crps_err, color=color_ens, **marker_style)
-    ax.set_xlabel(r"$\sigma^*$")
-    ax.set_ylabel("CRPS")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.margins(y=0.08)
-    ax.set_xlim(*_xpad(sigma))
-    ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
-    ax.tick_params(axis="both", labelsize=11)
-    ax.set_ylim(1.85, 2.20)
-    ax.set_yticks([1.9, 2.0, 2.1, 2.2])
-    ax.set_title(r"Probabilistic skill vs $\sigma^*$")
-    figpaths[f"crps_{error_mode}"] = str(figures_dir / f"crps_vs_sigma_{error_mode}.png")
-    _savefig(fig, Path(figpaths[f"crps_{error_mode}"]), dpi=SET_DPI)
-
-    # 4) High-k gain (if present)
-    if hk_gain_mean is not None:
-        fig = plt.figure()
-        ax = plt.gca()
-        ax.set_yscale("log")
-        ax.set_ylim(1e-1, 3e7)
-        ax.set_yticks([1e-1, 1e1, 1e3, 1e5, 1e7])
-        ax.get_yaxis().set_major_formatter(matplotlib.ticker.LogFormatterMathtext())
-        ax.errorbar(sigma, hk_gain_mean, yerr=hk_gain_err, color=color_gen, **marker_style)
-        ax.set_xlabel(r"$\sigma^*$")
-        ax.set_ylabel(r"$G_\mathrm{high}$  (P_GEN / P_HR, k > k_\mathrm{Nyq}^{LR})")
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.margins(y=0.08)
-        ax.set_xlim(*_xpad(sigma))
-        ax.set_xticks(np.round(np.linspace(np.nanmin(sigma), np.nanmax(sigma), 5), 2))
-        ax.tick_params(axis="both", labelsize=11)
-        ax.axhline(1.0, color="0.3", ls="--", lw=1.2)  # reference where GEN matches HR power
-        ax.set_title(r"High‑k power gain vs $\sigma^*$")
-        figpaths[f"hk_gain_{error_mode}"] = str(figures_dir / f"high_k_gain_vs_sigma_{error_mode}.png")
-        _savefig(fig, Path(figpaths[f"hk_gain_{error_mode}"]), dpi=SET_DPI)
-
-    # Optionally also write the STD version when producing SEM plots
-    if also_write_std and error_mode == "sem":
-        try:
-            std_paths = plot_sigma_control(
-                summary_csv,
-                figures_dir,
-                combined=combined,
-                error_mode="std",
-                also_write_std=False,
-            )
-            figpaths.update(std_paths)
-        except Exception as e:
-            logger.warning("[sigma_control.plot] also_write_std failed: %s", str(e))
-
-    logger.info("[sigma_control.plot] Wrote figures: %s", figpaths)
-    return figpaths
-
-
+        fig, axes = plt.subplots(1, len(panels), figsize=(4.8 * len(panels), 4.8))
+        for ax, panel in zip(axes, panels):
+            draw(ax, panel)
+        fig.suptitle(note, fontsize=10)
+        fig.tight_layout(rect=(0, .05, 1, 1))
+        path = figures_dir / f'sigma_control_overview_{error_mode}.png'
+        _savefig(fig, path, dpi=SET_DPI)
+        paths['overview'] = str(path)
+    for panel in panels:
+        fig, ax = plt.subplots(figsize=(6, 4.8))
+        draw(ax, panel)
+        fig.suptitle(note.replace('; ', '\n'), fontsize=8)
+        fig.tight_layout(rect=(0, .05, 1, 1))
+        path = figures_dir / f'{panel[3]}_vs_sigma_{error_mode}.png'
+        _savefig(fig, path, dpi=SET_DPI)
+        paths[f'{panel[0]}_{error_mode}'] = str(path)
+    if also_write_std and error_mode == 'sem':
+        paths.update(plot_sigma_control(summary_csv, figures_dir, combined,
+                                        error_mode='std', also_write_std=False))
+    return paths
 
 
 # --------------------------------------------------------------------------
@@ -512,7 +331,7 @@ def plot_sigma_control_examples_grid(
 def plot_sigma_control_psd_curves(out_dir: str | Path, sigma_subset=None) -> str | None:
     """
     Read <out_dir>/tables/sigma_psd_curves.npz and make a PSD vs wavelength plot
-    showing HR, LR, and one curve per sigma* (mean +/- std shading), with:
+    showing HR, LR, and one date-averaged curve per sigma*, with:
       - green color scale across sigma*
       - shaded band for the slope window (e.g., 5-20 km)
       - textbox listing slopes per sigma* computed from the mean GEN PSD
@@ -587,8 +406,8 @@ def plot_sigma_control_psd_curves(out_dir: str | Path, sigma_subset=None) -> str
     fig, ax = plt.subplots(figsize=(9.0, 6.0))
 
     # HR and LR references
-    hr_lin = np.maximum(psd_hr_mean[mpos][order], 1e-12)
-    lr_lin = np.maximum(psd_lr_mean[mpos][order], 1e-12)
+    hr_lin = np.where(psd_hr_mean[mpos][order] > 0, psd_hr_mean[mpos][order], np.nan)
+    lr_lin = np.where(psd_lr_mean[mpos][order] > 0, psd_lr_mean[mpos][order], np.nan)
     ax.plot(lam, hr_lin, color=get_color_for_model("hr"), lw=2.0, label="HR (DANRA)")
     ax.plot(lam, lr_lin, color=get_color_for_model("lr"), lw=1.6, ls="--", label="LR (ERA5↑)")
     z = 1.0
@@ -603,9 +422,8 @@ def plot_sigma_control_psd_curves(out_dir: str | Path, sigma_subset=None) -> str
     # Shaded slope band (in λ)
     lam_lo, lam_hi = float(psd_band[0]), float(psd_band[1])  # e.g., 5–20 km
     left, right = min(lam_lo, lam_hi), max(lam_lo, lam_hi)
-    ax.axvspan(left, right, color="0.85", alpha=0.35, zorder=0)
-    # Optional: visualize the "controlled" high-k region (λ <= right) lightly
-    ax.axvspan(0.0, right, color="0.9", alpha=0.15, hatch='///', linewidth=0, label="σ* control (late)") 
+    ax.axvspan(left, right, color="0.85", alpha=0.35, zorder=0,
+               label=f"Slope-fit band ({left:g}–{right:g} km)")
 
     # σ* curves with shaded ±1σ and green colormap
     import matplotlib.cm as cm
@@ -614,8 +432,8 @@ def plot_sigma_control_psd_curves(out_dir: str | Path, sigma_subset=None) -> str
     slopes_txt = []
     
     for i, s in enumerate(sigma_vals):
-        c = cmap(0.15 + 0.75 * (1 - i / max(1, S-1)))  # darkest for smallest σ*
-        mean_i = np.maximum(psd_gen_mean[i][mpos][order], 1e-12)
+        c = cmap(0.35 + 0.55 * (1 - i / max(1, S-1)))  # darkest for smallest σ*
+        mean_i = np.where(psd_gen_mean[i][mpos][order] > 0, psd_gen_mean[i][mpos][order], np.nan)
         ax.plot(lam, mean_i, lw=1.8, color=c, label=fr"Gen (σ*={s:.2f})")
         z = 1.0
         # # Use log-mean/log-std band if both are available, otherwise fall back to linear std
@@ -636,7 +454,7 @@ def plot_sigma_control_psd_curves(out_dir: str | Path, sigma_subset=None) -> str
         k_hi = 1.0 / left
         mband = (k_pos > k_lo) & (k_pos < k_hi)
 
-        if mband.any():
+        if np.count_nonzero(mband) >= 2:
             xk = np.log10(k_pos[mband])
             yk_gen = np.log10(np.clip(psd_gen_mean[i][mpos][mband], eps, None))
             coef = np.polyfit(xk, yk_gen, 1)
@@ -649,7 +467,7 @@ def plot_sigma_control_psd_curves(out_dir: str | Path, sigma_subset=None) -> str
     mband_ref = (k_pos > (1.0 / right)) & (k_pos < (1.0 / left))
     hr_slope = np.nan
     lr_slope = np.nan
-    if mband_ref.any():
+    if np.count_nonzero(mband_ref) >= 2:
         xk = np.log10(k_pos[mband_ref])
         yk_hr = np.log10(np.clip(psd_hr_mean[mpos][mband_ref], eps, None))
         hr_slope = np.polyfit(xk, yk_hr, 1)[0]
@@ -665,8 +483,8 @@ def plot_sigma_control_psd_curves(out_dir: str | Path, sigma_subset=None) -> str
 
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_ylim(1e-8, 1e5)
-    # Cut off above LR Nyquist
+    ax.margins(y=0.1)
+    # Show the full available wavelength range; Nyquist is only a reference.
     ax.invert_xaxis()
     ax.set_xlim(lam.max()*1.02, min(lam.min()*0.98, 1.0 / lr_nyq if lr_nyq > 0.0 else lam.min()*0.98)) 
     ax.set_xlabel("Wavelength λ (km)")
@@ -678,7 +496,7 @@ def plot_sigma_control_psd_curves(out_dir: str | Path, sigma_subset=None) -> str
     ax.legend(uniq.values(), uniq.keys(), loc="upper right", fontsize=9, frameon=False)
 
     # Add slope textbox
-    text_lines = ["PSD slope in band:"]
+    text_lines = ["Slope of plotted mean PSD:"]
     text_lines.extend(slopes_txt)
     if ramp_info is not None:
         mode = str(ramp_info.get("mode", "global"))
@@ -687,12 +505,15 @@ def plot_sigma_control_psd_curves(out_dir: str | Path, sigma_subset=None) -> str
         ss = ramp_info.get("start_sigma", None)
         es = ramp_info.get("end_sigma", None)
         text_lines.append("")
-        text_lines.append("Ramp:")
-        text_lines.append(f"mode: {mode}")
-        if (sf is not None) and (ef is not None):
+        text_lines.append(f"Recorded sampler mode: {mode}")
+        if ramp_info.get("initial_state"):
+            text_lines.append(f"Initial state: {ramp_info['initial_state']}")
+        if mode == "late_ramp" and ss is None and es is None and (sf is not None) and (ef is not None):
             text_lines.append(f"frac: {float(sf):.2f}→{float(ef):.2f}")
-        if (ss is not None) and (es is not None):
+        if mode == "late_ramp" and (ss is not None) and (es is not None):
             text_lines.append(f"σ gate: ≤{ss} → ≤{es}")
+    else:
+        text_lines.extend(["", "Sampler mode: not recorded"])
     textstr = "\n".join(text_lines)
     ax.text(0.02, 0.02, textstr, transform=ax.transAxes, fontsize=9,
             verticalalignment="bottom", horizontalalignment="left",

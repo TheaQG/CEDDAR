@@ -2,6 +2,7 @@
 Main entrypoint for σ*-dependent evaluation.
 """
 import json
+import numpy as np
 import logging
 from pathlib import Path
 from sbgm.evaluate.evaluate_prcp.eval_sigma_star.metrics_sigma_control import evaluate_sigma_control
@@ -23,12 +24,18 @@ def run(cfg, make_plots=True):
 
     # Read sigma_control config for possible subset of sigma* for examples/PSD
     scfg = getattr(getattr(cfg, "full_gen_eval", {}), "sigma_control", {}) if hasattr(cfg, "full_gen_eval") else {}
-    example_sigma_subset = getattr(scfg, "example_sigma_subset", None)
 
     logger.info(f"[SigmaControl] Evaluating σ* grid {sigma_grid} for {model_name}")
 
     metrics_paths = evaluate_sigma_control(cfg, sigma_grid, base_gen, out_dir)
     logger.info("[SigmaControl] Metrics written: %s", metrics_paths)
+
+    # Label the band actually saved by the metric code, not an unverified request.
+    psd_band = None
+    psd_path = out_dir / 'tables/sigma_psd_curves.npz'
+    if psd_path.is_file():
+        with np.load(psd_path) as arrays:
+            psd_band = arrays['psd_band_km'].tolist()
 
     # Figures may label a mode only when it was recorded at the sampler call.
     actual = observed[0]["sampler"] if observed and all(r["sampler"] for r in observed) else None
@@ -45,37 +52,36 @@ def run(cfg, make_plots=True):
         "metrics": {"psd": "PSD of physical ensemble mean, averaged across dates",
                     "correlation": "low-pass PMM versus LR",
                     "crps_rain_thresh": scfg.get("crps_rain_thresh"),
+                    "eval_land_only": bool(cfg.full_gen_eval.get("eval_land_only", True)),
+                    "psd_band_km": psd_band,
                     "error_bars": "across-date standard deviation or nominal SEM; not ensemble spread"},
     }
     with (out_dir / "sigma_control_meta.json").open("w") as f:
         json.dump(meta, f, indent=2)
     write_provenance(out_dir / "meta", cfg, stage="sigma_evaluation", generation=observed)
 
-    figures_dir = Path(out_dir) / "figures"
-    figures_dir.mkdir(parents=True, exist_ok=True)
-
     if make_plots:
-        plot_sigma_control(
-            metrics_paths["summary"],
-            figures_dir,
-            combined=bool(getattr(getattr(cfg, "full_gen_eval", {}), "sigma_control_plot_combined", True)),
-            error_mode="sem",
-            also_write_std=True,            
-        )
-        plot_sigma_control_examples_grid(
-            cfg,
-            sigma_star_grid=sigma_grid,
-            gen_base_dir=base_gen,
-            out_dir=out_dir,
-            sigma_star_subset=example_sigma_subset,            
-            n_members=int(getattr(getattr(cfg, "full_gen_eval", {}), "example_n_members", 3)),
-            date=getattr(getattr(cfg, "full_gen_eval", {}), "example_date", None),
-            land_only=bool(getattr(getattr(cfg, "full_gen_eval", {}), "eval_land_only", True)),
-            fname="examples_sigma_grid.png",
-        )
-        # PSD curves per sigma_star (ensemble-average across dates)
-        plot_sigma_control_psd_curves(out_dir, sigma_subset=example_sigma_subset)
+        plot_saved_sigma_control(cfg, out_dir)
 
     logger.info(f"[SigmaControl] Done. Results in {out_dir}")
     logger.info("[SigmaControl] Figures in: %s", str(Path(out_dir) / "figures"))
     return out_dir
+
+def plot_saved_sigma_control(cfg, out_dir):
+    """Regenerate figures from saved evaluation tables; no inference or metrics."""
+    out_dir = Path(out_dir)
+    summary = out_dir / 'tables/agg_summary.csv'
+    if not summary.is_file():
+        raise FileNotFoundError(summary)
+    full = cfg.full_gen_eval
+    subset = full.get('sigma_control', {}).get('example_sigma_subset')
+    figures = out_dir / 'figures'
+    plot_sigma_control(summary, figures, combined=bool(full.get('sigma_control_plot_combined', True)),
+                       error_mode='sem', also_write_std=True)
+    plot_sigma_control_psd_curves(out_dir, sigma_subset=subset)
+    plot_sigma_control_examples_grid(
+        cfg, sigma_star_grid=full.sigma_star_grid,
+        gen_base_dir=Path(cfg.paths.sample_dir) / 'generation' / get_model_string(cfg),
+        out_dir=out_dir, sigma_star_subset=subset,
+        n_members=int(full.get('example_n_members', 3)), date=full.get('example_date'),
+        land_only=bool(full.get('eval_land_only', True)), fname='examples_sigma_grid.png')
