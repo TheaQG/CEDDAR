@@ -119,3 +119,5 @@ checkpoints separately; the manifest hashes the checkpoint, not the entire datas
 ## Sigma* audit and revision
 
 See [the frozen-code audit](../docs/SIGMA_STAR_AUDIT.md) and [revision/ATMO instructions](../docs/SIGMA_STAR_REVISION.md). Prepare an isolated pilot with `bash repro/run_sigma_star.sh prepare --run-dir /external/runs/sigma_star_pilot`; generation and evaluation are separate explicit actions.
+
+For paired random draws across sigma* values/modes, plot-only refreshes, and the proposed spread metric, see [paired-noise pilots](../docs/SIGMA_STAR_PAIRED_NOISE.md). Sequential sampling remains the default.
