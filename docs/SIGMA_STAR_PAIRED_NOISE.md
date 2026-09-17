@@ -37,6 +37,10 @@ completion or sample equality; inspect the usual generation manifests as well.
 Use the active environment and the same `DATA_DIR`, `STATS_LOAD_DIR`,
 `PUBLISHED_CHECKPOINT` and `DEVICE=cpu` as the successful pilots. These commands
 work when launched from the repository in `tcsh`. Use new run directories.
+setenv DATA_DIR /home/theaqg/CEDDAR_migration/Data/Data_DiffMod
+setenv PUBLISHED_CHECKPOINT /home/theaqg/CEDDAR_runs/paper1_original/checkpoints_from_lumi/B1_GSDF_RGBCE__HR_prcp_DANRA__SIZE_128x128__LR_prcp_ERA5__LOSS_sdfweighted__HEADS_4__TIMESTEPS_56.pth.tar
+setenv STATS_LOAD_DIR /home/theaqg/CEDDAR_GMD_revision/repro/assets/stats/statistics_run/stats/
+setenv DEVICE cpu
 
 ```tcsh
 setenv SIGMA_GLOBAL /home/theaqg/CEDDAR_runs/paper1_revision/sigma_global_paired_s504

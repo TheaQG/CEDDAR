@@ -4,6 +4,9 @@ Use branch `paper1-revision-2026`. The historical LUMI scripts are templates;
 the supported portable entry points are `run_model.sh` and `01_small_test/run_small_test.sh`.
 See [PORTABILITY_AUDIT.md](PORTABILITY_AUDIT.md) for the path and import audit.
 
+For a separately logged LEGACY–MATCHED–LATE_RAMP sigma* comparison on ATMO, see
+[the comparison driver instructions](../docs/SIGMA_INITIALIZATION_DRIVER.md).
+
 ## Environment (ATMO Linux CPU, Python 3.11)
 
 Keep the environment outside the Git checkout. ATMO uses **tcsh**; these paths
