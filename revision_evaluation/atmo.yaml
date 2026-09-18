@@ -1,0 +1,30 @@
+# Saved original test artifacts: no training, generation or inverse conversion.
+# Unit declarations are explicit assumptions about these supplied artifacts;
+# preflight validates arrays/references but cannot infer units from their values.
+inputs:
+  ceddar:
+    root: /home/theaqg/CEDDAR_runs/paper1_original/revision_inputs/SBGM_SD/models_and_samples/generated_samples/generation/B1_GSDF_RGBCE__HR_prcp_DANRA__SIZE_128x128__LR_prcp_ERA5__LOSS_sdfweighted__HEADS_4__TIMESTEPS_56
+    layout: physical
+    units: mm/day
+    units_evidence: Original physical-generation artifacts; inspect their saved configuration/manifests on ATMO.
+  bilinear:
+    root: /home/theaqg/CEDDAR_runs/paper1_original/revision_inputs/SBGM_SD/models_and_samples/generated_samples/generation/baselines/bilinear/test
+    layout: legacy_physical
+    units: mm/day
+    units_evidence: Original bilinear baseline; producer uses scale=False and saves physical values under pmm/ and lr_hr/.
+  qm:
+    root: /home/theaqg/CEDDAR_runs/paper1_original/revision_inputs/SBGM_SD/models_and_samples/generated_samples/generation/baselines/qm/test
+    layout: legacy_physical
+    units: mm/day
+    units_evidence: Original QM baseline; producer uses scale=False and saves physical values under pmm/ and lr_hr/.
+
+methods: [era5_bilinear, qm, ceddar_mean, ceddar_median, ceddar_pmm]
+expected_members: 32
+output_root: /home/theaqg/CEDDAR_runs/paper1_revision/evaluation
+
+# Allow documented float16-versus-float32 reference storage differences.
+# This is an alignment check, not a rescaling or alteration of either field.
+reference_rtol: 0.001
+reference_atol: 0.001
+roi_mask: null                # Optional NPZ mask/roi/lsm_hr/lsm, on the same grid.
+dates_file: null              # Set to preflight dates.txt to lock the common dates.
