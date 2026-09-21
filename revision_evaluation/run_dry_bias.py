@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 
 import yaml
-
+import numpy as np
 from sbgm.runtime import external_output
 
 from .common_io import (
@@ -89,12 +89,33 @@ def run(config):
         # Only wet values need to be retained as quantiles cannot be reconstructed from dry values alone
         wet_chunks = defaultdict(list)
 
+        n_members = config["expected_members"]
+        member_counts = {
+            (member, season): empty_counts()
+            for member in range(n_members)
+            for season in SEASONS
+        }
+        member_wet_chunks = defaultdict(list)
+
         n_valid_dates = 0
 
         for index, date in enumerate(reader.dates, 1):
             sample = reader.load_date(date)
             season = season_of(date)
             valid = sample["valid"]
+            ensemble = sample["ensemble"]
+
+            for member, field in enumerate(ensemble):
+                day_counts, wet_values = field_components(
+                    field, valid, threshold=WET_THRESHOLD
+                )
+
+                # Each date contributes both to ALL and its own season
+                for group in ("ALL", season):
+                    add_counts(member_counts[(member, group)], day_counts)
+
+                    if wet_values.size:
+                        member_wet_chunks[member].append(wet_values.astype(np.float32), copy=False)
 
             if valid.any():
                 n_valid_dates += 1
@@ -155,6 +176,38 @@ def run(config):
         write_table(directory / "input_files.csv", list(reader.files.values()))
 
         total = counts[("danra", "ALL")]["n_pixel_days"]
+
+
+        member_rows = []
+
+        for member in range(n_members):
+            for season in SEASONS:
+                summary = summarize_components(member_counts[(member, season)])
+                member_rows.append(
+                    dict(
+                        member=member,
+                        season=season,
+                        subset="member_on_wet",
+                        wet_threshold=WET_THRESHOLD,
+                        **summary,
+                    )
+                )
+        write_table(directory / "ensemble_member_decomposition.csv", member_rows,)
+
+        member_conditional_rows = []
+        for member in range(n_members):
+            wet_stats = summarize_wet_values(member_wet_chunks[member])
+            member_conditional_rows.append(
+                dict(
+                    member=member,
+                    season="ALL",
+                    subset="member_on_wet",
+                    wet_threshold=WET_THRESHOLD,
+                    **wet_stats,
+                )
+            )
+        write_table(directory / "ensemble_member_conditional_intensity.csv", member_conditional_rows)
+
 
         write_run_metadata(
             manifest,
