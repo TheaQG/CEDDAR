@@ -50,7 +50,7 @@ def main():
 
     conditional = read_csv(conditional_file)
     seasonal = read_csv(seasonal_file)  
-    manifest = json.load(manifest_file.read_text())
+    manifest = json.loads(manifest_file.read_text())
 
     output = prepare_output(
         args.input_dir,
