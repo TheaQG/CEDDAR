@@ -1,5 +1,7 @@
 # GMD revision evaluation — Group 1
 
+For the individual-member QM/object comparison, see [Group 4 morphology](MORPHOLOGY.md).
+
 This package evaluates saved precipitation fields. It does not load a model,
 generate samples, fit QM, alter physical values, or call the legacy evaluation
 or plotting runners. Group 1 implements deterministic metrics and common input
