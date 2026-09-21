@@ -18,7 +18,7 @@ METHODS = {
     "danra": ("DANRA", "black", "o"),
     "era5_bilinear": ("Bilinear ERA5", "#555555", "o"),
     "qm": ("QM", "#C48100", "s"),
-    "cedddar_mean": ("CEDDAR mean", "#0072B2", "D"),
+    "ceddar_mean": ("CEDDAR mean", "#0072B2", "D"),
     "ceddar_median": ("CEDDAR median", "#009E73", "^"),
     "ceddar_pmm": ("CEDDAR PMM", "#AA4499", "v"),
 }
@@ -60,7 +60,7 @@ def main():
     )
 
     cond = {row["method"]: row for row in conditional}
-    seas = {row["method"]: row for row in seasonal}
+    seas = {(row["method"], row["season"]): row for row in seasonal}
     methods = [m for m in METHODS if m in cond]
 
     x = np.arange(len(methods))
@@ -98,7 +98,7 @@ def main():
         row = cond[m]
 
         ax.plot(probabilities,
-                [number(row, f"wet_intensity_q{int(p*100)}") for p in probabilities],
+                [number(row, f"p{int(p*100)}") for p in probabilities],
                 marker=METHODS[m][2],
                 color=METHODS[m][1],
                 label=METHODS[m][0],
