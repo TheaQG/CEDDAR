@@ -114,8 +114,8 @@ def run(config):
                 for group in ("ALL", season):
                     add_counts(member_counts[(member, group)], day_counts)
 
-                    if wet_values.size:
-                        member_wet_chunks[member].append(wet_values.astype(np.float32), copy=False)
+                if wet_values.size:
+                    member_wet_chunks[member].append(wet_values.astype(np.float32, copy=False))
 
             if valid.any():
                 n_valid_dates += 1
@@ -187,7 +187,7 @@ def run(config):
                     dict(
                         member=member,
                         season=season,
-                        subset="member_on_wet",
+                        subset="member_own_wet",
                         wet_threshold=WET_THRESHOLD,
                         **summary,
                     )
@@ -201,7 +201,7 @@ def run(config):
                 dict(
                     member=member,
                     season="ALL",
-                    subset="member_on_wet",
+                    subset="member_own_wet",
                     wet_threshold=WET_THRESHOLD,
                     **wet_stats,
                 )
