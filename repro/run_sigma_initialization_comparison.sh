@@ -7,6 +7,7 @@
 # Launch from tcsh with: bash repro/run_sigma_initialization_comparison.sh
 # Add --prepare-only to inspect resolved configs without running inference.
 # Every invocation needs a fresh output directory; existing runs are preserved.
+# For full run use sigma values: [0.80, 0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15, 1.20, 1.25]
 set -euo pipefail
 
 # Locate the source tree and use Python from the active environment.
@@ -36,6 +37,7 @@ SIGMA_SEED="${SIGMA_SEED:-504}"
 MAX_DATES="${MAX_DATES:-24}"
 ENSEMBLE_SIZE="${ENSEMBLE_SIZE:-8}"
 SIGMA_CONFIG="${SIGMA_CONFIG:-$REPO_DIR/sbgm/config/component_study/F_final_test_eval.yaml}"
+SIGMA_STAR_GRID="${SIGMA_STAR_GRID:-0.95 1.00 1.05}"
 
 # A timestamped parent separates this comparison from all earlier results.
 DEFAULT_OUTPUT_ROOT=/home/theaqg/CEDDAR_runs/paper1_revision
@@ -84,7 +86,7 @@ COMMON=(
     --config "$SIGMA_CONFIG"
     --noise-mode paired
     --seed "$SIGMA_SEED"
-    --sigma-star-grid 0.95 1.00 1.05
+    --sigma-star-grid $SIGMA_STAR_GRID
     --steps 56
     --ensemble-size "$ENSEMBLE_SIZE"
     --max-dates "$MAX_DATES"
