@@ -14,10 +14,6 @@ from ..panels import distributions
 from ..paths import REVISION_ROOT
 
 
-def default_baseline_eval(name):
-    return (legacy.DEFAULT_EVALUATION.parent.parent / "baselines" / name)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
 
@@ -39,7 +35,7 @@ def main():
     dist = legacy.load_seasonal_distributions(args.legacy_eval)
     tails = legacy.load_extremes(args.legacy_eval)
 
-    qm_eval = (args.qm_eval or default_baseline_eval("qm"))
+    qm_eval = (args.qm_eval or legacy.baseline_evaluation("qm"))
     qm_dist = legacy.load_seasonal_distributions(qm_eval)
     qm_tails = legacy.load_extremes(qm_eval)
 

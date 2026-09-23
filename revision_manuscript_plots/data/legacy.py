@@ -27,8 +27,14 @@ GENERATION_ROOT = (LEGACY_ROOT / 'revision_inputs/SBGM_SD/models_and_samples'
 
 DEFAULT_GENERATION = GENERATION_ROOT / MODEL_NAME
 
-DEFAULT_BASELINES = {name: GENERATION_ROOT / 'baselines' / directory / 'test'
-                     for name, directory in [('era5_bilinear', 'bilinear'), ('qm', 'qm')]}
+DEFAULT_BASELINES = (DEFAULT_EVALUATION.parent.parent / "baselines")
+# DEFAULT_BASELINES = {name: GENERATION_ROOT / 'baselines' / directory / 'test'
+                    #  for name, directory in [('era5_bilinear', 'bilinear'), ('qm', 'qm')]}
+
+
+def baseline_evaluation(name: str) -> Path:
+    """Return legacy precipitation-evaluation root for a baseline"""
+    return(DEFAULT_BASELINES / name / "test" / "prcp")
 
 
 def _npz(path):

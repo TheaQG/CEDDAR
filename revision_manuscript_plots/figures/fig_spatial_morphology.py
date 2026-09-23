@@ -13,10 +13,6 @@ from ..panels import distributions, morphology
 from ..paths import REVISION_ROOT
 
 
-def default_baseline_eval(name):
-    return (legacy.DEFAULT_EVALUATION.parent.parent / "baselines" / name)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
 
@@ -31,7 +27,7 @@ def main():
     style.apply_style()
 
     psd_data = legacy.load_psd(args.legacy_eval)
-    qm_psd = legacy.load_psd(args.qm_eval or default_baseline_eval("qm"))
+    qm_psd = legacy.load_psd(args.qm_eval or legacy.baseline_evaluation("qm"))
     morph = revision.load_morphology(args.revision_dir)
 
     fig = plt.figure(figsize=(7.2, 7.0))
