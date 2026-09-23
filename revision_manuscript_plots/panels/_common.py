@@ -1,6 +1,7 @@
 """Small axes-only helpers. Figure scripts own layout, legends, colourbars and saving."""
 import numpy as np
 from .. import style
+from sbgm.plotting_utils import (imshow_variable, _add_colorbar_and_boxplot)
 
 SEASONS = ('DJF', 'MAM', 'JJA', 'SON')
 METHODS = ('era5_bilinear', 'qm', 'ceddar_mean', 'ceddar_median', 'ceddar_pmm')
@@ -39,27 +40,94 @@ def boxes(ax, groups, methods, horizontal=False):
                    **style.boxplot_style(style.method_color(method)))
 
 
-def map_field(ax, values, *, land=None, norm=None, vmin=None, vmax=None,
-              cmap=None, origin='lower', extent=None, title=None, label=None):
-    """Return the image for a caller-owned shared colourbar; no invented coordinates.
+def map_field(
+    ax,
+    values,
+    *,
+    land=None,
+    norm=None,
+    vmin=None,
+    vmax=None,
+    cmap=None,
+    variable="prcp",
+    show_ocean=True,
+    add_outline=True,
+    add_colorbar=False,
+    add_boxplot=False,
+    outline_color="darkgrey",
+    outline_linewidth=0.65,
+    title=None,
+    label=None,
+):
+    """Plot one manuscript spatial field using the legacy CEDDAR map identity.
 
-    Use the same norm across comparable panels. Without extent the coordinates are
-    grid indices. Caller must select the saved field's correct orientation.
+    The displayed field is not land-masked by default. The land-sea mask is
+    instead used for the Danish coastline outline and, where requested, for a
+    land-only summary boxplot.
+
+    Parameters
+    ----------
+    add_colorbar
+        Attach a vertical colorbar using the legacy axes-divider layout.
+    add_boxplot
+        Attach the legacy land-only boxplot between the map and colorbar.
+        Requires add_colorbar=True.
     """
-    values = np.asarray(values, dtype=float)
+
+    values = np.asarray(values, dtype=float).squeeze()
+
     if values.ndim != 2:
-        raise ValueError('A map requires one 2D field')
+        raise ValueError(f"A map requires one 2D field, got {values.shape}")
+
     if land is not None:
-        land = np.asarray(land, dtype=bool)
+        land = np.asarray(land).squeeze()
+
         if land.shape != values.shape:
-            raise ValueError('Land mask and field shapes differ')
-        values = np.where(land, values, np.nan)
-    image = ax.imshow(np.ma.masked_invalid(values), origin=origin, extent=extent,
-                      cmap=style.PRECIP_CMAP if cmap is None else cmap,
-                      norm=norm, vmin=vmin, vmax=vmax)
-    style.style_map_axes(ax)
+            raise ValueError(f"Land mask and field shapes differ: {land.shape} versus {values.shape}")
+
+    # Current manuscript code sometimes passes a plain Normalize.
+    # The legacy precipitation helper constructs its own zero-aware
+    # normalization, so only retain its explicit limits.
+    if norm is not None:
+        if vmin is None:
+            vmin = norm.vmin
+        if vmax is None:
+            vmax = norm.vmax
+
+    image = imshow_variable(
+        ax,
+        values,
+        variable=variable,
+        vmin=vmin,
+        vmax=vmax,
+        cmap=style.PRECIP_CMAP if cmap is None else cmap,
+        add_outline=add_outline,
+        outline_color=outline_color,
+        outline_linewidth=outline_linewidth,
+        show_ocean=show_ocean,
+        lsm_mask=land,
+        precip_zero_color="#ffffff",
+    )
+
+    if add_colorbar:
+        _add_colorbar_and_boxplot(
+            ax.figure,
+            ax,
+            image,
+            values,
+            boxplot=add_boxplot,
+            ylim=(
+                (vmin, vmax)
+                if vmin is not None and vmax is not None
+                else None
+            ),
+            boxplot_mask=land,
+        )
+
     if title:
         ax.set_title(title)
+
     if label:
         style.panel_label(ax, label)
+
     return image

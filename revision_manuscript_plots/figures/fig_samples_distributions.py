@@ -7,11 +7,38 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
+import numpy as np
 
 from .. import style
 from ..data import legacy
 from ..panels import distributions
 from ..paths import REVISION_ROOT
+
+def pooled_limits(examples, date, columns,):
+    """Common physical precipitation scale for one example date."""
+
+    day = examples["dates"][date]
+    arrays = []
+
+    for method, member, _ in columns:
+        if member is None:
+            field = day["fields"][method]
+        else:
+            field = day["ensemble"][member]
+
+        field = np.asarray(field, dtype=float,)
+        finite = field[np.isfinite(field)]
+
+        if finite.size:
+            arrays.append(finite)
+
+    if not arrays:
+        return 0.0, 1.0
+
+    values = np.concatenate(arrays)
+
+    # Precipitation is non-negative in these physical artifacts.
+    return 0.0, float(np.nanmax(values))
 
 
 def main():
@@ -21,7 +48,6 @@ def main():
     parser.add_argument("--qm-eval", type=Path,)
     parser.add_argument("--generation-dir", type=Path,)
     parser.add_argument("--dates", nargs=2, default=("20190103", "20190104"),)
-    parser.add_argument("--map-vmax", type=float, default=30.0,)
     parser.add_argument("--output-dir", type=Path,)
 
     args = parser.parse_args()
@@ -49,22 +75,22 @@ def main():
     # Layout
     # ------------------------------------------------------------------
 
-    fig = plt.figure(figsize=(7.2, 5.8))
+    fig = plt.figure(figsize=(8.4, 5.8))
 
     outer = fig.add_gridspec(
         2,
         2,
-        width_ratios=(4.1, 1.15),
+        width_ratios=(6.2, 1.15),
         height_ratios=(1.2, 1.0),
         hspace=0.38,
-        wspace=0.24,
+        wspace=0.16,
     )
 
     map_grid = outer[0, 0].subgridspec(
         2,
         6,
-        wspace=0.06,
-        hspace=0.08,
+        wspace=0.35,
+        hspace=0.10,
     )
 
     season_grid = outer[1, 0].subgridspec(
@@ -83,19 +109,19 @@ def main():
     # (a) Generated examples
     # ------------------------------------------------------------------
 
-    norm = Normalize(vmin=0.0, vmax=args.map_vmax,)
-
     map_axes = []
     last_image = None
 
     columns = (
         ("era5_condition", None, "ERA5"),
         ("danra", None, "DANRA"),
-        ("ceddar_members", 0, "CEDDAR member 1"),
-        ("ceddar_members", 1, "CEDDAR member 2"),
-        ("ceddar_members", 2, "CEDDAR member 3"),
-        ("ceddar_pmm", None, "CEDDAR PMM"),
+        ("ceddar_members", 0, "CEDDAR\nmember 1"),
+        ("ceddar_members", 1, "CEDDAR\nmember 2"),
+        ("ceddar_members", 2, "CEDDAR\nmember 3"),
+        ("ceddar_pmm", None, "CEDDAR\nPMM"),
     )
+
+    row_limits = {date: pooled_limits(examples, date, columns,) for date in args.dates}
 
     for row, date in enumerate(args.dates):
         for col, (
@@ -106,18 +132,25 @@ def main():
             ax = fig.add_subplot(map_grid[row, col])
             map_axes.append(ax)
 
-            last_image = distributions.example(
+            vmin, vmax = row_limits[date]
+
+            distributions.example(
                 ax,
                 examples,
                 date,
                 method=method,
                 member=member,
-                norm=norm,
-                origin="lower",
+                vmin=vmin,
+                vmax=vmax,
+                variable="prcp",
+                show_ocean=True,
+                add_outline=True,
+                add_colorbar=True,
+                add_boxplot=True,
             )
 
             if row == 0:
-                ax.set_title(title, pad=2,)
+                ax.set_title(title, fontsize=7.5, pad=3,)
 
             if col == 0:
                 ax.text(
@@ -144,16 +177,16 @@ def main():
                     y=1.08,
                 )
 
-    cbar = fig.colorbar(
-        last_image,
-        ax=map_axes,
-        orientation="horizontal",
-        fraction=0.035,
-        pad=0.055,
-        aspect=45,
-    )
+    # cbar = fig.colorbar(
+    #     last_image,
+    #     ax=map_axes,
+    #     orientation="horizontal",
+    #     fraction=0.035,
+    #     pad=0.055,
+    #     aspect=45,
+    # )
 
-    cbar.set_label(r"Precipitation (mm day$^{-1}$)")
+    # cbar.set_label(r"Precipitation (mm day$^{-1}$)")
 
     # ------------------------------------------------------------------
     # (b) Seasonal distributions
@@ -174,10 +207,11 @@ def main():
             baselines=baseline_distributions,
             label="(b)" if index == 0 else None,
         )
+        ax.set_xlabel("")
 
         if index > 0:
             ax.set_ylabel("")
-
+    fig.text(0.39, 0.115, r"Precipitation (mm day$^{-1}$)", ha="center", va="center", fontsize=9)
     # ------------------------------------------------------------------
     # (c) Tail and wet-day statistics
     # ------------------------------------------------------------------
