@@ -121,22 +121,198 @@ def load_psd(directory=None):
     return _evaluation('scale', directory, ('scale_psd_curves.npz',), 'scale_')
 
 
-def load_seasonal_distributions(directory=None):
-    """Load daily histograms and return season row indices (no PDF renormalization).
+def _normalise_date(date):
+    """Return YYYYMMDD for supported saved date representations"""
+    date = str(date)
 
-    dist_daily.counts_gen describes saved PMM, NOT pooled ensemble members.
-    dist_member_histograms / dist_gen_ens_pool are separate ensemble artifacts;
-    they do not supply per-season member counts unless explicitly saved as such.
-    """
+    return datetime.strptime(date.replace("-", ""), "%Y%m%d").strftime("%Y%m%d")
+
+
+def _season_indices(dates):
+    """Return seasonal row indices for an array of saved dates"""
+    dates = np.asarray([_normalise_date(date) for date in dates])
+    months = np.array([int(date[4:6]) for date in dates])
+    seasons = {'DJF': (12, 1, 2), 'MAM': (3, 4, 5), 'JJA': (6, 7, 8), 'SON': (9, 10, 11)}
+
+    return {season: np.flatnonzero(np.isin(months, members,)) for season, members in seasons.items()}
+
+
+def load_seasonal_distributions(directory=None):
+    """Load daily histograms and return season row indices (no PDF renormalization)."""
     result = _evaluation('distributional', directory, ('dist_daily.npz',), 'dist_')
 
     dates = result['arrays']['dist_daily']['dates'].astype(str)
 
-    months = np.array([datetime.strptime(d.replace('-', ''), '%Y%m%d').month for d in dates])
-
-    result['season_indices'] = {season: np.flatnonzero(np.isin(months, members)) for season, members in
-                                dict(DJF=(12, 1, 2), MAM=(3, 4, 5), JJA=(6, 7, 8), SON=(9, 10, 11)).items()}
+    result['season_indices'] = (_season_indices(dates))
     return result
+
+
+def build_ensemble_histograms(dates, *, generation_dir=None, bins, land_only=True):
+    """Build daily precipitation histograms for every saved CEDDAR member."""
+
+    root = Path(generation_dir if generation_dir is not None else DEFAULT_GENERATION).expanduser().resolve()
+
+    dates = np.asarray([_normalise_date(date) for date in dates])
+    bins = np.asarray(bins, dtype=float,)
+
+    if bins.ndim != 1 or len(bins) < 2:
+        raise ValueError("bins must be a one-dimensional array of bin edges")
+
+    if not np.all(np.diff(bins) > 0):
+        raise ValueError("Histogram bin edges must be strictly increasing")
+
+    # --------------------------------------------------------------
+    # Determine ensemble/member shape from first date
+    # --------------------------------------------------------------
+
+    first_path = (root / "ensembles_phys" / f"{dates[0]}.npz")
+    first = _npz(first_path)
+
+    if "ens" not in first:
+        raise KeyError(f"{first_path}: expected key 'ens', found {list(first)}")
+
+    first_ens = np.asarray(first["ens"])
+
+    if (first_ens.ndim == 4 and first_ens.shape[1] == 1):
+        first_ens = first_ens[:, 0]
+
+    if first_ens.ndim != 3:
+        raise ValueError(f"{first_path}: expected [members, H, W] or [members, 1, H, W], got {first_ens.shape}")
+
+    n_members, height, width = (first_ens.shape)
+    n_bins = len(bins) - 1
+
+    # uint32 is ample: an individual member contributes at most
+    # H*W pixels to any daily histogram.
+    counts_by_member = np.zeros((len(dates), n_members, n_bins,), dtype=np.uint32,)
+
+    # --------------------------------------------------------------
+    # Land mask
+    # --------------------------------------------------------------
+
+    common_land = None
+
+    meta_mask = (root / "meta" / "land_mask.npz")
+
+    if land_only and meta_mask.is_file():
+        mask_arrays = _npz(meta_mask)
+
+        common_land = _field(mask_arrays, ("lsm_hr", "lsm", "mask"), meta_mask,)
+
+        if common_land.shape != (height, width,):
+            raise ValueError(f"{meta_mask}: mask shape {common_land.shape} differs from ensemble grid {(height, width)}")
+
+        common_land = (np.isfinite(common_land) & (common_land > 0.5))
+
+    # --------------------------------------------------------------
+    # Stream one date at a time
+    # --------------------------------------------------------------
+
+    for day_index, date in enumerate(dates):
+        path = (root / "ensembles_phys" / f"{date}.npz")
+        arrays = _npz(path)
+
+        if "ens" not in arrays:
+            raise KeyError(f"{path}: expected key 'ens', found {list(arrays)}")
+
+        ens = np.asarray(arrays["ens"])
+
+        if (ens.ndim == 4 and ens.shape[1] == 1):
+            ens = ens[:, 0]
+
+        if ens.shape != (n_members, height, width,):
+            raise ValueError(f"{path}: expected  {(n_members, height, width)}, got {ens.shape}")
+
+        # Some old generation layouts store a mask per date.
+        land = common_land
+
+        if land_only and land is None:
+            mask_path = (root / "lsm" / f"{date}.npz")
+
+            if not mask_path.is_file():
+                raise FileNotFoundError(f"No common mask at {meta_mask} and no date mask at {mask_path}")
+
+            mask_arrays = _npz(mask_path)
+            land = _field(mask_arrays, ("lsm_hr", "lsm", "mask"), mask_path)
+
+            if land.shape != (height, width,):
+                raise ValueError(f"{mask_path}: mask shape {land.shape} differs from ensemble grid {(height, width)}")
+
+            land = (np.isfinite(land) & (land > 0.5))
+
+        for member in range(n_members):
+            values = ens[member]
+
+            if land_only:
+                values = values[land]
+            else:
+                values = values.ravel()
+
+            values = values[np.isfinite(values)]
+
+            counts_by_member[day_index,member, ] = np.histogram(values, bins=bins,)[0]
+
+    counts_pooled = (counts_by_member.sum(axis=1, dtype=np.uint64,))
+
+    return {
+        "dates": dates,
+        "bins": bins,
+        "counts_by_member": counts_by_member,
+        "counts_pooled": counts_pooled,
+        "season_indices": _season_indices(dates),
+        "metadata": {
+            "source": "saved_generation",
+            "generation_directory": str(root),
+            "ensemble_members": int(n_members),
+            "land_only": bool(land_only),
+            "histogram_basis": ("member x land-pixel values, retaining daily and member dimensions"),
+        },
+    }
+
+
+def save_ensemble_histograms(product, path,):
+    """Save derived ensemble histogram product for manuscript plotting."""
+
+    path = Path(path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True,)
+
+    np.savez_compressed(
+        path,
+        dates=product["dates"],
+        bins=product["bins"],
+        counts_by_member=product["counts_by_member"],
+        counts_pooled=product["counts_pooled"],
+    )
+
+
+def load_ensemble_histograms(path,):
+    """Load previously derived ensemble histogram product."""
+
+    path = Path(path).expanduser().resolve()
+    arrays = _npz(path)
+
+    required = {
+        "dates",
+        "bins",
+        "counts_by_member",
+        "counts_pooled",
+    }
+
+    missing = (required - set(arrays))
+
+    if missing:
+        raise KeyError(f"{path}: missing {sorted(missing)}")
+
+    dates = (arrays["dates"].astype(str))
+
+    return {
+        **arrays,
+        "dates": dates,
+        "season_indices": (_season_indices(dates)),
+        "directory": path.parent,
+        "source": str(path),
+        "origin": ("derived_from_saved_generation"),
+    }
 
 
 def load_extremes(directory=None):
@@ -268,3 +444,4 @@ def load_example_fields(dates, generation_dir=None, *, baseline_dirs=None,
 
     _metadata(result, root)
     return result
+
