@@ -48,7 +48,9 @@ def main():
     parser.add_argument("--qm-eval", type=Path,)
     parser.add_argument("--generation-dir", type=Path,)
     parser.add_argument("--dates", nargs=2, default=("20190103", "20190104"),)
+    parser.add_argument("--ensemble-histograms", type=Path, help="Path to previously derived ensemble histograms.",)
     parser.add_argument("--output-dir", type=Path,)
+    parser.add_argument("--tails-mode", choices=("lines", "bars"), default="lines", help="Plot seasonal tail quantiles as connected lines or grouped bars.")
 
     args = parser.parse_args()
 
@@ -59,11 +61,10 @@ def main():
     # ------------------------------------------------------------------
 
     dist = legacy.load_seasonal_distributions(args.legacy_eval)
-    tails = legacy.load_extremes(args.legacy_eval)
+    ensemble_dist = (legacy.load_ensemble_histograms(args.ensemble_histograms) if args.ensemble_histograms else None)
 
     qm_eval = (args.qm_eval or legacy.baseline_evaluation("qm"))
     qm_dist = legacy.load_seasonal_distributions(qm_eval)
-    qm_tails = legacy.load_extremes(qm_eval)
 
     # ------------------------------------------------------------------
     # Physical example fields
@@ -75,34 +76,32 @@ def main():
     # Layout
     # ------------------------------------------------------------------
 
-    fig = plt.figure(figsize=(8.4, 5.8))
+    fig = plt.figure(figsize=(12, 7.2))
 
     outer = fig.add_gridspec(
+        3,
+        1,
+        height_ratios=(1.18, 1.0, 0.62),
+        hspace=0.4,
+    )
+
+    map_grid = outer[0].subgridspec(
         2,
-        2,
-        width_ratios=(6.2, 1.15),
-        height_ratios=(1.2, 1.0),
-        hspace=0.38,
+        6,
+        wspace=0.1,
+        hspace=0.05,
+    )
+
+    season_grid = outer[1].subgridspec(
+        1,
+        4,
         wspace=0.16,
     )
 
-    map_grid = outer[0, 0].subgridspec(
-        2,
-        6,
-        wspace=0.35,
-        hspace=0.10,
-    )
-
-    season_grid = outer[1, 0].subgridspec(
+    tail_grid = outer[2].subgridspec(
         1,
         4,
-        wspace=0.18,
-    )
-
-    side_grid = outer[:, 1].subgridspec(
-        2,
-        1,
-        hspace=0.42,
+        wspace=0.13,
     )
 
     # ------------------------------------------------------------------
@@ -124,15 +123,10 @@ def main():
     row_limits = {date: pooled_limits(examples, date, columns,) for date in args.dates}
 
     for row, date in enumerate(args.dates):
-        for col, (
-            method,
-            member,
-            title,
-        ) in enumerate(columns):
-            ax = fig.add_subplot(map_grid[row, col])
-            map_axes.append(ax)
+        vmin, vmax = (row_limits[date])
 
-            vmin, vmax = row_limits[date]
+        for col, (method, member, title,) in enumerate(columns):
+            ax = fig.add_subplot(map_grid[row, col])
 
             distributions.example(
                 ax,
@@ -145,48 +139,18 @@ def main():
                 variable="prcp",
                 show_ocean=True,
                 add_outline=True,
-                add_colorbar=True,
                 add_boxplot=True,
+                add_colorbar=(col == len(columns) - 1), # only add colorbar on last field
             )
 
             if row == 0:
-                ax.set_title(title, fontsize=7.5, pad=3,)
-
+                ax.set_title(title, fontsize=7.6, pad=3)
             if col == 0:
-                ax.text(
-                    -0.08,
-                    0.5,
-                    (
-                        f"{date[:4]}-"
-                        f"{date[4:6]}-"
-                        f"{date[6:]}"
-                    ),
-                    transform=ax.transAxes,
-                    rotation=90,
-                    va="center",
-                    ha="right",
-                    fontsize=7.5,
-                    color=style.AXIS_GREY,
-                )
-
+                ax.text(-0.10, 0.5, (f"{date[:4]}-{date[4:6]}-{date[6:]}"), transform=ax.transAxes, rotation=90, va="center", ha="right", fontsize=7.2, color=style.AXIS_GREY,)
             if row == 0 and col == 0:
-                style.panel_label(
-                    ax,
-                    "(a)",
-                    x=-0.28,
-                    y=1.08,
+                style.panel_label(ax, "(a)", x=-0.34, y=1.10,
                 )
 
-    # cbar = fig.colorbar(
-    #     last_image,
-    #     ax=map_axes,
-    #     orientation="horizontal",
-    #     fraction=0.035,
-    #     pad=0.055,
-    #     aspect=45,
-    # )
-
-    # cbar.set_label(r"Precipitation (mm day$^{-1}$)")
 
     # ------------------------------------------------------------------
     # (b) Seasonal distributions
@@ -195,61 +159,69 @@ def main():
     baseline_distributions = {"qm": qm_dist,}
 
     season_axes = []
+    season_results = {}
 
     for index, season in enumerate(("DJF", "MAM", "JJA", "SON")):
-        ax = fig.add_subplot(season_grid[0, index])
+        if season_axes:
+            ax = fig.add_subplot(season_grid[0, index], sharey=season_axes[0],)
+        else:
+            ax = fig.add_subplot(season_grid[0, index])
 
         season_axes.append(ax)
-        distributions.seasonal(
-            ax,
-            dist,
-            season,
-            baselines=baseline_distributions,
-            label="(b)" if index == 0 else None,
+
+        season_results[season] = (
+            distributions.seasonal(
+                ax,
+                dist,
+                season,
+                baselines=baseline_distributions,
+                ensemble=ensemble_dist,
+                label=("(b)" if index == 0 else None),
+                xlim=(-5,120),
+                show_percentiles=True,
+            )
         )
         ax.set_xlabel("")
 
         if index > 0:
             ax.set_ylabel("")
-    fig.text(0.39, 0.115, r"Precipitation (mm day$^{-1}$)", ha="center", va="center", fontsize=9)
+            ax.tick_params(labelleft=False)
+
+    ymin = min(ax.get_ylim()[0] for ax in season_axes)
+    ymax = max(ax.get_ylim()[1] for ax in season_axes)
+    for ax in season_axes:
+        ax.set_ylim(ymin, ymax)
+        ax.tick_params(labelbottom=False)
+
+    fig.supxlabel(r"Precipitation (mm day$^{-1}$)", x=0.50, y=0.105, fontsize=9)
+    # fig.text(0.50, 0.335, r"Precipitation (mm day$^{-1}$)", ha="center", va="center", fontsize=9)
     # ------------------------------------------------------------------
     # (c) Tail and wet-day statistics
     # ------------------------------------------------------------------
 
-    baseline_tails = {"qm": qm_tails,}
+    baseline_tails = {"qm": qm_dist,}
+    tail_axes = []
 
-    ax_tail = fig.add_subplot(side_grid[0, 0])
+    for index, season in enumerate(("DJF", "MAM", "JJA", "SON")):
+        ax = fig.add_subplot(tail_grid[0, index], sharex=season_axes[index],)
 
-    distributions.tails(
-        ax_tail,
-        tails,
-        metrics=(
-            "P95",
-            "P99",
-            "P99.9",
-            "P99.99",
-        ),
-        baselines=baseline_tails,
-        label="(c)",
-    )
+        tail_axes.append(ax)
 
-    ax_tail.set_title("Upper-tail quantiles", loc="left",)
-    ax_tail.tick_params(axis="x", rotation=35,)
-    ax_wet = fig.add_subplot(side_grid[1, 0])
+        distributions.seasonal_tails(
+            ax,
+            dist,
+            season,
+            baselines=baseline_tails,
+            ensemble=ensemble_dist,
+            mode=args.tails_mode,
+            label=("(c)" if index == 0 else None),
+        )
 
-    distributions.tails(
-        ax_wet,
-        tails,
-        metrics=(
-            "wet_freq",
-            "wet_hit_rate",
-        ),
-        baselines=baseline_tails,
-    )
+        ax.set_xlim(-5, 120)
 
-    ax_wet.set_title("Wet-day statistics", loc="left",)
-    ax_wet.set_xticklabels(("Frequency", "Hit rate"), rotation=20, ha="right",)
-    ax_wet.set_ylim(0, 1.05)
+        if index > 0:
+            ax.set_yticklabels([])
+
 
     # ------------------------------------------------------------------
     # Shared legend
@@ -269,8 +241,7 @@ def main():
     handles, labels = style.unique_legend(
         (
             *season_axes,
-            ax_tail,
-            ax_wet,
+            *tail_axes,
         ),
         order=order,
     )
@@ -280,15 +251,15 @@ def main():
         labels,
         loc="lower center",
         ncol=5,
-        bbox_to_anchor=(0.5, 0.01),
+        bbox_to_anchor=(0.5, 0.025),
         frameon=False,
     )
 
     fig.subplots_adjust(
-        left=0.07,
-        right=0.99,
-        top=0.97,
-        bottom=0.13,
+        left=0.08,
+        right=0.985,
+        top=0.98,
+        bottom=0.15,
     )
 
     output = (args.output_dir or REVISION_ROOT / "manuscript_figures")
