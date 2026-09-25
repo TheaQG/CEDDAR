@@ -1,5 +1,8 @@
 """Small axes-only helpers. Figure scripts own layout, legends, colourbars and saving."""
 import numpy as np
+
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
 from .. import style
 from sbgm.plotting_utils import (imshow_variable, _add_colorbar_and_boxplot)
 
@@ -100,7 +103,7 @@ def map_field(
         variable=variable,
         vmin=vmin,
         vmax=vmax,
-        cmap=style.PRECIP_CMAP if cmap is None else cmap,
+        cmap=style.PRECIP_CMAP if cmap is None else cmap,  # type: ignore[arg-type]
         add_outline=add_outline,
         outline_color=outline_color,
         outline_linewidth=outline_linewidth,
@@ -123,6 +126,17 @@ def map_field(
             ),
             boxplot_mask=land,
         )
+    elif add_boxplot:
+        _add_boxplot_only(
+            ax,
+            values,
+            land=land,
+            ylim=(
+                (vmin, vmax)
+                if vmin is not None and vmax is not None
+                else None
+            ),
+        )
 
     if title:
         ax.set_title(title)
@@ -131,3 +145,42 @@ def map_field(
         style.panel_label(ax, label)
 
     return image
+
+
+def _add_boxplot_only(ax, values, *, land=None, ylim=None,):
+    """Attach the legacy land-only boxplot without adding a colorbar"""
+
+    values = np.asarray(values, dtype=float)
+
+    if land is not None:
+        land = np.asarray(land).squeeze()
+
+        if land.shape == values.shape:
+            values = np.where(land >= 0.5, values, np.nan)
+
+    values = values[np.isfinite(values)]
+
+    divider = make_axes_locatable(ax)
+
+    bax = divider.append_axes("right", size="8%", pad=0.025,)
+
+    if values.size:
+        bax.boxplot(
+            values,
+            vert=True,
+            widths=0.9,
+            showmeans=True,
+            meanprops=dict(marker="x", markerfacecolor="firebrick", markeredgecolor="firebrick", markersize=4,),
+            flierprops=dict(marker="o", markerfacecolor="none", markeredgecolor="darkgreen", markersize=1.8, linestyle="none", alpha=0.35,),
+            medianprops=dict(linestyle="-", linewidth=1.4, color="black",)
+        )
+
+        if ylim is not None:
+            bax.set_ylim(*ylim)
+
+        bax.set_xticks([])
+        bax.set_yticks([])
+        bax.set_frame_on(False)
+
+    else:
+        bax.axis("off")
