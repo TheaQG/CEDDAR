@@ -37,7 +37,7 @@ def daily_errors(ax, data, metric='mae', *, methods=METHODS[1:], label=None):
         result[method] = {"values": delta, "fraction_lower": fraction, "n": len(delta)}
 
         groups.append(delta)
-        labels.append(f'{style.method_label(method)}\n{100*fraction:.f}% lower; n={len(delta)}')
+        labels.append(f'{style.method_label(method)}\n{100*fraction:.0f}% lower')#; n={len(delta)}')
 
     boxes(ax, groups, methods, horizontal=True,)
     ax.set_yticks(range(1, len(methods)+1), labels)

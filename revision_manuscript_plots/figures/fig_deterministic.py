@@ -67,20 +67,24 @@ def main():
         ax_pod,
         data,
         metric="pod",
-        label="(c)",
+        label=None,#"(c)",
     )
     deterministic.event_detection(
         ax_far,
         data,
         metric="far",
-        label="(d)",
+        label=None,#"(d)",
     )
     deterministic.event_detection(
         ax_csi,
         data,
         metric="csi",
-        label="(e)",
+        label=None,#"(e)",
     )
+
+    style.panel_label(ax_pod, "(c)", x=-0.17, y=1.08)
+    style.panel_label(ax_far, "(d)", x=-0.17, y=1.08)
+    style.panel_label(ax_csi, "(e)", x=-0.17, y=1.08)
 
     order = [
         style.method_label(method)
