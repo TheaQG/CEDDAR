@@ -47,24 +47,26 @@ if [[ $# -gt 1 || ( $# -eq 1 && "$1" != --prepare-only ) ]]; then
 fi
 
 # Validate inputs and reject an existing RUN or any source-tree output.
-LEGACY_DIR="$("$PYTHON" -c '
-import os, sys
+LEGACY_DIR="$(
+"$PYTHON" -c '
+import os
+import sys
 from pathlib import Path
+
 from sbgm.runtime import external_output
 
 for key in ("DATA_DIR", "STATS_LOAD_DIR"):
     if not Path(os.environ[key]).is_dir():
         raise SystemExit(f"Missing directory: {key}")
+
 if not Path(os.environ["PUBLISHED_CHECKPOINT"]).is_file():
     raise SystemExit("Missing checkpoint")
 
 root = external_output(sys.argv[1])
 root.mkdir(parents=True, exist_ok=False)
 print(root)
-"' "$LEGACY_DIR")"
-
-LEGACY="$LEGACY_DIR/legacy_extended"
-RUN_DIR="$LEGACY"
+' "$LEGACY_DIR"
+)"
 
 # Keep one log per stage. pipefail stops the script if the command fails,
 # even when tee successfully writes its output to the log.
