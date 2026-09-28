@@ -60,9 +60,9 @@ EXP_DATE="$(date -u +%Y%m%dT%H%M%SZ)"
 # Experiment settings
 # -----------------------------------------------------------------------------
 
-SIGMA_SEED="${SIGMA_SEED:-504}"
-MAX_DATES="${MAX_DATES:-1000}"
-ENSEMBLE_SIZE="${ENSEMBLE_SIZE:-32}"
+SIGMA_SEED=504 #"${SIGMA_SEED:-504}"
+MAX_DATES=1000 #"${MAX_DATES:-1000}"
+ENSEMBLE_SIZE=32 #"${ENSEMBLE_SIZE:-32}"
 SIGMA_CONFIG="${SIGMA_CONFIG:-$REPO_DIR/sbgm/config/component_study/F_final_test_eval.yaml}"
 # Main dense manuscript grid.
 SIGMA_STAR_GRID="${SIGMA_STAR_GRID:-0.80 0.85 0.90 0.95 1.00 1.05 1.10 1.15 1.20 1.25}"
