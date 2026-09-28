@@ -1,53 +1,124 @@
 #!/usr/bin/env bash
-# Run extended legacy sigma* experiment using the existing ATMO environment.
-#   legacy:    global schedule, fixed legacy initial amplitude
+
+# =============================================================================
+# Extended legacy sigma* experiment
 #
-# Launch from tcsh with: bash repro/run_sigma_legacy_extended.sh [--prepare-only]
-# Add --prepare-only to inspect resolved configs without running inference.
-# Every invocation needs a fresh output directory; existing runs are preserved.
+# Sampling setup:
+#   - sigma_star_mode = global
+#   - initial_state   = legacy_sigma_max
+#
+# Purpose:
+#   exploratory wide-range sigma* sweep to test behaviour farther from sigma*=1.
+#
+# This is intentionally distinct from the dense manuscript sweep in
+# run_sigma_legacy.sh.
+#
+# Launch from tcsh with:
+#   bash repro/run_sigma_legacy_extended.sh
+# or inspect the resolved configuration without running inference:
+#   bash repro/run_sigma_legacy_extended.sh --prepare-only
+#
+# Every invocation creates a fresh timestamped output directory.
+# =============================================================================
+
 set -euo pipefail
 
-# Locate the source tree and use Python from the active environment.
+
+# -----------------------------------------------------------------------------
+# Repository and Python environment
+# -----------------------------------------------------------------------------
+
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 export PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHON="${PYTHON:-python}"
 
-# Input artifacts: environment variables can override these ATMO defaults.
+
+# -----------------------------------------------------------------------------
+# Input artifacts. Environment variables may override these defaults.
+# -----------------------------------------------------------------------------
+
 DEFAULT_CHECKPOINT_DIR=/home/theaqg/CEDDAR_runs/paper1_original/checkpoints_from_lumi
+
 DEFAULT_CHECKPOINT_NAME=B1_GSDF_RGBCE__HR_prcp_DANRA__SIZE_128x128__LR_prcp_ERA5
 DEFAULT_CHECKPOINT_NAME+=__LOSS_sdfweighted__HEADS_4__TIMESTEPS_56.pth.tar
 
-export DATA_DIR="${DATA_DIR:-/home/theaqg/CEDDAR_migration/Data/Data_DiffMod}"
-export STATS_LOAD_DIR="${STATS_LOAD_DIR:-$REPO_DIR/repro/assets/stats/statistics_run/stats}"
-export PUBLISHED_CHECKPOINT="${PUBLISHED_CHECKPOINT:-$DEFAULT_CHECKPOINT_DIR/$DEFAULT_CHECKPOINT_NAME}"
+export DATA_DIR="${
+    DATA_DIR:-/home/theaqg/CEDDAR_migration/Data/Data_DiffMod
+}"
 
-# All runs execute sequentially with the same CPU thread settings.
-export DEVICE=cpu
+export STATS_LOAD_DIR="${
+    STATS_LOAD_DIR:-$REPO_DIR/repro/assets/stats/statistics_run/stats
+}"
+
+export PUBLISHED_CHECKPOINT="${
+    PUBLISHED_CHECKPOINT:-$DEFAULT_CHECKPOINT_DIR/$DEFAULT_CHECKPOINT_NAME
+}"
+
+
+# -----------------------------------------------------------------------------
+# Runtime
+# -----------------------------------------------------------------------------
+
+export DEVICE="${DEVICE:-cpu}"
 export OMP_NUM_THREADS="${CPU_THREADS:-1}"
 export MKL_NUM_THREADS="$OMP_NUM_THREADS"
-export EXP_DATE="$(date -u +%Y%m%dT%H%M%SZ)"
 
-# Shared experiment settings. Ramp parameters are inherited from SIGMA_CONFIG:
-# F_final_test_eval.yaml specifies ramp_start_frac=0.60, ramp_end_frac=0.85.
+EXP_DATE="$(date -u +%Y%m%dT%H%M%SZ)"
+
+
+# -----------------------------------------------------------------------------
+# Experiment settings
+# -----------------------------------------------------------------------------
+
 SIGMA_SEED="${SIGMA_SEED:-504}"
-MAX_DATES=1000 #"${MAX_DATES:-24}"
-ENSEMBLE_SIZE=32 #"${ENSEMBLE_SIZE:-8}"
-SIGMA_CONFIG="${SIGMA_CONFIG:-$REPO_DIR/sbgm/config/component_study/F_final_test_eval.yaml}"
-SIGMA_STAR_GRID="${SIGMA_STAR_GRID:-0.70 0.85 1.0 1.15 1.30}"
 
-# A timestamped parent separates this run from all earlier results.
+MAX_DATES="${MAX_DATES:-1000}"
+
+ENSEMBLE_SIZE="${ENSEMBLE_SIZE:-32}"
+
+SIGMA_CONFIG="${
+    SIGMA_CONFIG:-$REPO_DIR/sbgm/config/component_study/F_final_test_eval.yaml
+}"
+
+# Coarse wide-range exploratory grid.
+SIGMA_STAR_GRID="${
+    SIGMA_STAR_GRID:-0.70 0.85 1.00 1.15 1.30
+}"
+
+
+# -----------------------------------------------------------------------------
+# Output directory
+#
+# Parent name explicitly identifies this as the extended exploratory sweep.
+# Internal "legacy" directory still identifies the sampling mechanism.
+# -----------------------------------------------------------------------------
+
 DEFAULT_OUTPUT_ROOT=/home/theaqg/CEDDAR_runs/paper1_revision
-LEGACY_NAME="sigma_init_d${MAX_DATES}_m${ENSEMBLE_SIZE}_s${SIGMA_SEED}_${EXP_DATE}"
-LEGACY_DIR="${LEGACY_DIR:-$DEFAULT_OUTPUT_ROOT/$LEGACY_NAME}"
 
-if [[ $# -gt 1 || ( $# -eq 1 && "$1" != --prepare-only ) ]]; then
-    echo 'Usage: bash repro/run_sigma_legacy_extended.sh [--prepare-only]' >&2
+EXPERIMENT_NAME="sigma_legacy_extended_d${MAX_DATES}_m${ENSEMBLE_SIZE}_seed${SIGMA_SEED}_${EXP_DATE}"
+
+LEGACY_EXTENDED_DIR="${
+    LEGACY_EXTENDED_DIR:-$DEFAULT_OUTPUT_ROOT/$EXPERIMENT_NAME
+}"
+
+
+# -----------------------------------------------------------------------------
+# CLI validation
+# -----------------------------------------------------------------------------
+
+if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--prepare-only" ) ]]; then
+    echo "Usage: bash repro/run_sigma_legacy_extended.sh [--prepare-only]" >&2
     exit 2
 fi
 
-# Validate inputs and reject an existing RUN or any source-tree output.
-LEGACY_DIR="$(
+
+# -----------------------------------------------------------------------------
+# Validate inputs and create a fresh external output directory
+# -----------------------------------------------------------------------------
+
+LEGACY_EXTENDED_DIR="$(
 "$PYTHON" -c '
 import os
 import sys
@@ -55,30 +126,65 @@ from pathlib import Path
 
 from sbgm.runtime import external_output
 
+
 for key in ("DATA_DIR", "STATS_LOAD_DIR"):
-    if not Path(os.environ[key]).is_dir():
-        raise SystemExit(f"Missing directory: {key}")
+    path = Path(os.environ[key])
 
-if not Path(os.environ["PUBLISHED_CHECKPOINT"]).is_file():
-    raise SystemExit("Missing checkpoint")
+    if not path.is_dir():
+        raise SystemExit(
+            f"Missing directory: {key}={path}"
+        )
 
-root = external_output(sys.argv[1])
-root.mkdir(parents=True, exist_ok=False)
+
+checkpoint = Path(
+    os.environ["PUBLISHED_CHECKPOINT"]
+)
+
+if not checkpoint.is_file():
+    raise SystemExit(
+        f"Missing checkpoint: {checkpoint}"
+    )
+
+
+root = external_output(
+    sys.argv[1]
+)
+
+root.mkdir(
+    parents=True,
+    exist_ok=False,
+)
+
 print(root)
-' "$LEGACY_DIR"
+' "$LEGACY_EXTENDED_DIR"
 )"
 
-# Keep one log per stage. pipefail stops the script if the command fails,
-# even when tee successfully writes its output to the log.
+
+RUN_DIR="$LEGACY_EXTENDED_DIR/legacy"
+
+
+# -----------------------------------------------------------------------------
+# Logging helper
+# -----------------------------------------------------------------------------
+
 run_logged() {
     local label="$1"
     shift
-    "$@" 2>&1 | tee "$LEGACY_DIR/$label.log"
-}
-trap 'echo "Stopped on error. Keep partial results for inspection: $LEGACY_DIR" >&2' ERR
 
-# Prepare all configurations first. Only scaling mode and initialization differ;
-# generation and evaluation subsequently read each saved resolved_config.yaml.
+    "$@" 2>&1 | tee "$LEGACY_EXTENDED_DIR/$label.log"
+}
+
+
+trap '
+echo "Stopped on error. Partial results retained at:" >&2
+echo "$LEGACY_EXTENDED_DIR" >&2
+' ERR
+
+
+# -----------------------------------------------------------------------------
+# Shared sigma* preparation arguments
+# -----------------------------------------------------------------------------
+
 COMMON=(
     --config "$SIGMA_CONFIG"
     --noise-mode paired
@@ -90,35 +196,81 @@ COMMON=(
     --split valid
 )
 
+
+# =============================================================================
+# 1. Prepare
+# =============================================================================
+
+echo
+echo "============================================================"
+echo "Preparing extended legacy sigma* sweep"
+echo "Grid: $SIGMA_STAR_GRID"
+echo "Dates: $MAX_DATES"
+echo "Members: $ENSEMBLE_SIZE"
+echo "Seed: $SIGMA_SEED"
+echo "Output: $RUN_DIR"
+echo "============================================================"
+echo
+
+
 run_logged prepare_legacy \
     bash "$REPO_DIR/repro/run_sigma_star.sh" prepare \
-    --run-dir "$LEGACY" "${COMMON[@]}" \
-    --sigma-star-mode global --initial-state legacy_sigma_max
+    --run-dir "$RUN_DIR" \
+    "${COMMON[@]}" \
+    --sigma-star-mode global \
+    --initial-state legacy_sigma_max
 
 
-run_logged config_check \
-    "$PYTHON" -m repro.check_sigma_initialization "$RUN_DIR" --config-only
-
-if [[ "${1:-}" == --prepare-only ]]; then
-    echo "Prepared and checked: $RUN_DIR (no inference)"
+if [[ "${1:-}" == "--prepare-only" ]]; then
+    echo
+    echo "Prepared extended legacy sigma* sweep:"
+    echo "$RUN_DIR"
+    echo
+    echo "No inference performed."
     exit 0
 fi
 
-# Generate separately, then verify checkpoint identity, paired draws and exact
-# sigma*=1 sample agreement across all three runs before evaluating anything.
-run_logged "generate_legacy" \
-    bash "$REPO_DIR/repro/run_sigma_star.sh" generate --run-dir "$RUN_DIR"
 
-run_logged generation_check \
-    "$PYTHON" -m repro.check_sigma_initialization "$RUN_DIR" --generation-only
+# =============================================================================
+# 2. Generate
+# =============================================================================
 
-# Evaluate each run independently and export three distinctly named CSVs.
-# sources.json records their original paths and hashes to avoid mixing tables.
-run_logged "evaluate_legacy" \
-    bash "$REPO_DIR/repro/run_sigma_star.sh" evaluate --run-dir "$RUN_DIR"
+echo
+echo "============================================================"
+echo "Generating extended legacy sigma* sweep"
+echo "============================================================"
+echo
 
-run_logged result_check \
-    "$PYTHON" -m repro.check_sigma_initialization "$RUN_DIR" \
-    --output "$LEGACY_DIR/run"
 
-echo "Finished. Named tables and their source hashes: $LEGACY_DIR/run"
+run_logged generate_legacy \
+    bash "$REPO_DIR/repro/run_sigma_star.sh" generate \
+    --run-dir "$RUN_DIR"
+
+
+# =============================================================================
+# 3. Evaluate
+# =============================================================================
+
+echo
+echo "============================================================"
+echo "Evaluating extended legacy sigma* sweep"
+echo "============================================================"
+echo
+
+
+run_logged evaluate_legacy \
+    bash "$REPO_DIR/repro/run_sigma_star.sh" evaluate \
+    --run-dir "$RUN_DIR"
+
+
+# =============================================================================
+# Finished
+# =============================================================================
+
+echo
+echo "============================================================"
+echo "Finished extended legacy sigma* sweep"
+echo
+echo "Run directory:"
+echo "$RUN_DIR"
+echo "============================================================"
