@@ -44,17 +44,9 @@ DEFAULT_CHECKPOINT_DIR=/home/theaqg/CEDDAR_runs/paper1_original/checkpoints_from
 DEFAULT_CHECKPOINT_NAME=B1_GSDF_RGBCE__HR_prcp_DANRA__SIZE_128x128__LR_prcp_ERA5
 DEFAULT_CHECKPOINT_NAME+=__LOSS_sdfweighted__HEADS_4__TIMESTEPS_56.pth.tar
 
-export DATA_DIR="${
-    DATA_DIR:-/home/theaqg/CEDDAR_migration/Data/Data_DiffMod
-}"
-
-export STATS_LOAD_DIR="${
-    STATS_LOAD_DIR:-$REPO_DIR/repro/assets/stats/statistics_run/stats
-}"
-
-export PUBLISHED_CHECKPOINT="${
-    PUBLISHED_CHECKPOINT:-$DEFAULT_CHECKPOINT_DIR/$DEFAULT_CHECKPOINT_NAME
-}"
+export DATA_DIR="${DATA_DIR:-/home/theaqg/CEDDAR_migration/Data/Data_DiffMod}"
+export STATS_LOAD_DIR="${STATS_LOAD_DIR:-$REPO_DIR/repro/assets/stats/statistics_run/stats}"
+export PUBLISHED_CHECKPOINT="${PUBLISHED_CHECKPOINT:-$DEFAULT_CHECKPOINT_DIR/$DEFAULT_CHECKPOINT_NAME}"
 
 
 # -----------------------------------------------------------------------------
@@ -73,19 +65,11 @@ EXP_DATE="$(date -u +%Y%m%dT%H%M%SZ)"
 # -----------------------------------------------------------------------------
 
 SIGMA_SEED="${SIGMA_SEED:-504}"
-
 MAX_DATES="${MAX_DATES:-1000}"
-
 ENSEMBLE_SIZE="${ENSEMBLE_SIZE:-32}"
-
-SIGMA_CONFIG="${
-    SIGMA_CONFIG:-$REPO_DIR/sbgm/config/component_study/F_final_test_eval.yaml
-}"
-
+SIGMA_CONFIG="${SIGMA_CONFIG:-$REPO_DIR/sbgm/config/component_study/F_final_test_eval.yaml}"
 # Coarse wide-range exploratory grid.
-SIGMA_STAR_GRID="${
-    SIGMA_STAR_GRID:-0.70 0.85 1.00 1.15 1.30
-}"
+SIGMA_STAR_GRID="${SIGMA_STAR_GRID:-0.70 0.85 1.00 1.15 1.30}"
 
 
 # -----------------------------------------------------------------------------
@@ -96,12 +80,8 @@ SIGMA_STAR_GRID="${
 # -----------------------------------------------------------------------------
 
 DEFAULT_OUTPUT_ROOT=/home/theaqg/CEDDAR_runs/paper1_revision
-
 EXPERIMENT_NAME="sigma_legacy_extended_d${MAX_DATES}_m${ENSEMBLE_SIZE}_seed${SIGMA_SEED}_${EXP_DATE}"
-
-LEGACY_EXTENDED_DIR="${
-    LEGACY_EXTENDED_DIR:-$DEFAULT_OUTPUT_ROOT/$EXPERIMENT_NAME
-}"
+LEGACY_EXTENDED_DIR="${LEGACY_EXTENDED_DIR:-$DEFAULT_OUTPUT_ROOT/$EXPERIMENT_NAME}"
 
 
 # -----------------------------------------------------------------------------
