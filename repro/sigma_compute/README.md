@@ -1,8 +1,25 @@
 # Parallel legacy σ* runs
 
-One complete σ* value per process is supported by the inspected implementation. Use a bounded Bash launch on your compute server. No scheduler is required. No SSH connection, remote launch, or full inference run has been performed by this task.
+Yes: one complete σ* value per process is supported by the inspected implementation. Use a bounded Bash launch on your compute server. No scheduler is required. No SSH connection, remote launch, or full inference run has been performed by this task.
 
-The supplied scripts keep **global scaling, legacy_sigma_max initialization, paired noise, seed 504, 56 steps, 32 members, and the validation split**. Production defaults also retain the existing 1000-date cap and dense grid 0.80–1.25 in increments of 0.05. The actual number of dates can be smaller than 1000 because the loader uses the available HR/LR date intersection.
+The supplied scripts keep **global scaling, legacy_sigma_max initialization, paired noise, seed 504, 56 steps, and 32 members**. `SIGMA_SPLIT=valid` is the default; use `SIGMA_SPLIT=test` before initializing a new test-set campaign. Production defaults also retain the existing 1000-date cap and dense grid 0.80–1.25 in increments of 0.05. The actual number of dates can be smaller than 1000 because the loader uses the available HR/LR date intersection.
+
+## Test-set rerun (v2)
+
+Use a separate copy of the launcher bundle and a fresh campaign directory. Copy your successful `settings.full.env` into that new folder as `settings.full_test.env`. Keep its working input paths and scientific configuration. Set:
+
+```bash
+export CAMPAIGN_DIR="/home/theaqg/CEDDAR_runs/paper1_revision/sigma_parallel_full_test_001"
+export SIGMA_SPLIT="test"
+export SIGMA_STAR_GRID="0.80 0.85 0.90 0.95 1.00 1.05 1.10 1.15 1.20 1.25"
+export MAX_DATES=1000
+```
+
+Keep the successful CPU/thread settings. Prepare with `bash run_parallel.sh settings.full_test.env init` and check that it prints `split=test`. Start with `bash -c 'nohup bash run_parallel.sh settings.full_test.env run > full-test-launcher.log 2>&1 &'`. After completion, use the same settings file with `audit`, then `evaluate`. The audit now checks the observed split against the saved campaign split. Changing `SIGMA_SPLIT` after initialization cannot retarget a campaign. Old campaigns without a saved split field are treated as validation campaigns for backward compatibility.
+
+`MAX_DATES=1000` preserves the previous cap. Set it to `-1` before initialization only if you want every available test date, including any beyond 1000. A test set with fewer dates naturally completes fewer than the cap. Leave training-derived normalization statistics and checkpoint unchanged.
+
+A running extended validation campaign need not be stopped. To retain your measured resource envelope, wait for its generation jobs to finish before launching all ten test jobs; preparation can happen earlier. This bundle does not reserve resources or account for jobs launched from another campaign.
 
 ## Run on one compute server
 
@@ -79,7 +96,7 @@ For the current Heun sampler, 56 steps normally mean 111 batched model evaluatio
 * **Random draws versus amplitudes:** paired standard normals are identical across σ*. Churn amplitudes and trajectories change with σ*, as intended. Generated precipitation should not be identical across σ*. At σ*=1, both initialization conventions coincide, but paired noise does not necessarily reproduce the old sequential-RNG realization.
 * **Reproducibility:** do not mix CPU and GPU jobs in this paired sweep or silently change precision, ensemble batching or PyTorch versions. Identical input/noise hashes do not imply bitwise-identical neural-network outputs across CPUs, libraries or thread counts. Choose one thread setting for the final sweep after the pilot.
 * **Shared outputs:** the original grid driver writes distinct σ* subdirectories, but `repro.sigma_star` also sets logs, caches and temporary directories from its run directory. Running several full sweeps against one run directory is unsafe. This bundle gives each task a complete isolated run directory, sharing inputs only. It then creates read-through links for one evaluator.
-* **Completion and provenance:** the audit checks completion, physical-ensemble/PMM date files, matching date sets, all recorded inputs/noise draws, identical checkpoint hashes, validation split, ensemble/step/seed settings, and the original evaluator's observed-sampler checks. Unexpected configuration differences also stop collection. For the inspected default grid, all values activate churn at steps 0–6. The audit intentionally stops if stream sets differ, so an unexpected boundary/branch difference can be inspected rather than silently accepted.
+* **Completion and provenance:** the audit checks completion, physical-ensemble/PMM date files, matching date sets, all recorded inputs/noise draws, identical checkpoint hashes, the saved validation or test split, ensemble/step/seed settings, and the original evaluator's observed-sampler checks. Unexpected configuration differences also stop collection. For the inspected default grid, all values activate churn at steps 0–6. The audit intentionally stops if stream sets differ, so an unexpected boundary/branch difference can be inspected rather than silently accepted.
 
 ## Failed runs and optional scheduler use
 
@@ -94,3 +111,5 @@ Evaluation has a persistent `evaluation_started` reservation directory to preven
 The nine uploaded files were inspected. Additional implementation was read from `/Users/au728490/Code/CEDDAR`; the uploaded generation driver and `repro/sigma_star.py` exactly match that checkout by SHA-256. The noise, sampler, loader and provenance conclusions rely on that local checkout. The compute server must use the same compatible implementation. The bundle records hashes of key source files at initialization and rejects changes in those files between campaign operations; this is not a complete environment or repository snapshot.
 
 Validation performed locally: shell/Python syntax checks; all 16 existing paired-noise and sigma-control tests passed; the default 56-step dense grid uses the same active churn steps at every σ*. A separate bundle integration check uses the real preparation CLI and a small toy denoiser with 32 members and 56 steps to exercise task isolation, gathering, and rejection of duplicate tasks and mismatched conditioning hashes. These checks do not establish full-model runtime, memory use, cluster access, or a successful production run. The production checkpoint and validation dataset were not loaded for inference.
+
+V2 validation: integration checks passed for both validation and test campaigns using real preparation and a toy denoiser. Checks covered propagation of the frozen split into workers, compatibility with old validation campaign metadata, and rejection of both saved-configuration and observed-generation split mismatches. No full-model inference was performed for this update.

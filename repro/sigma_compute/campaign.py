@@ -40,19 +40,37 @@ def invoke(action, run, extra=(), log=None):
         subprocess.run(command, cwd=REPO, check=True)
 
 
-def prepare(run, config, grid, max_dates, log):
+def campaign_split(state):
+    # Campaigns created by v1 always used validation, regardless of current env.
+    split = state.get('split', 'valid')
+    require(split in ('valid', 'test'), f'Invalid saved campaign split: {split}')
+    return split
+
+
+def verify_saved_split(run, expected):
+    from omegaconf import OmegaConf
+    cfg = OmegaConf.load(run / 'resolved_config.yaml')
+    actual = cfg.full_gen_eval.split
+    require(actual == expected,
+            f'Saved configuration split {actual!r} differs from campaign split {expected!r}: {run}')
+
+
+def prepare(run, config, grid, max_dates, log, split='valid'):
+    require(split in ('valid', 'test'), f'Invalid split: {split}')
     invoke('prepare', run, ['--config', config, '--sigma-star-grid', *grid,
                            '--sigma-star-mode', 'global',
                            '--initial-state', 'legacy_sigma_max',
                            '--noise-mode', 'paired', '--seed', '504',
                            '--steps', '56', '--ensemble-size', '32',
-                           '--max-dates', max_dates, '--split', 'valid'], log)
+                           '--max-dates', max_dates, '--split', split], log)
+    verify_saved_split(run, split)
 
 
 def load():
     state = json.loads((ROOT / 'campaign.json').read_text())
     require(state['source_sha256'] == fingerprints(),
             'CEDDAR source differs from campaign initialization. Use a new campaign.')
+    verify_saved_split(ROOT / 'combined', campaign_split(state))
     return state
 
 
@@ -63,17 +81,20 @@ def init():
     require(len({f'{s:.2f}' for s in grid}) == len(grid), 'Sigma names collide at two decimal places')
     max_dates = int(os.environ['MAX_DATES'])
     require(max_dates == -1 or max_dates > 0, 'MAX_DATES must be positive or -1')
+    split = os.environ.get('SIGMA_SPLIT', 'valid').strip().lower()
+    require(split in ('valid', 'test'), 'SIGMA_SPLIT must be valid or test')
     for key in ('DATA_DIR', 'STATS_LOAD_DIR', 'PUBLISHED_CHECKPOINT', 'SIGMA_CONFIG'):
         require(Path(os.environ[key]).exists(), f'Missing {key}: {os.environ[key]}')
     source_sha = fingerprints()
     ROOT.mkdir(parents=True, exist_ok=False)
     (ROOT / 'tasks').mkdir()
     prepare(ROOT / 'combined', os.environ['SIGMA_CONFIG'], grid, max_dates,
-            ROOT / 'prepare.log')
-    state = dict(grid=grid, max_dates=max_dates, source_sha256=source_sha,
+            ROOT / 'prepare.log', split=split)
+    state = dict(grid=grid, max_dates=max_dates, split=split, source_sha256=source_sha,
                  repo=str(REPO), created=time.time())
     (ROOT / 'campaign.json').write_text(json.dumps(state, indent=2))
-    print(f'Prepared {ROOT}; no inference performed.', flush=True)
+    print(f'Prepared {ROOT}; split={split}; max_dates={max_dates}; '
+          f'grid={grid}; no inference performed.', flush=True)
 
 
 def worker(index, state):
@@ -85,10 +106,12 @@ def worker(index, state):
     started = time.time()
     (task / 'runtime.json').write_text(json.dumps(dict(
         host=socket.gethostname(), launcher_pid=os.getpid(), start=started,
-        cpu_threads=int(os.environ['CPU_THREADS']), sigma=sigma), indent=2))
-    print(f'Start index {index}, sigma*={sigma:.2f}; log: {task / "generate.log"}', flush=True)
+        cpu_threads=int(os.environ['CPU_THREADS']), sigma=sigma,
+        split=campaign_split(state)), indent=2))
+    print(f'Start index {index}, sigma*={sigma:.2f}, split={campaign_split(state)}; '
+          f'log: {task / "generate.log"}', flush=True)
     prepare(task / 'run', ROOT / 'combined/resolved_config.yaml', [sigma],
-            state['max_dates'], task / 'prepare.log')
+            state['max_dates'], task / 'prepare.log', split=campaign_split(state))
     invoke('generate', task / 'run', log=task / 'generate.log')
     matches = list((task / 'run/samples/generation').glob(f'*/sigma_star={sigma:.2f}'))
     require(len(matches) == 1, f'Expected one sigma output at {task}')
@@ -117,6 +140,8 @@ def audit(state, link=False):
     from sbgm.utils import get_model_string
 
     combined = ROOT / 'combined'
+    expected_split = campaign_split(state)
+    verify_saved_split(combined, expected_split)
     cfg = OmegaConf.load(combined / 'resolved_config.yaml')
     model = get_model_string(cfg)
     reference_cfg = normalized_config(combined / 'resolved_config.yaml', combined)
@@ -140,7 +165,8 @@ def audit(state, link=False):
         sha = observed['checkpoint']['sha256']
         require(sha and (checkpoint_sha is None or sha == checkpoint_sha), 'Checkpoint mismatch')
         checkpoint_sha = sha
-        require(observed['data']['split'] == 'valid', 'Generation did not use validation split')
+        require(observed['data']['split'] == expected_split,
+                f'Generation did not use campaign split {expected_split}: {source}')
         records = {p.stem: json.loads(p.read_text()) for p in sorted((source / 'meta/noise').glob('*.json'))}
         require(len(records) == manifest['n_days'] > 0, f'Noise audit count mismatch: {source}')
         for date, record in records.items():
@@ -172,7 +198,7 @@ def audit(state, link=False):
             else:
                 require(not target.exists(), f'Existing output: {target}')
                 target.symlink_to(source, target_is_directory=True)
-    print(f'PASS: {len(sources)} sigma values, {len(first_records)} matching dates; '
+    print(f'PASS: split={expected_split}; {len(sources)} sigma values, {len(first_records)} matching dates; '
           'paired input/noise hashes, checkpoint and legacy controls agree.', flush=True)
 
 
