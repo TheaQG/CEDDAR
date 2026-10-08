@@ -397,6 +397,336 @@ def _cfg_get(cfg, dotted: str, default=None):
         cur = getattr(cur, part)
     return cur
 
+
+
+# ------------------------------------------------------------------------------
+# Select dates deteministically after all metrics computed
+# ------------------------------------------------------------------------------
+
+def _finite_range(values) -> float:
+    a = np.asarray(values, dtype=float)
+    a = a[np.isfinite(a)]
+    if a.size < 2:
+        return np.nan
+    return float(a.max() - a.min())
+
+
+def _robust_scale(values):
+    a = np.asarray(values, dtype=float)
+    a = a[np.isfinite(a)]
+    if a.size == 0:
+        return np.nan, 1.0
+
+    med = float(np.median(a))
+    q25, q75 = np.percentile(a, [25, 75])
+    scale = float(q75 - q25)
+
+    if not np.isfinite(scale) or scale < 1e-12:
+        scale = float(np.std(a))
+
+    if not np.isfinite(scale) or scale < 1e-12:
+        scale = 1.0
+
+    return med, scale
+
+
+def select_sigma_control_examples(
+        results: List[Dict],
+        *,
+        reference_sigma: float = 1.0,
+        min_wet_fraction: float = 0.05,
+        categories: Optional[List[str]] = None,
+        unique_dates: bool = True,
+) -> List[Dict]:
+    """ 
+    Select scientifically useful example dates using deterministic rules.
+
+    Selection is based on the reference sigma* where appropriate, while
+    sigma-sensitivity categories use the complete sweep.
+    """
+    if categories is None:
+        categories = [
+            "heavy_mean",
+            "heavy_tail",
+            "light_rain",
+            "high_crps",
+            "high_spread",
+            "sigma_sensitive_spatial",
+            "representative",
+        ]
+
+    by_date: DefaultDict[str, List[Dict]] = defaultdict(list)
+    for row in results:
+        by_date[str(row["date"])].append(row)
+
+    if not by_date:
+        return []
+
+    available_sigmas = sorted({float(r["sigma_star"]) for rows in by_date.values() for r in rows})
+
+    ref_sigma = min(available_sigmas, key=lambda s: abs(s - float(reference_sigma)),)
+
+    date_info = {}
+
+    for date, rows in by_date.items():
+        ref_candidates = [r for r in rows if abs(float(r["sigma_star"]) - ref_sigma) < 1e-8]
+        if not ref_candidates:
+            continue
+
+        ref = ref_candidates[0]
+
+        date_info[date] = {
+            "date": date,
+            "reference_sigma": ref_sigma,
+            "hr_mean": float(ref.get("hr_mean", np.nan)),
+            "hr_p99": float(ref.get("hr_p99", np.nan)),
+            "hr_wet_frac": float(ref.get("hr_wet_frac", np.nan)),
+            "crps_ref": float(ref.get("crps", np.nan)),
+            "spread_ref": float(ref.get("ens_spread", np.nan)),
+            "slope_range": _finite_range([r.get("slope_gen", np.nan) for r in rows]),
+            "r_lp_range": _finite_range([r.get("r_lp", np.nan) for r in rows]),
+            "crps_range": _finite_range([r.get("crps", np.nan) for r in rows]),
+        }
+
+    infos = list(date_info.values())
+    if not infos:
+        return []
+
+    # Representative case: robust multivariate distance to median behaviour
+    representative_keys = ["hr_mean", "hr_p99", "crps_ref", "spread_ref",]
+
+    centres = {}
+    for key in representative_keys:
+        centres[key] = _robust_scale([d[key] for d in infos])
+
+    for d in infos:
+        dist2 = 0.0
+        n = 0
+        for key in representative_keys:
+            value = d[key]
+            med, scale = centres[key]
+            if np.isfinite(value):
+                dist2 += ((value - med) / scale) ** 2
+                n += 1
+        d["representative_distance"] = (float(np.sqrt(dist2 / max(n, 1))) if n else np.nan)
+
+    rainy = [d for d in infos if np.isfinite(d["hr_mean"]) and np.isfinite(d["hr_wet_frac"]) and d["hr_mean"] > 0 and d["hr_wet_frac"] >= min_wet_fraction]
+
+    # "Light rain" = close to lower quartile of genuinely rainy cases,
+    # not simply the driest day in the dataset.
+    if rainy:
+        light_target = float(np.nanpercentile( [d["hr_mean"] for d in rainy], 25,))
+        for d in rainy:
+            d["light_distance"] = abs(d["hr_mean"] - light_target)
+
+    rankings = {
+        "heavy_mean": sorted(infos, key=lambda d: np.nan_to_num(d["hr_mean"], nan=-np.inf), reverse=True,),
+        "heavy_tail": sorted(infos, key=lambda d: np.nan_to_num(d["hr_p99"], nan=-np.inf), reverse=True,),
+        "light_rain": sorted(rainy, key=lambda d: np.nan_to_num(d.get("light_distance", np.inf), nan=np.inf,),),
+        "high_crps": sorted(infos, key=lambda d: np.nan_to_num(d["crps_ref"], nan=-np.inf), reverse=True,),
+        "high_spread": sorted(infos, key=lambda d: np.nan_to_num(d["spread_ref"], nan=-np.inf), reverse=True,),
+        "sigma_sensitive_spatial": sorted(infos, key=lambda d: np.nan_to_num(d["slope_range"], nan=-np.inf), reverse=True,),
+        "representative": sorted(infos, key=lambda d: np.nan_to_num(d["representative_distance"], nan=np.inf),),
+    }
+
+    score_names = {
+        "heavy_mean": "hr_mean",
+        "heavy_tail": "hr_p99",
+        "light_rain": "light_distance",
+        "high_crps": "crps_ref",
+        "high_spread": "spread_ref",
+        "sigma_sensitive_spatial": "slope_range",
+        "representative": "representative_distance",
+    }
+
+    selected = []
+    used_dates = set()
+
+    for category in categories:
+        ranked = rankings.get(category, [])
+
+        chosen = None
+        for candidate in ranked:
+            if (not unique_dates or candidate["date"] not in used_dates):
+                chosen = candidate
+                break
+
+        if chosen is None:
+            continue
+
+        row = dict(chosen)
+        row["category"] = category
+        row["selection_metric"] = score_names[category]
+        row["selection_score"] = row[score_names[category]]
+
+        selected.append(row)
+        used_dates.add(row["date"])
+
+    return selected
+
+
+def _numpy_2d(x):
+    if x is None:
+        return None
+
+    if isinstance(x, torch.Tensor):
+        x = x.detach().cpu().numpy()
+
+    a = np.asarray(x)
+
+    while a.ndim > 2 and 1 in a.shape:
+        a = np.squeeze(a)
+
+    if a.ndim != 2:
+        raise ValueError(f"Expected a 2-D field, got shape {a.shape}")
+
+    return a.astype(np.float32, copy=False)
+
+
+def _lr_to_hr_grid(lr, shape):
+    a = _numpy_2d(lr)
+
+    if a.shape == tuple(shape): # type: ignore
+        return a
+
+    t = torch.from_numpy(a)[None, None].float()
+    out = F.interpolate(t, size=tuple(shape), mode="bilinear", align_corners=False,)[0, 0]
+
+    return out.numpy().astype(np.float32)
+
+
+def save_sigma_control_example_bundle(
+    selections: List[Dict],
+    results: List[Dict],
+    *,
+    sigma_star_grid: List[float],
+    gen_base_dir: str | Path,
+    out_dir: str | Path,
+    eval_land_only: bool,
+    member_indices=(0, 1, 2),
+) -> Dict[str, str]:
+    """
+    Save compact manuscript-oriented examples.
+
+    One compressed NPZ is written per selected category/date.
+    """
+    gen_base_dir = Path(gen_base_dir)
+    examples_dir = Path(out_dir) / "selected_examples"
+    examples_dir.mkdir(parents=True, exist_ok=True)
+
+    sigma_values = np.asarray([float(s) for s in sigma_star_grid], dtype=np.float32,)
+
+    # Fast metric lookup for embedding the corresponding responses.
+    metric_lookup = {(str(r["date"]), float(r["sigma_star"])): r for r in results}
+
+    manifest_rows = []
+
+    for sel in selections:
+        date = str(sel["date"])
+        category = str(sel["category"])
+
+        pmm_stack = []
+        mean_stack = []
+        member_stack = []
+
+        crps = []
+        r_lp = []
+        slope_gen = []
+
+        hr_ref = None
+        lr_ref = None
+        mask_ref = None
+
+        for sigma in sigma_values:
+            root = (gen_base_dir / f"sigma_star={float(sigma):.2f}")
+
+            resolver = EvalDataResolver(
+                gen_root=root,
+                eval_land_only=eval_land_only,
+                lr_phys_key="lr",
+            )
+
+            hr = resolver.load_obs(date)
+            lr = resolver.load_lr(date)
+            pmm = resolver.load_pmm(date)
+            ens = resolver.load_ens(date)
+            mask = resolver.load_mask(date)
+
+            if (hr is None or lr is None or pmm is None or ens is None):
+                raise ValueError(f"Missing arrays for {date} at sigma*={sigma:.2f}")
+
+            hr2d = _numpy_2d(hr)
+
+            if hr_ref is None:
+                hr_ref = hr2d
+                lr_ref = _lr_to_hr_grid(lr, hr2d.shape,) # type: ignore
+
+                if mask is not None:
+                    mask_ref = (_numpy_2d(mask) > 0.5).astype(np.uint8) # type: ignore
+
+            if isinstance(ens, torch.Tensor):
+                ens_np = (ens.detach().cpu().numpy().astype(np.float32))
+            else:
+                ens_np = np.asarray(ens, dtype=np.float32,)
+
+            if (ens_np.ndim == 4 and ens_np.shape[1] == 1):
+                ens_np = ens_np[:, 0]
+
+            if ens_np.ndim != 3:
+                raise ValueError(f"Unexpected ensemble shape {ens_np.shape}")
+
+            valid_members = [int(i) for i in member_indices if 0 <= int(i) < ens_np.shape[0]]
+
+            if len(valid_members) != len(member_indices):
+                raise IndexError(f"Requested members {member_indices}, but ensemble has {ens_np.shape[0]} members")
+
+            pmm_stack.append(_numpy_2d(pmm))
+            mean_stack.append(ens_np.mean(axis=0, dtype=np.float32))
+            member_stack.append(ens_np[valid_members])
+
+            m = metric_lookup.get((date, float(sigma)), {},)
+            crps.append(m.get("crps", np.nan))
+            r_lp.append(m.get("r_lp", np.nan))
+            slope_gen.append(m.get("slope_gen", np.nan))
+
+        filename = (f"{category}__{date}.npz")
+
+        np.savez_compressed(
+            examples_dir / filename,
+            category=np.asarray(category),
+            date=np.asarray(date),
+            sigma_star=sigma_values,
+            reference_sigma=np.asarray(sel["reference_sigma"], dtype=np.float32,),
+            member_indices=np.asarray(member_indices, dtype=np.int16,),
+            hr=hr_ref.astype(np.float32), # type: ignore
+            lr=lr_ref.astype(np.float32), # type: ignore
+            mask=(mask_ref if mask_ref is not None else np.ones_like(hr_ref, dtype=np.uint8,)),
+            pmm=np.stack(pmm_stack).astype(np.float32),                       # [S,H,W]
+            ens_mean=np.stack(mean_stack).astype(np.float32),                       # [S,H,W]
+            members=np.stack(member_stack).astype(np.float32),                       # [S,N,H,W]
+            crps=np.asarray(crps, dtype=np.float32),
+            r_lp=np.asarray(r_lp, dtype=np.float32),
+            slope_gen=np.asarray(slope_gen, dtype=np.float32,),
+        )
+
+        manifest_rows.append({**sel, "file": filename,})
+
+    manifest_path = (examples_dir / "selected_examples.csv")
+
+    if manifest_rows:
+        fields = list(manifest_rows[0].keys())
+
+        with manifest_path.open("w", newline="",) as f:
+            writer = csv.DictWriter(f, fieldnames=fields,)
+            writer.writeheader()
+            writer.writerows(manifest_rows)
+
+    return {
+        "examples_dir": str(examples_dir),
+        "examples_manifest": str(manifest_path),
+    }
+
+
 def evaluate_sigma_control(
     cfg,
     sigma_star_grid: List[float],
@@ -432,6 +762,9 @@ def evaluate_sigma_control(
     hk_min_hr_frac = float(_cfg_get(cfg, "full_gen_eval.sigma_control.hk_min_hr_frac", 1e-4))
     hk_min_hr_abs = float(_cfg_get(cfg, "full_gen_eval.sigma_control.hk_min_hr_abs", 1e-12))
 
+    example_wet_threshold = float(_cfg_get(cfg, "full_gen_eval.sigma_control.example_wet_threshold_mm", 1.0))
+
+    date_hr_stats: Dict[str, Dict[str, float]] = {}
     results: List[Dict] = []
 
     # PSD curve accumulators per sigma*: store per-date GEN-ensemble-mean PSDs and HR PSDs
@@ -475,6 +808,54 @@ def evaluate_sigma_control(
             ens = resolver.load_ens(date)         # [M,H,W] or None
             lr = resolver.load_lr(date)           # [1,h,w] or [H,W] or None
             mask = resolver.load_mask(date)       # [H,W] bool or None
+
+            # Reference-field descriptors for deterministic example selection
+            if date not in date_hr_stats:
+                if hr is None:
+                    date_hr_stats[date] = {
+                        "hr_mean": np.nan,
+                        "hr_p99": np.nan,
+                        "hr_wet_frac": np.nan,
+                    }
+                    hr_stats = date_hr_stats[date]
+                    continue
+
+                hr2d = hr.squeeze()
+
+                if mask is not None:
+                    m = mask.bool().squeeze()
+                    hr_vals = hr2d[m]
+                else:
+                    hr_vals = hr2d.reshape(-1)
+
+                hr_vals = hr_vals[torch.isfinite(hr_vals)]
+
+                if hr_vals.numel() > 0:
+                    date_hr_stats[date] = {
+                        "hr_mean": float(hr_vals.mean().item()),
+                        "hr_p99": float(torch.quantile(hr_vals.float(), 0.99).item()),
+                        "hr_wet_frac": float((hr_vals > example_wet_threshold).float().mean().item()),
+                    }
+                else:
+                    date_hr_stats[date] = {
+                        "hr_mean": np.nan,
+                        "hr_p99": np.nan,
+                        "hr_wet_frac": np.nan,
+                    }
+            
+            hr_stats = date_hr_stats[date]
+
+            # Mean pixel-wise ensemble spread for this sigma*
+            spread_map = ens.float().std(dim=0, unbiased=False) # type: ignore
+
+            if mask is not None:
+                m = mask.bool().squeeze()
+                spread_vals = spread_map[m]
+            else:
+                spread_vals = spread_map.reshape(-1)
+
+            spread_vals = spread_vals[torch.isfinite(spread_vals)]
+            ens_spread = (float(spread_vals.mean().item()) if spread_vals.numel() > 0 else np.nan)
 
             # sanity checks
             if hr is None or pmm is None or ens is None or lr is None:
@@ -585,12 +966,17 @@ def evaluate_sigma_control(
                 "slope_err": float(slope_err) if np.isfinite(slope_err) else np.nan,
                 "crps": float(crps),
                 "hk_gain": float(hk_gain),
+                # Example-selection descriptors
+                "hr_mean": hr_stats["hr_mean"],
+                "hr_p99": hr_stats["hr_p99"],
+                "hr_wet_frac": hr_stats["hr_wet_frac"],
+                "ens_spread": ens_spread
             })
 
     metrics_path = tables_dir / "metrics_by_sigma.csv"
     summary_path = tables_dir / "agg_summary.csv"
     
-    header_metrics = ["date","sigma_star","r_lp","slope_gen","slope_hr","slope_err","crps","hk_gain"]
+    header_metrics = ["date","sigma_star","r_lp","slope_gen","slope_hr","slope_err","crps","hk_gain","hr_mean","hr_p99","hr_wet_frac","ens_spread",]
     header_summary = ["sigma_star",
                     "r_lp_mean","r_lp_std",
                     "slope_gen_mean","slope_gen_std",
@@ -744,5 +1130,41 @@ def evaluate_sigma_control(
     except Exception as e:
         logger.warning(f"[sigma_control] Failed to save sigma_psd_curves.npz: {e}")
 
+
+    examples_paths = {}
+
+    save_examples = bool(_cfg_get(cfg, "full_gen_eval.sigma_control.save_selected_examples", True,))
+
+    if save_examples:
+        reference_sigma = float(_cfg_get(cfg, "full_gen_eval.sigma_control.example_reference_sigma", 1.0))
+        min_wet_fraction = float(_cfg_get(cfg,"full_gen_eval.sigma_control.example_min_wet_fraction", 0.05))
+        categories = _cfg_get(cfg,"full_gen_eval.sigma_control.selected_example_categories", None,)
+        member_indices = _cfg_get(cfg, "full_gen_eval.sigma_control.example_member_indices", [0, 1, 2],)
+
+        selections = select_sigma_control_examples(
+            results,
+            reference_sigma=reference_sigma,
+            min_wet_fraction=min_wet_fraction,
+            categories=(list(categories) if categories is not None else None),
+            unique_dates=True,
+        )
+
+        examples_paths = save_sigma_control_example_bundle(
+            selections,
+            results,
+            sigma_star_grid=sigma_star_grid,
+            gen_base_dir=gen_base_dir,
+            out_dir=out_dir,
+            eval_land_only=eval_land_only,
+            member_indices=tuple(int(i) for i in member_indices),
+        )
+
+        logger.info("[sigma_control] Saved %d selected example cases to %s", len(selections), examples_paths.get("examples_dir"),)
+
     logger.info(f"[sigma_control] Wrote metrics to {out_dir}")
-    return {"metrics": str(metrics_path), "summary": str(summary_path)}
+    return {
+        "metrics": str(metrics_path),
+        "summary": str(summary_path),
+        "psd": str(tables_dir / "sigma_psd_curves.npz"),
+        **examples_paths,
+    }
