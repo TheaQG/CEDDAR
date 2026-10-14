@@ -54,6 +54,30 @@ Torch 2.2.0, PyYAML 6.0.1 and Pillow 10.2.0. All 12 PNGs matched the existing fi
 figures exactly; PDFs matched after excluding timestamp metadata. Keep the saved
 environment and rendering resources when exact figure appearance matters.
 
+A fresh Python 3.11 installation from `requirements.txt` was checked on
+14 October 2026: `pip check` passed, 70 tests passed with one documented expected
+failure, and the synthetic CPU smoke and all 12 figure commands completed.
+The pip Matplotlib wheel uses FreeType 2.6.1, whereas the manuscript reference
+environment uses FreeType 2.12.1. Matching the Matplotlib version alone does not
+guarantee identical text rendering or output bytes.
+
+For the reference rendering builds on **Intel macOS (`osx-64`)**, create a
+separate environment using the [explicit Conda specification](environment-figures-osx-64.explicit.txt),
+then install the same repository requirements:
+
+```bash
+conda create --prefix ../ceddar-figures-env --file repro/environment-figures-osx-64.explicit.txt
+conda activate ../ceddar-figures-env
+python -m pip install -r requirements.txt
+python -m pip check
+```
+
+Run these commands from the repository root. The specification pins Python and
+the rendering-library builds; `requirements.txt` supplies the model and data-loader
+dependencies. It targets Intel macOS and is not a portable Conda environment file.
+This clean environment reproduced all 12 reference PNGs byte-for-byte and all
+PDFs apart from creation/modification timestamps, with the full input tree blocked.
+
 These are revision validation pins, including NumPy 1 and Zarr 2, rather than a
 complete transitive lock or a reconstruction of the original LUMI environment.
 Preserve a resolved package list for each environment. Optional correlation and

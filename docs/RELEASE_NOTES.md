@@ -38,8 +38,13 @@ need complete physical inputs and an evaluated-date check. Final manuscript
 plotting reads saved products and does not call this evaluator. See the
 [sigma* validation notes](SIGMA_STAR_REVISION.md).
 
-Figure validation used the documented existing environment. Validation of a fresh
-installation on the intended release platform remains pending.
+A fresh Python 3.11 installation passed `pip check`, the retained test suite and
+the synthetic CPU smoke, and generated all 12 figures. The default pip rendering
+builds produced different figure bytes and text rendering. A separate clean Intel
+macOS environment with the reference rendering builds reproduced all 12 PNGs
+exactly and PDFs apart from timestamps, with no undeclared data reads. The tested
+[environment specification and installation instructions](../repro/README.md#environment)
+are provided for exact rendering on that platform.
 
 ## Separate archives
 

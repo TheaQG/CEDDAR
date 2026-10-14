@@ -99,6 +99,8 @@ Relative overrides resolve from the invocation directory.
 
 The compact archive was checked against the full data tree: all 12 PNGs matched
 the final outputs exactly, and PDFs matched apart from timestamp metadata.
+For exact rendering on Intel macOS, use the tested
+[reference rendering environment](repro/README.md#environment).
 See the [archive workflow](repro/MANUSCRIPT_FIGURE_DATA.md) for manifests,
 checksums, dependency tracing and guarded reproduction. Generating new diagnostics
 from saved ensembles is a separate workflow under `revision_evaluation/` and
