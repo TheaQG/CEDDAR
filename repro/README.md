@@ -1,52 +1,91 @@
-# Portable model setup
+# Environment and reproduction guide
 
-Use branch `paper1-revision-2026`. The historical LUMI scripts are templates;
-the supported portable entry points are `run_model.sh` and `01_small_test/run_small_test.sh`.
+Use the source checkout matching your selected data/model archive. The historical
+LUMI scripts are templates; portable model entry points are `run_model.sh` and
+`01_small_test/run_small_test.sh`. The final figure runner is
+[`../bash_paper1/run_manuscript_figures.sh`](../bash_paper1/run_manuscript_figures.sh).
 See [PORTABILITY_AUDIT.md](PORTABILITY_AUDIT.md) for the path and import audit.
 
 For a separately logged LEGACY–MATCHED–LATE_RAMP sigma* comparison on ATMO, see
 [the comparison driver instructions](../docs/SIGMA_INITIALIZATION_DRIVER.md).
 
-## Environment (ATMO Linux CPU, Python 3.11)
+## Environment
 
-Keep the environment outside the Git checkout. ATMO uses **tcsh**; these paths
-use your home directory and do not require a literal `/external` directory:
+Use **Python 3.11** and keep the environment outside the Git checkout. From the
+repository root, create and activate an environment (bash/zsh):
 
-```tcsh
-python3.11 -m venv /home/theaqg/envs/ceddar-revision
-source /home/theaqg/envs/ceddar-revision/bin/activate.csh
-python -m pip install --upgrade pip setuptools wheel --index-url https://pypi.org/simple
+```bash
+python3.11 -m venv ../ceddar-env
+source ../ceddar-env/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+```
+
+On **Linux CPU**, install the CPU wheels before the remaining requirements:
+
+```bash
 python -m pip install torch==2.2.0+cpu torchvision==0.17.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+```
+
+On **macOS**, skip that CPU-wheel command. For **GPU** installations, select the
+appropriate wheel index from [PyTorch's v2.2.0 instructions](https://pytorch.org/get-started/previous-versions/#v220),
+keeping Torch 2.2.0 and Torchvision 0.17.0 paired. Keep an existing working research
+environment if it already supplies the required versions.
+
+Then install and record the environment:
+
+```bash
 python -m pip install -r requirements.txt
 python -m pip check
-mkdir -p /home/theaqg/CEDDAR_runs/environment
-python -m pip freeze > /home/theaqg/CEDDAR_runs/environment/requirements-resolved.txt
+mkdir -p ../CEDDAR_runs/environment
+python -m pip freeze > ../CEDDAR_runs/environment/requirements-resolved.txt
 python -c "import torch, torchvision; print(torch.__version__, torchvision.__version__); print('CUDA build:', torch.version.cuda)"
 ```
 
-Run the install commands from the repository root. For bash/zsh, activate with
-`source /home/theaqg/envs/ceddar-revision/bin/activate` instead. The explicit `+cpu`
-versions select CPU wheels while allowing dependencies to come from PyPI. Expected
-versions are `2.2.0+cpu` / `0.17.0+cpu`, with CUDA build `None`. An already working
-ATMO environment does not need to be recreated; keep its resolved package list.
+The explicit `+cpu` versions select Linux CPU wheels while allowing dependencies
+from PyPI; expected versions are `2.2.0+cpu` / `0.17.0+cpu`, with CUDA build `None`.
+On ATMO's **tcsh**, activate with `source ../ceddar-env/bin/activate.csh` instead.
+Use `setenv NAME value` for environment overrides there; bash/zsh uses
+`export NAME=value`.
 
-The CPU index and version pair are documented in [PyTorch's v2.2.0 instructions](https://pytorch.org/get-started/previous-versions/#v220).
-On macOS omit the CPU-wheel command and install `requirements.txt` directly. GPU installations need the matching platform wheel
-from that page; do not install the CPU wheel for a GPU test. `requirements.txt` pins
-the directly used model packages against the available Python 3.11 reference
-environment, including NumPy 1 and Zarr 2. It is **not** a complete transitive lock or
-a reconstruction of the submitted LUMI environment. Preserve the resolved freeze
-on ATMO; each run also records installed package versions. Optional correlation and
-ERA5 download dependencies live in `requirements-preprocess.txt`; the download client
-is not locally validated/pinned and CDO is a separate host executable.
+`requirements.txt` includes the model and figure dependencies, including
+**pandas 2.0.3** for saved-table loaders. The compact archive was validated with
+Python 3.11.4, NumPy 1.25.2, SciPy 1.11.4, Matplotlib 3.7.1, pandas 2.0.3,
+Torch 2.2.0, PyYAML 6.0.1 and Pillow 10.2.0. All 12 PNGs matched the existing final
+figures exactly; PDFs matched after excluding timestamp metadata. Keep the saved
+environment and rendering resources when exact figure appearance matters.
+
+These are revision validation pins, including NumPy 1 and Zarr 2, rather than a
+complete transitive lock or a reconstruction of the original LUMI environment.
+Preserve a resolved package list for each environment. Optional correlation and
+ERA5 download dependencies live in [`../requirements-preprocess.txt`](../requirements-preprocess.txt);
+CDO is a separate host executable. Figure reproduction uses saved products and
+does not need CDO, source-data downloads or checkpoint access.
+
+## Manuscript figures
+
+With this environment active and the compact archive extracted outside the
+checkout, run from the repository root:
+
+```bash
+DATA_ROOT=/absolute/path/to/CEDDAR_manuscript_figure_data \
+OUT=/absolute/path/to/figures \
+bash bash_paper1/run_manuscript_figures.sh
+```
+
+On tcsh, set `DATA_ROOT` and `OUT` with `setenv` first, then invoke the same Bash
+runner. It creates Figures 2-7 and S5-S10 as PNG/PDF. Figure 1 and S1-S4 were
+manually prepared. `REPO` defaults to this checkout; `OUT` defaults to a sibling
+`CEDDAR_manuscript_figures` directory. Relative overrides resolve from the
+invocation directory. See [the archive guide](MANUSCRIPT_FIGURE_DATA.md) for
+checksums, dependency tracing and the guarded full-data/compact-data comparison.
 
 ## Paths and launch
 
 ```tcsh
-setenv CEDDAR_RUNS /home/theaqg/CEDDAR_runs/my_experiment
-setenv DATA_DIR /home/theaqg/CEDDAR_migration/Data/Data_DiffMod
+setenv CEDDAR_RUNS /absolute/path/to/CEDDAR_runs/my_experiment
+setenv DATA_DIR /absolute/path/to/Data_DiffMod
 bash /path/to/CEDDAR/repro/run_model.sh \
-  --config_path /path/to/CEDDAR/sbgm/config/component_study/B1s/B1.yaml \
+  --config_path /path/to/CEDDAR/sbgm/config/component_study/B1s/B1_GSDF_RGBCE.yaml \
   --mode generate --device cpu
 ```
 
@@ -111,11 +150,16 @@ Missing/unobserved values are null; entry/training manifests do not claim a samp
 was executed. The generation YAML is authoritative for sampler settings; existing
 legacy JSON metadata is retained for readers but may only describe requested settings.
 
-In v1.0.2, GenerationRunner forwards `sigma_star` but omits the mode/ramp arguments.
-The manifest therefore reports `global` even if YAML requests `late_ramp`. This
-infrastructure change preserves that behavior and the unscaled initial state.
+In the original v1.0.2 archive, the standard generation runner omitted mode/ramp
+arguments. This checkout retains the completed sigma* audit fixes and forwards
+the full controls. The `schedule` and `legacy_sigma_max` initial-state policies
+are distinct; preserve the policy and settings recorded for the experiment being
+reproduced. See [the audit corrections](../docs/SIGMA_STAR_REVISION.md) and
+[comparison workflows](../docs/SIGMA_INITIALIZATION_DRIVER.md).
 Requested generation seed is recorded separately from a CPU RNG-state digest: the
-runner does not reseed each sweep point. This is not a full RNG-state checkpoint.
+process RNG is not reset at each sweep point. Paired-noise mode instead keys draws
+by seed/date/role/step and records their hashes. These records are not full RNG-state
+checkpoints.
 Preserve output metadata/date lists, input data/statistics versions and original
 checkpoints separately; the manifest hashes the checkpoint, not the entire dataset.
 

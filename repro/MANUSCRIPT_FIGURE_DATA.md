@@ -5,10 +5,11 @@ copies only those saved inputs into a separate archive. It never invokes model
 inference or recomputes evaluation products. Model, metrics, plotting code and
 runner arguments remain unchanged.
 
-Use an activated figure environment with the repository requirements and
-`pandas`. All work directories and the staged archive must be new locations
-outside the Git checkout and full input tree. The interpreter used to invoke the
-tool is also used by every figure command. Paths below are examples to replace.
+Use the activated [figure environment](README.md#environment) with the repository
+requirements, which include `pandas`. All work directories and the staged archive
+must be new locations outside the Git checkout and full input tree. The
+interpreter used to invoke the tool is also used by every figure command. Paths
+below are examples to replace.
 
 ```bash
 python repro/manuscript_figure_data.py trace \
