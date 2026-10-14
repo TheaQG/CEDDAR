@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -150,7 +151,11 @@ def run_audited(data_root, work, forbidden):
     # Use the selected interpreter even though the unchanged runner calls 'python'.
     binary = work / "bin"
     binary.mkdir()
-    (binary / "python").symlink_to(sys.executable)
+    # An external symlink to a venv's Python loses its pyvenv.cfg context.
+    # Execute the original path so the runner retains the selected environment.
+    launcher = binary / "python"
+    launcher.write_text('#!/bin/sh\nexec ' + shlex.quote(sys.executable) + ' "$@"\n')
+    launcher.chmod(0o755)
     env.update(REPO=str(REPO), DATA_ROOT=str(data_root), OUT=str(work / "figures"),
                PATH=str(binary) + os.pathsep + env.get("PATH", ""),
                PYTHONPATH=os.pathsep.join((str(HOOK), str(REPO))),
