@@ -278,9 +278,10 @@ checksums.sha256 covers every archive file except itself.
 
 ## Separate releases
 
-- Archived v1.0.2 source: https://doi.org/10.5281/zenodo.18643186
+- Archived v1.0.2 source: https://doi.org/10.5281/zenodo.18802547
 - Trained models and example data: https://doi.org/10.5281/zenodo.18643307
-- Revised source release and manuscript-figure-data DOI: to be assigned.
+- Revised v1.1.0 source: https://doi.org/10.5281/zenodo.23373100
+- Manuscript figure data: https://doi.org/10.5281/zenodo.23369324
 
 See provenance.json for the source commit, runner hash and figure interpreter.
 """
