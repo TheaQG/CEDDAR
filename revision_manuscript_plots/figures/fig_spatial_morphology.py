@@ -30,12 +30,12 @@ def main():
     qm_psd = legacy.load_psd(args.qm_eval or legacy.baseline_evaluation("qm"))
     morph = revision.load_morphology(args.revision_dir)
 
-    fig = plt.figure(figsize=(7.2, 7.0))
+    fig = plt.figure(figsize=(11.5, 8.3))
 
     outer = fig.add_gridspec(
         2,
         1,
-        height_ratios=(1.24, 0.78),
+        height_ratios=(1.5, 0.6),
         hspace=0.40,
     )
 
@@ -46,8 +46,8 @@ def main():
     top = outer[0].subgridspec(
         1,
         2,
-        width_ratios=(2.25, 0.92),
-        wspace=0.30,
+        width_ratios=(2.35, 0.82),
+        wspace=0.15,
     )
 
     ax_psd = fig.add_subplot(top[0, 0])
@@ -95,6 +95,7 @@ def main():
         morph,
         component="L",
         threshold=args.sal_threshold,
+        show_x_ticks=True,
     )
 
     # ------------------------------------------------------------------

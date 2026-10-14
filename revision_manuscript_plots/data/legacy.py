@@ -269,6 +269,84 @@ def build_ensemble_histograms(dates, *, generation_dir=None, bins, land_only=Tru
         },
     }
 
+def build_qm_histograms(dates, qm_generation_dir, bins, land_mask,):
+    """Build land-only daily QM histograms from raw generated fields."""
+
+    dates = [_normalise_date(date) for date in dates]
+
+    bins = np.asarray(bins, dtype=float,)
+
+    land = np.asarray(land_mask, dtype=bool,)
+
+    counts = np.zeros((len(dates), len(bins) - 1,), dtype=np.int64,)
+
+    for i, date in enumerate(dates):
+        path = (Path(qm_generation_dir) / "pmm" / f"{date}.npz")
+
+        arrays = _npz(path)
+
+        field = _field(arrays,("pmm", "qm", "gen", "generated",), path,)
+        field = np.asarray(field, dtype=float,).squeeze()
+
+        if field.shape != land.shape:
+            raise ValueError(f"{date}: QM field shape {field.shape} != land mask {land.shape}")
+
+        values = field[land]
+        values = values[np.isfinite(values)]
+
+        counts[i], _ = np.histogram(values, bins=bins,)
+
+    return {
+        "dates": np.asarray(dates),
+        "bins": bins,
+        "counts": counts,
+    }
+
+
+def save_qm_histograms(product, path,):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True,)
+
+    np.savez_compressed(path, **product,)
+
+
+def load_qm_histograms(path):
+    """Load corrected land-only QM daily histograms."""
+
+    path = Path(path).expanduser().resolve()
+    arrays = _npz(path)
+
+    required = {"dates", "bins", "counts",}
+
+    missing = required - set(arrays)
+
+    if missing:
+        raise KeyError(f"{path}: missing {sorted(missing)}")
+
+    dates = arrays["dates"].astype(str)
+    bins = np.asarray(arrays["bins"], dtype=float,)
+    counts = np.asarray(arrays["counts"])
+
+    if counts.ndim != 2:
+        raise ValueError(f"{path}: expected counts [date, bin], got {counts.shape}")
+
+    if counts.shape[0] != len(dates):
+        raise ValueError(f"{path}: {counts.shape[0]} histogram rows but {len(dates)} dates")
+
+    if counts.shape[1] != len(bins) - 1:
+        raise ValueError(f"{path}: histogram has {counts.shape[1]} bins, but bin edges imply {len(bins) - 1}")
+
+    return {
+        **arrays,
+        "dates": dates,
+        "bins": bins,
+        "counts": counts,
+        "season_indices": _season_indices(dates),
+        "directory": path.parent,
+        "source": str(path),
+        "origin": "derived_land_only_qm_histograms",
+    }
+    
 
 def save_ensemble_histograms(product, path,):
     """Save derived ensemble histogram product for manuscript plotting."""
@@ -445,3 +523,170 @@ def load_example_fields(dates, generation_dir=None, *, baseline_dirs=None,
     _metadata(result, root)
     return result
 
+
+def load_land_mask(generation_dir=None):
+    """Load saved HR land-sea mask."""
+
+    root = Path(generation_dir if generation_dir is not None else DEFAULT_GENERATION).expanduser().resolve()
+
+    candidates = (root / "meta" / "land_mask.npz", root / "lsm" / "land_mask.npz",)
+
+    # First try explicitly named static products.
+    for path in candidates:
+        if not path.is_file():
+            continue
+
+        arrays = _npz(path)
+        land = _field(arrays, ("lsm_hr", "lsm", "mask", "land",), path,)
+
+        return (np.asarray(land, dtype=float,).squeeze() >= 0.5)
+
+    # Otherwise use the first dated mask.
+    lsm_dir = root / "lsm"
+
+    if lsm_dir.is_dir():
+        dated = sorted(lsm_dir.glob("*.npz"))
+
+        if dated:
+            path = dated[0]
+
+            arrays = _npz(path)
+            land = _field(arrays, ("lsm_hr", "lsm", "mask", "land",), path,)
+
+            return (np.asarray(land, dtype=float,).squeeze() >= 0.5)
+
+    raise FileNotFoundError(f"No land mask found below {root}")
+
+
+def load_spatial_summary(path, *, field="sum"):
+    """Load one saved legacy spatial precipitation summary."""
+
+    path = Path(path).expanduser().resolve()
+    arrays = _npz(path)
+
+    if field not in arrays:
+        raise ValueError(f'{path}: field "{field}" not found in saved arrays. Available fields: {sorted(arrays)}')
+
+    values = np.asarray(arrays[field], dtype=float)
+
+    if values.ndim != 2:
+        raise ValueError(f'{path}: expected 2D array for field "{field}", got {values.ndim}D array')
+
+    return {"field": field, "values": values, "path": path}
+
+
+def load_dry_bias_spatial_maps(directory, *, qm_directory=None, derived_directory=None, field="sum", year="2019"):
+    """Load saved legacy spatial maps used in the dry-bias figure"""
+
+    directory = Path(directory).expanduser().resolve()
+
+    if year not in ("2019", "2020"):
+        raise ValueError(f'Unsupported year: {year}. Supported years are 2019 and 2020.')
+
+    files = {
+        "danra": directory / f"spatial_hr_{year}.npz",
+        "era5_bilinear": directory / f"spatial_lr_{year}.npz",
+        "ceddar_mean": directory / f"spatial_ensmean_{year}.npz",
+    }
+
+    # QM lives under own baseline eval
+    if qm_directory is not None:
+        qm_directory = Path(qm_directory).expanduser().resolve()
+
+        qm_candidates = (
+            qm_directory / f"spatial_pmm_{year}.npz",
+            qm_directory / f"spatial_gen_{year}.npz",
+            qm_directory / f"spatial_qm_{year}.npz",
+        )
+
+        qm_matches = [path for path in qm_candidates if path.is_file()]
+
+        if len(qm_matches) != 1:
+            raise FileNotFoundError(f'Expected exactly one QM spatial map in {qm_directory} for year {year}, found {len(qm_matches)}')
+        files["qm"] = qm_matches[0]
+
+    # Newly derived CEDDAR products
+    if derived_directory is not None:
+        derived_directory = Path(derived_directory).expanduser().resolve()
+        files["ceddar_median"] = derived_directory / f"spatial_ens_median_{year}.npz"
+        files["ceddar_pmm"] = derived_directory / f"spatial_pmm_{year}.npz"
+
+    result = {}
+
+    for method, path in files.items():
+        product = load_spatial_summary(path, field=field,)
+        result[method] = product["values"]
+
+    return result
+
+
+def build_ceddar_spatial_summaries(*, generation_dir, year="2019", dates=None,):
+    """Derive spatial mean/sum maps for CEDDAR median and PMM."""
+    root = Path(generation_dir).expanduser().resolve()
+
+    if dates is None:
+        dates = sorted(path.stem for path in (root / "ensembles_phys").glob(f"{year}*.npz"))
+    else:
+        dates = [_normalise_date(date) for date in dates if str(date).startswith(year)]
+
+    if not dates:
+        raise ValueError(f'No valid dates found for year {year} in {generation_dir}')
+
+    median_fields = []
+    pmm_fields = []
+
+    for date in dates:
+        ens_path = (root / "ensembles_phys" / f"{date}.npz")
+        pmm_path = (root / "pmm_phys" / f"{date}.npz")
+
+        ens_arrays = _npz(ens_path)
+
+        if "ens" not in ens_arrays:
+            raise KeyError(f"{ens_path}: expected key 'ens' not found")
+
+        ens = np.asarray(ens_arrays["ens"], dtype=float)
+
+        if (ens.ndim == 4 and ens.shape[1] == 1):
+            ens = ens[:, 0]
+
+        if ens.ndim != 3:
+            raise ValueError(f"{ens_path}: expected [M, H, W], got {ens.shape}")
+
+        daily_median = np.nanmedian(ens, axis=0)
+
+        pmm_arrays = _npz(pmm_path)
+        daily_pmm = _field(pmm_arrays, ("pmm",), pmm_path)
+
+        if daily_median.shape != daily_pmm.shape:
+            raise ValueError(f"Shape mismatch between daily median and PMM for date {date}: {daily_median.shape} vs {daily_pmm.shape}")
+
+        median_fields.append(daily_median)
+        pmm_fields.append(np.asarray(daily_pmm, dtype=float))
+
+    median_stack = np.stack(median_fields, axis=0)
+    pmm_stack = np.stack(pmm_fields, axis=0)
+
+    return {
+        "dates": np.asarray(dates),
+        "ceddar_median": {
+            "mean": np.nanmean(median_stack, axis=0),
+            "sum": np.nansum(median_stack, axis=0)
+        },
+        "ceddar_pmm": {
+            "mean": np.nanmean(pmm_stack, axis=0),
+            "sum": np.nansum(pmm_stack, axis=0)
+        }
+    }
+
+
+def save_ceddar_spatial_summaries(product, output_dir, *, year="2019",):
+    """Save derived median and PMM spatial products"""
+
+    output_dir = Path(output_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for method, stem in (("ceddar_median", "ens_median"), ("ceddar_pmm", "pmm")):
+        maps = product[method]
+        np.savez_compressed(output_dir / f"spatial_{stem}_{year}.npz", mean=maps["mean"], sum=maps["sum"])
+        (output_dir / f"spatial_{stem}_{year}.meta.txt").write_text(f"source={stem}\ngroup={year}\nn_days={len(product['dates'])}\nderived_from=saved_physical_generation\n")
+        

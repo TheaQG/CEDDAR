@@ -25,44 +25,57 @@ def main():
 
     data = revision.load_deterministic(args.revision_dir)
 
-    fig = plt.figure(figsize=(7.2, 6.0))
+    fig = plt.figure(figsize=(9.0, 6.0))
 
     outer = fig.add_gridspec(
         2,
-        1,
-        height_ratios=(0.92, 1.0),
-        hspace=0.48,
-    )
-    top = outer[0].subgridspec(
-        1,
-        2,
-        wspace=0.42,
-    )
-    bottom = outer[1].subgridspec(
-        1,
         3,
-        wspace=0.35,
+        height_ratios=(0.92, 1.0,),
+        hspace=0.48,
+        wspace=0.22,
     )
 
-    ax_mae = fig.add_subplot(top[0, 0])
-    ax_rmse = fig.add_subplot(top[0, 1])
+    ax_mae = fig.add_subplot(outer[0, 0])
+    ax_rmse = fig.add_subplot(outer[0, 1], sharey=ax_mae)
+    ax_corr = fig.add_subplot(outer[0, 2], sharey=ax_mae)
 
-    ax_pod = fig.add_subplot(bottom[0, 0])
-    ax_far = fig.add_subplot(bottom[0, 1])
-    ax_csi = fig.add_subplot(bottom[0, 2])
+    ax_pod = fig.add_subplot(outer[1, 0])
+    ax_far = fig.add_subplot(outer[1, 1])
+    ax_csi = fig.add_subplot(outer[1, 2])
 
     deterministic.daily_errors(
         ax_mae,
         data,
         metric="mae",
         label="(a)",
+        show_method_labels=True,
+        show_improvement=True,
     )
     deterministic.daily_errors(
         ax_rmse,
         data,
         metric="rmse",
         label="(b)",
+        show_method_labels=False,
+        show_improvement=True,
     )
+    deterministic.spatial_correlation(
+        ax_corr,
+        data,
+        label="(c)",
+    )
+
+    top_methods = ("era5_bilinear", "qm", "ceddar_mean", "ceddar_median", "ceddar_pmm")
+    positions = range(1, len(top_methods) + 1)
+
+    ax_mae.set_yticks(positions)
+    ax_mae.set_yticklabels([style.method_label(method) for method in top_methods])
+    ax_mae.set_xlim(-3, 4)
+
+    ax_rmse.tick_params(axis="y", labelleft=False)
+    ax_rmse.set_xlim(-4, 6)
+    ax_corr.tick_params(axis="y", labelleft=False)
+
     deterministic.event_detection(
         ax_pod,
         data,
@@ -82,9 +95,9 @@ def main():
         label=None,#"(e)",
     )
 
-    style.panel_label(ax_pod, "(c)", x=-0.17, y=1.08)
-    style.panel_label(ax_far, "(d)", x=-0.17, y=1.08)
-    style.panel_label(ax_csi, "(e)", x=-0.17, y=1.08)
+    style.panel_label(ax_pod, "(d)", x=-0.17, y=1.08)
+    style.panel_label(ax_far, "(e)", x=-0.17, y=1.08)
+    style.panel_label(ax_csi, "(f)", x=-0.17, y=1.08)
 
     order = [
         style.method_label(method)

@@ -1021,7 +1021,15 @@ def _add_colorbar_and_boxplot(fig, ax, im, img_data, *, boxplot=True, ylim=None,
     bax = divider.append_axes("right", size="10%", pad=0.1) if boxplot else None
     cax = divider.append_axes("right", size="5%", pad=0.1)
 
-    fig.colorbar(im, cax=cax, orientation='vertical')
+    cb = fig.colorbar(im, cax=cax, orientation='vertical')
+    ticks = np.asarray(cb.get_ticks(), dtype=float,)
+    
+    vmin_cb = float(im.norm.vmin)
+    vmax_cb = float(im.norm.vmax)
+    tol = (1e-10 * max(1.0, abs(vmin_cb), abs(vmax_cb)))
+
+    ticks = ticks[(ticks >= vmin_cb - tol) & (ticks <= vmax_cb + tol)]
+    cb.set_ticks(ticks)
 
     if boxplot and bax is not None:
         # If a mask is provided, compute the boxplot only over masked (typically land-only) pixels.

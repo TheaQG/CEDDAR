@@ -15,9 +15,15 @@ from ..panels import distributions
 from ..paths import REVISION_ROOT
 
 def pooled_limits(examples, date, columns,):
-    """Common physical precipitation scale for one example date."""
-
+    """
+    Common precipitation scale for one example date,
+    calculated from Danish-land pixels only.
+    """
     day = examples["dates"][date]
+
+    land = np.asarray(day["land"])
+    land = np.squeeze(land) >= 0.5
+
     arrays = []
 
     for method, member, _ in columns:
@@ -27,27 +33,33 @@ def pooled_limits(examples, date, columns,):
             field = day["ensemble"][member]
 
         field = np.asarray(field, dtype=float,)
-        finite = field[np.isfinite(field)]
+        field = np.squeeze(field)
 
-        if finite.size:
-            arrays.append(finite)
+        if field.shape != land.shape:
+            raise ValueError(f"{date}: field shape {field.shape} does not match land mask {land.shape}")
+
+        values = field[land & np.isfinite(field)]
+
+        if values.size:
+            arrays.append(values)
 
     if not arrays:
         return 0.0, 1.0
 
     values = np.concatenate(arrays)
 
-    # Precipitation is non-negative in these physical artifacts.
-    return 0.0, float(np.nanmax(values))
+    return (0.0, float(np.nanmax(values)),)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
 
     parser.add_argument("--legacy-eval", type=Path,)
-    parser.add_argument("--qm-eval", type=Path,)
+    parser.add_argument("--qm-histograms", type=Path, required=True, help=("Corrected land-only QM daily histogram product"))
     parser.add_argument("--generation-dir", type=Path,)
-    parser.add_argument("--dates", nargs=2, default=("20190103", "20190104"),)
+    parser.add_argument("--dates", nargs=2, default=("20191011", "20200926"),) #default=("20190103", "20190104"),) 
+    # ("20190810", "20191011")
+    # ("20200209", "20190209")
     parser.add_argument("--ensemble-histograms", type=Path, help="Path to previously derived ensemble histograms.",)
     parser.add_argument("--output-dir", type=Path,)
     parser.add_argument("--tails-mode", choices=("lines", "bars"), default="lines", help="Plot seasonal tail quantiles as connected lines or grouped bars.")
@@ -63,8 +75,7 @@ def main():
     dist = legacy.load_seasonal_distributions(args.legacy_eval)
     ensemble_dist = (legacy.load_ensemble_histograms(args.ensemble_histograms) if args.ensemble_histograms else None)
 
-    qm_eval = (args.qm_eval or legacy.baseline_evaluation("qm"))
-    qm_dist = legacy.load_seasonal_distributions(qm_eval)
+    qm_histograms = (legacy.load_qm_histograms(args.qm_histograms))
 
     # ------------------------------------------------------------------
     # Physical example fields
@@ -76,20 +87,24 @@ def main():
     # Layout
     # ------------------------------------------------------------------
 
-    fig = plt.figure(figsize=(12, 7.2))
+    fig = plt.figure(figsize=(12, 7.7))
 
     outer = fig.add_gridspec(
         3,
         1,
-        height_ratios=(1.18, 1.0, 0.62),
-        hspace=0.4,
+        height_ratios=(
+            1.40,
+            1.0,
+            0.62,
+        ),
+        hspace=0.36,
     )
 
     map_grid = outer[0].subgridspec(
         2,
         6,
-        wspace=0.1,
-        hspace=0.05,
+        wspace=0.02,
+        hspace=0.12,
     )
 
     season_grid = outer[1].subgridspec(
@@ -128,6 +143,8 @@ def main():
         for col, (method, member, title,) in enumerate(columns):
             ax = fig.add_subplot(map_grid[row, col])
 
+            is_lr = (method == "era5_condition")
+
             distributions.example(
                 ax,
                 examples,
@@ -137,26 +154,24 @@ def main():
                 vmin=vmin,
                 vmax=vmax,
                 variable="prcp",
-                show_ocean=True,
+                ocean_style=("tint" if is_lr else "hatch"),
+                ocean_alpha=0.38,
                 add_outline=True,
                 add_boxplot=True,
-                add_colorbar=(col == len(columns) - 1), # only add colorbar on last field
+                add_colorbar=(col == len(columns) - 1),
             )
 
             if row == 0:
                 ax.set_title(title, fontsize=7.6, pad=3)
             if col == 0:
-                ax.text(-0.10, 0.5, (f"{date[:4]}-{date[4:6]}-{date[6:]}"), transform=ax.transAxes, rotation=90, va="center", ha="right", fontsize=7.2, color=style.AXIS_GREY,)
+                ax.text(-0.10, 0.5, (f"{date[:4]}-{date[4:6]}-{date[6:]}"), transform=ax.transAxes, rotation=90, va="center", ha="right", fontsize=9, color=style.AXIS_GREY,)
             if row == 0 and col == 0:
-                style.panel_label(ax, "(a)", x=-0.34, y=1.10,
-                )
+                style.panel_label(ax, "(a)", x=-0.34, y=1.10,)
 
 
     # ------------------------------------------------------------------
     # (b) Seasonal distributions
     # ------------------------------------------------------------------
-
-    baseline_distributions = {"qm": qm_dist,}
 
     season_axes = []
     season_results = {}
@@ -174,8 +189,8 @@ def main():
                 ax,
                 dist,
                 season,
-                baselines=baseline_distributions,
                 ensemble=ensemble_dist,
+                qm_histograms=qm_histograms,
                 label=("(b)" if index == 0 else None),
                 xlim=(-5,120),
                 show_percentiles=True,
@@ -199,7 +214,6 @@ def main():
     # (c) Tail and wet-day statistics
     # ------------------------------------------------------------------
 
-    baseline_tails = {"qm": qm_dist,}
     tail_axes = []
 
     for index, season in enumerate(("DJF", "MAM", "JJA", "SON")):
@@ -211,8 +225,8 @@ def main():
             ax,
             dist,
             season,
-            baselines=baseline_tails,
             ensemble=ensemble_dist,
+            qm_histograms=qm_histograms,
             mode=args.tails_mode,
             label=("(c)" if index == 0 else None),
         )

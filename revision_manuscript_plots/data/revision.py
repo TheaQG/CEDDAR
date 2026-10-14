@@ -39,10 +39,18 @@ def _stage(stage, directory, required):
 
 
 def load_deterministic(directory=None):
-    """Daily paired errors, event contingency counts/scores and occurrence metrics."""
-    return _stage('deterministic', directory,
-                  ('daily_continuous_metrics.csv', 'event_detection_metrics.csv', 'occurrence_metrics.csv'))
-
+    """Daily paired errors, spatial correlation,
+    event contingency counts/scores and occurrence metrics."""
+    return _stage(
+        "deterministic",
+        directory,
+        (
+            "daily_continuous_metrics.csv",
+            "daily_spatial_correlation.csv",
+            "event_detection_metrics.csv",
+            "occurrence_metrics.csv",
+        ),
+    )
 
 def load_dry_bias(directory=None):
     """Own-wet-mask intensity and occurrence; retain per-member seasonal statistics.
@@ -54,14 +62,20 @@ def load_dry_bias(directory=None):
 
 
 def load_probabilistic(directory=None):
-    """Revision CRPS, coverage, reliability, rank counts and binned spread-skill.
+    """Revision probabilistic diagnostics."""
 
-    Rank counts are NOT continuous PIT values. Binned spread-skill is NOT a daily
-    scatterplot. Use legacy.load_probabilistic explicitly for those legacy panels.
-    """
-    return _stage('probabilistic', directory,
-                  ('crps.csv', 'coverage_summary.csv', 'reliability.csv', 'spread_skill.csv', 'rank_histogram.csv'))
-
+    return _stage(
+        "probabilistic",
+        directory,
+        (
+            "crps.csv",
+            "coverage_summary.csv",
+            "reliability.csv",
+            "spread_skill.csv",
+            "spread_skill_daily.csv",
+            "rank_histogram.csv",
+        ),
+    )
 
 def load_morphology(directory=None):
     """Raw date/member absolute objects, equal-area controls and physical-threshold SAL.

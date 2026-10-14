@@ -35,17 +35,17 @@ def objects(ax, data, analysis='absolute', metric='object_count_absolute_error',
         summary[method] = dict(values=mid, lower=low, upper=high)
 
     ax.axhline(0, **style.REFERENCE_LINE)
-    ax.set_xticks(thresholds, [f'{q:g}\nn={len(cohorts[q])}' for q in thresholds])
-    ax.set(xlabel=r'DANRA reference threshold (mm day$^{-1}$)', ylabel='Mean avsolute object-count error' if count else 'Largest-object fraction - DANRA')
+    ax.set_xticks(thresholds, [f'{q:g}\nn={len(cohorts[q])}' for q in thresholds], fontsize=7)
+    ax.set(xlabel=r'DANRA reference' + '\n' + r'threshold (mm day$^{-1}$)', ylabel='Mean absolute\nobject-count error' if count else 'Largest-object fraction - DANRA')
 
     if count:
         ax.set_ylim(bottom=0)
 
-    finish(ax, 'Absolute thresholds' if analysis == 'absolute' else 'Equal-area control', label)
+    finish(ax, 'Absolute thresholds' if analysis == 'absolute' else 'Equal-area control', label, label_position=(-0.14, 1.08),)
     return dict(summary=summary, dates=cohorts, daily=rows)
 
 
-def sal(ax, data, component='S', threshold=1., *, label=None):
+def sal(ax, data, component='S', threshold=1., *, label=None, show_x_ticks=False):
     from revision_evaluation.plot_morphology import date_summaries, common_dates
 
     titles = dict(S='Structure', L='Location', A='Amplitude')
@@ -60,10 +60,15 @@ def sal(ax, data, component='S', threshold=1., *, label=None):
     dates = common_dates(daily)
     groups = [[r['value'] for r in daily if r['method'] == m and r['date'] in dates] for m in METHODS]
 
+    # 
     boxes(ax, groups, METHODS)
-    ax.set_xticks([1, 2, 3], ['Bilinear\nERA5', 'QM', 'CEDDAR\nmembers'])
+    if show_x_ticks:
+        ax.set_xticks([1, 2, 3], ['Bilinear\nERA5', 'QM', 'CEDDAR\nmembers'])
+    else:
+        ax.set_xticks([])
     ax.axhline(0, **style.REFERENCE_LINE)
-    ax.set_ylim((-.03, 2.05) if component == 'L' else(-2.05, 2.05))
-    finish(ax, f'{titles[component]} ({component}); n={len(dates)}', label)
+    ylim = ax.get_ylim()
+    ax.set_ylim(ylim)
+    finish(ax, f'{titles[component]} ({component}); n={len(dates)}', label, label_position=(-0.14, 1.08),)
 
     return dict(dates=dates, values=dict(zip(METHODS, groups)), daily=daily, threshold=threshold)

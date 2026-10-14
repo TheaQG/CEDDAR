@@ -26,21 +26,54 @@ def unique(rows, keys):
     return result
 
 
-def finish(ax, title=None, label=None):
+def finish(ax, title=None, label=None, *, label_position=None, title_pad=None):
+    """Apply common manuscript axis styling and optional panel label."""
     style.style_axes(ax)
     if title:
-        ax.set_title(title, loc='left')
+        title_kwargs = {"loc": "left"}
+
+        if title_pad is not None:
+            title_kwargs["pad"] = title_pad
+        ax.set_title(title, **title_kwargs)
+
     if label:
-        style.panel_label(ax, label)
+        if label_position is None:
+            style.panel_label(ax, label)
+        else:
+            x, y = label_position
+            style.panel_label(ax, label, x=x, y=y)
 
 
-def boxes(ax, groups, methods, horizontal=False):
-    """All finite values and outliers retained; boxes describe variation, not a CI."""
-    for i, (values, method) in enumerate(zip(groups, methods), 1):
-        values = np.asarray(values, dtype=float)
-        ax.boxplot(values[np.isfinite(values)], positions=[i], widths=.55,
-                   vert=not horizontal, patch_artist=True, showfliers=True,
-                   **style.boxplot_style(style.method_color(method)))
+def boxes(ax, groups, methods, horizontal=False, *, flier_alpha=None, flier_markersize=None,):
+    """
+    All finite values and outliers retained;
+    boxes describe variation, not a CI.
+    """
+    for i, (values, method) in enumerate(zip(groups, methods), 1,):
+        values = np.asarray(values, dtype=float,)
+        
+        opts = style.boxplot_style(style.method_color(method))
+
+        # Optional figure-specific de-emphasis of outliers.
+        if (flier_alpha is not None or flier_markersize is not None):
+            flierprops = dict(opts.get("flierprops", {},))
+
+            if flier_alpha is not None:
+                flierprops["alpha"] = flier_alpha
+            if flier_markersize is not None:
+                flierprops["markersize"] = flier_markersize
+
+            opts["flierprops"] = flierprops
+
+        ax.boxplot(
+            values[np.isfinite(values)],
+            positions=[i],
+            widths=.55,
+            vert=not horizontal,
+            patch_artist=True,
+            showfliers=True,
+            **opts,
+        )
 
 
 def map_field(

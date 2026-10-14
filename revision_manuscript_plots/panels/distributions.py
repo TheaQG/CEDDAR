@@ -3,17 +3,138 @@
 from ._common import np, style, number, unique, finish, map_field
 
 
-def example(ax, data, date, method='danra', *, member=None, reference=None, **kwargs):
-    """Draw one field or difference. Member is zero-based. Pass shared norm/extent"""
+def _land_mask_2d(land, shape):
+    if land is None:
+        return None
 
-    day = data['dates'][str(date)]
-    field = day['fields'][method] if member is None else day['ensemble'][member]
+    mask = np.asarray(land)
+    mask = np.squeeze(mask)
+
+    if mask.shape != shape:
+        raise ValueError(f"Land-mask shape {mask.shape} does not match field {shape}")
+
+    return mask >= 0.5
+
+
+def _draw_hatched_ocean(
+    ax,
+    land,
+    *,
+    facecolor="#f5f5f5",
+    hatch="////",
+    hatch_color="#b5b5b5",
+):
+    """
+    Draw a light hatched background over ocean pixels.
+    """
+    ocean = (~land).astype(int)
+
+    # Light neutral ocean background.
+    ax.contourf(
+        ocean,
+        levels=[0.5, 1.5],
+        colors=[facecolor],
+        zorder=-2,
+    )
+
+    # Hatch overlay.
+    cf = ax.contourf(
+        ocean,
+        levels=[0.5, 1.5],
+        colors="none",
+        hatches=[hatch],
+        zorder=5,
+    )
+
+    for collection in cf.collections:
+        collection.set_edgecolor(hatch_color)
+        collection.set_linewidth(0.0)
+
+
+def _draw_ocean_tint(
+    ax,
+    land,
+    *,
+    alpha=0.38,
+    facecolor="white",
+):
+    """
+    Visually de-emphasise ocean while retaining the full LR field.
+    """
+    ocean = (~land).astype(int)
+
+    ax.contourf(
+        ocean,
+        levels=[0.5, 1.5],
+        colors=[facecolor],
+        alpha=alpha,
+        zorder=4,
+    )
+
+    # Redraw coastline above the tint.
+    ax.contour(
+        land.astype(float),
+        levels=[0.5],
+        colors="#aaaaaa",
+        linewidths=0.5,
+        zorder=6,
+    )
+
+
+def example(
+    ax,
+    data,
+    date,
+    method="danra",
+    *,
+    member=None,
+    reference=None,
+    ocean_style=None,
+    ocean_alpha=0.38,
+    **kwargs,
+):
+    """
+    Draw one physical example field.
+
+    ocean_style:
+        "hatch" : mask ocean data and show a hatched background
+        "tint"  : retain ocean data but visually de-emphasise it
+        None    : no special ocean treatment
+    """
+    day = data["dates"][str(date)]
+
+    if member is None:
+        field = day["fields"][method]
+    else:
+        field = day["ensemble"][member]
+
+    field = np.asarray(field, dtype=float,)
 
     if reference is not None:
-        field = field - day['fields'][reference]
-    kwargs.setdefault('land', day['land'])
+        field = (field - np.asarray(day["fields"][reference], dtype=float,))
 
-    return map_field(ax, field, **kwargs)
+    land = _land_mask_2d(day.get("land"), field.shape,)
+
+    kwargs.setdefault("land", day.get("land"),)
+
+    # We handle the ocean explicitly here.
+    kwargs["show_ocean"] = True
+
+    if (ocean_style == "hatch" and land is not None):
+        # Draw hatch underneath the precipitation image.
+        _draw_hatched_ocean(ax, land,)
+
+        # Make ocean transparent in the actual precipitation layer.
+        field = field.copy()
+        field[~land] = np.nan
+
+    image = map_field(ax, field, **kwargs,)
+
+    if (ocean_style == "tint" and land is not None):
+        # LR remains a full-field quantity; only de-emphasise ocean.
+        _draw_ocean_tint(ax, land, alpha=ocean_alpha,)
+
+    return image
 
 
 def _hist_quantile(bins, counts, probability,):
@@ -54,7 +175,34 @@ def _ensemble_member_densities(ensemble, season,):
     return centres, densities
 
 
-def seasonal(ax, data, season, *, baselines=None, ensemble=None, label=None, xlim=(-5, 120), show_percentiles=True, percentiles = ((0.95, "P95"), (0.99, "P99"), (0.999, "P99.9"), (0.9999, "P99.99"))):
+def _external_seasonal_histogram(product, reference_daily, season, *, name,):
+    """Return seasonal counts from an externally derived histogram product."""
+
+    reference_dates = np.asarray(reference_daily["dates"]).astype(str)
+
+    dates = np.asarray(product["dates"]).astype(str)
+
+    if not np.array_equal(reference_dates, dates,):
+        raise ValueError(f"{name}: histogram dates differ from the reference distribution evaluation")
+
+    reference_bins = np.asarray(reference_daily["bins"], dtype=float,)
+    bins = np.asarray(product["bins"], dtype=float,)
+
+    if (bins.shape != reference_bins.shape or not np.allclose(bins, reference_bins, rtol=0, atol=1e-12,)):
+        raise ValueError(f"{name}: histogram bins differ from the reference distribution evaluation")
+
+    indices = product["season_indices"][season]
+
+    if not len(indices):
+        raise ValueError(f"No dates for {season} in {name}")
+
+    daily_counts = np.asarray(product["counts"])
+    counts = daily_counts[indices].sum(axis=0)
+
+    return (bins, counts, dates[indices],)
+
+
+def seasonal(ax, data, season, *, baselines=None, ensemble=None, qm_histograms=None, label=None, xlim=(-5, 120), show_percentiles=True, percentiles = ((0.95, "P95"), (0.99, "P99"), (0.999, "P99.9"), (0.9999, "P99.99"))):
     """Saved seasonal precipitation histograms. counts_gen is the saved PMM distribution, not pooled ensemble members."""
 
     series = [('danra', data, 'counts_hr'), ('era5_bilinear', data, 'counts_lr'), ('ceddar_pmm', data, 'counts_gen')]
@@ -63,6 +211,9 @@ def seasonal(ax, data, season, *, baselines=None, ensemble=None, label=None, xli
     result = {}
     reference_daily = (data["arrays"]["dist_daily"])
     dates = reference_daily["dates"]
+
+    if (qm_histograms is not None and "qm" in (baselines or {})):
+        raise ValueError("QM was supplied both through legacy baselines and corrected qm_histograms.")
 
     danra_counts = None
     danra_bins = None
@@ -97,6 +248,25 @@ def seasonal(ax, data, season, *, baselines=None, ensemble=None, label=None, xli
         if method == "danra":
             danra_counts = counts
             danra_bins = bins
+
+    # Corrected land-only QM distribution
+    if qm_histograms is not None:
+        bins, counts, qm_dates = (_external_seasonal_histogram(qm_histograms, reference_daily, season, name="QM"))
+
+        if counts.sum():
+            density = (counts / counts.sum() / np.diff(bins))
+        else:
+            density = np.full(counts.shape, np.nan)
+
+        centres = (bins[1:] + bins[:-1]) / 2
+        ax.plot(centres, np.maximum(density, eps), **style.method_style("qm", marker=''))
+
+        result["qm"] = {
+            "bins": bins,
+            "counts": counts,
+            "density": density,
+            "dates": qm_dates
+        }
 
     if ensemble is not None:
         ensemble_dates = np.asarray(ensemble["dates"]).astype(str)
@@ -167,36 +337,275 @@ def seasonal(ax, data, season, *, baselines=None, ensemble=None, label=None, xli
     return result
 
 
-def psd(ax, data, *, baselines=None, label=None):
-    """PMM and mean member PSDs keep distinct labels. No ensemble-mean substitution"""
+def psd(ax, data, *, baselines=None, label=None,):
+    """Isotropic PSD with legacy-compatible ERA5 scale handling.
 
-    arrays = data['arrays']['scale_psd_curves']
-    series = [('danra', arrays, 'psd_hr'), ('era5_bilinear', arrays, 'psd_lr'), ('ceddar_pmm', arrays, 'psd_gen')]
+    ERA5 is the bilinearly interpolated LR field evaluated on the HR
+    spatial grid (`psd_lr_hr`). Its native Nyquist wavelength is retained
+    as the boundary between physically supported and unresolved scales.
 
-    if 'psd_gen_ens_mean' in arrays:
-        series.append(('ceddar_members', arrays, 'psd_gen_ens_mean'))
+    Saved uncertainty bands are 95% intervals around the temporal mean,
+    not min/max day-to-day ranges.
+    """
 
-    series += [(m, d['arrays']['scale_psd_curves'], 'psd_gen') for m, d in (baselines or {}).items()]
+    arrays = data["arrays"]["scale_psd_curves"]
+    eps = 1e-12
+
+    k = np.asarray(arrays["k"], dtype=float,)
+    valid_k = (np.isfinite(k) & (k > 0))
+    wavelength = (1.0 / k[valid_k])
+
+    # Keep wavelength decreasing from large -> small.
+    order = np.argsort(wavelength)[::-1]
+    wavelength = wavelength[order]
+
+    # -------
+    # Helpers
+    # -------
+    def mean_curve(saved, key):
+        values = np.asarray(saved[key], dtype=float,)
+
+        if values.ndim == 2:
+            values = np.nanmean(values, axis=0,)
+        values = values[valid_k][order]
+
+        return np.maximum(values, eps,)
+
+    def saved_band(saved, lo_key, hi_key, ):
+        if (lo_key not in saved or hi_key not in saved):
+            return None
+
+        lo = np.asarray(saved[lo_key], dtype=float,)[valid_k][order]
+        hi = np.asarray(saved[hi_key], dtype=float,)[valid_k][order]
+
+        return (np.maximum(lo, eps), np.maximum(hi, eps),)
+
+    def draw_band(saved, lo_key, hi_key, method, *, alpha=0.10,):
+        band = saved_band(saved, lo_key, hi_key,)
+
+        if band is None:
+            return
+        lo, hi = band
+
+        ax.fill_between(
+            wavelength,
+            lo,
+            hi,
+            color=style.method_color(method),
+            alpha=alpha,
+            linewidth=0,
+            zorder=1,
+        )
 
     result = {}
-    for method, saved, key in series:
-        k, power = np.asarray(saved['k']), np.asarray(saved[key])
-        power = np.nanmean(power, axis=0) if power.ndim == 2 else power
-        valid = (k > 0) & np.isfinite(power) & (power > 0)
 
-        opts = style.method_style(method, marker='')
+    # =====
+    # DANRA
+    # =====
 
-        if method == 'ceddar_members':
-            opts['label'] = 'CEDDAR members (mean PSD)'
+    danra = mean_curve(arrays, "psd_hr")
 
-        ax.plot(1/k[valid], power[valid], **opts)
+    ax.plot(wavelength, danra, **style.method_style("danra", marker="",))#, zorder=6,)
+    draw_band(arrays, "psd_hr_ci_lo", "psd_hr_ci_hi", "danra", alpha=0.12,)
 
-        result[method] = dict(k=k, power=power)
+    result["danra"] = {"k": k, "power": danra,}
 
-    ax.set(xscale='log', yscale='log', xlabel='Wavelength (km)', ylabel='Spectral power')
+    # ====================================================
+    # Bilinear ERA5. IMPORTANT: use psd_lr_hr, not psd_lr.
+    # ====================================================
+
+    era5_key = ("psd_lr_hr" if "psd_lr_hr" in arrays else "psd_lr")
+    era5 = mean_curve(arrays, era5_key,)
+
+    lr_nyquist = float(np.asarray(arrays.get("lr_nyquist", 0.0)).squeeze())
+
+    if lr_nyquist > 0:
+
+        lambda_nyquist = (1.0 / lr_nyquist)
+        resolved = (wavelength >= lambda_nyquist)
+        unresolved = (wavelength < lambda_nyquist)
+
+        # Interpolate ERA5 PSD exactly at the native Nyquist wavelength
+        log_lambda = np.log(wavelength[::-1])
+        log_power = np.log(era5[::-1])
+        power_nyquist = np.exp(np.interp(np.log(lambda_nyquist), log_lambda, log_power,))
+
+        # Solid: resolved scales + exact Nyquist point.
+        wavelength_resolved = np.r_[wavelength[resolved], lambda_nyquist,]
+        era5_resolved = np.r_[era5[resolved], power_nyquist,]
+
+        # Sort back to descending wavelength.
+        order_resolved = np.argsort(wavelength_resolved)[::-1]
+        wavelength_resolved = wavelength_resolved[order_resolved]
+        era5_resolved = era5_resolved[order_resolved]
+
+        ax.plot(
+            wavelength_resolved,
+            era5_resolved,
+            color=style.method_color("era5_bilinear"),
+            linestyle="-",
+            linewidth=1.2,
+            label="Bilinear ERA5",
+            zorder=5,
+        )
+
+        # Dashed: exact Nyquist point + unresolved scales.
+        wavelength_unresolved = np.r_[lambda_nyquist, wavelength[unresolved],]
+        era5_unresolved = np.r_[power_nyquist, era5[unresolved],]
+        order_unresolved = np.argsort(wavelength_unresolved)[::-1]
+
+        wavelength_unresolved = wavelength_unresolved[order_unresolved]
+        era5_unresolved = era5_unresolved[order_unresolved]
+
+        ax.plot(
+            wavelength_unresolved,
+            era5_unresolved,
+            color=style.method_color("era5_bilinear"),
+            linestyle="--",
+            linewidth=1.0,
+            alpha=0.55,
+            label="_nolegend_",
+            zorder=4,
+        )
+
+    else:
+        ax.plot(wavelength, era5, **style.method_style("era5_bilinear",marker="",), zorder=5,)
+        lambda_nyquist = None
+
+    result["era5_bilinear"] = {
+        "k": k,
+        "power": era5,
+        "lambda_nyquist": lambda_nyquist,
+    }
+
+    # ==========
+    # CEDDAR PMM
+    # ==========
+
+    pmm = mean_curve(arrays, "psd_gen",)
+
+    ax.plot(wavelength, pmm, **style.method_style("ceddar_pmm", marker="",))#, zorder=6,)
+    draw_band(arrays, "psd_gen_ci_lo", "psd_gen_ci_hi", "ceddar_pmm", alpha=0.08,)
+
+    result["ceddar_pmm"] = {
+        "k": k,
+        "power": pmm,
+    }
+
+    # ================================
+    # CEDDAR members (mean member PSD)
+    # ================================
+
+    if "psd_gen_ens_mean" in arrays:
+        members = mean_curve(arrays, "psd_gen_ens_mean",)
+
+        opts = style.method_style("ceddar_members", marker="",)
+        opts["label"] = ("CEDDAR members\n(mean PSD)")
+
+        ax.plot(wavelength, members, **opts)#, zorder=7,)
+        draw_band(arrays, "psd_gen_ens_ci_lo", "psd_gen_ens_ci_hi", "ceddar_members", alpha=0.12,)
+
+        result["ceddar_members"] = {
+            "k": k,
+            "power": members,
+        }
+
+    # ========================
+    # Additional baselines: QM
+    # ========================
+
+    for method, bundle in (baselines or {}).items():
+        saved = bundle["arrays"]["scale_psd_curves"]
+
+        baseline_k = np.asarray(saved["k"], dtype=float,)
+
+        # Do not silently interpolate a baseline onto the CEDDAR grid.
+        if (baseline_k.shape != k.shape or not np.allclose(
+                baseline_k,
+                k,
+                rtol=0,
+                atol=1e-12,
+            )
+        ):
+            raise ValueError(f"{method}: PSD k-grid differs from the reference evaluation")
+
+        baseline = mean_curve(saved, "psd_gen",)
+
+        ax.plot(wavelength, baseline, **style.method_style(method, marker="",))#, zorder=5,)
+
+        # QM has the same saved CI structure if generated by scale eval.
+        draw_band(saved, "psd_gen_ci_lo", "psd_gen_ci_hi", method, alpha=0.06,)
+
+        result[method] = {
+            "k": baseline_k,
+            "power": baseline,
+        }
+
+    # ========================
+    # Scale-regime annotations
+    # ========================
+    # ERA5 native Nyquist when available.
+    if lr_nyquist > 0:
+        low_k_max = lr_nyquist
+    else:
+        low_k_max = 1.0 / 200.0
+
+    high_k_min = (1.0 / 20.0)
+    lambda_low = (1.0 / low_k_max)
+    lambda_high = (1.0 / high_k_min)
+
+    for value in (lambda_low, lambda_high,):
+        ax.axvline(
+            value,
+            color=style.AXIS_GREY,
+            linestyle="--",
+            linewidth=0.8,
+            alpha=0.75,
+            zorder=2,
+        )
+
+    transform = (ax.get_xaxis_transform())
+
+    ax.text(
+        lambda_low * 1.025,
+        0.74,
+        rf"low-k  $\lambda={lambda_low:.0f}$ km",
+        transform=transform,
+        rotation=90,
+        color=style.AXIS_GREY,
+        fontsize=6.5,
+        ha="center",
+        va="bottom",
+        zorder=3,
+    )
+
+    ax.text(
+        lambda_high * 1.025,
+        0.74,
+        rf"high-k  $\lambda={lambda_high:.0f}$ km",
+        transform=transform,
+        rotation=90,
+        color=style.AXIS_GREY,
+        fontsize=6.5,
+        ha="center",
+        va="bottom",
+        zorder=3,
+    )
+
+    # ====
+    # Axes
+    # ====
+
+    ax.set(xscale="log", yscale="log", xlabel=r"Wavelength $\lambda$(km)", ylabel="Spectral power",)
+    ax.set_ylim(bottom=5e-3)
     if not ax.xaxis_inverted():
         ax.invert_xaxis()
-    finish(ax, 'Isotropic power spectral density', label)
+
+    finish(ax, "Isotropic power spectral density", label, label_position=(-0.10, 1.06),)
+
+    # Both major and minor log-grid lines.
+    ax.grid(True, which="major", linestyle=":", linewidth=0.65, alpha=0.50,)
+    ax.grid(True, which="minor", linestyle=":", linewidth=0.45, alpha=0.35,)
 
     return result
     
@@ -258,6 +667,7 @@ def seasonal_tails(
     *,
     baselines=None,
     ensemble=None,
+    qm_histograms=None,
     metrics=((0.95, "P95"), (0.99, "P99"), (0.999, "P99.9"), (0.9999, "P99.99"),),
     mode="lines",
     label=None,
@@ -274,6 +684,10 @@ def seasonal_tails(
 
     result = {}
 
+    reference_daily = (data["arrays"]["dist_daily"])
+    if qm_histograms is not None and "qm" in (baselines or {}):
+        raise ValueError("QM was supplied both through legacy baselines and corrected QM histograms")
+        
     for method, bundle, key in series:
 
         daily = bundle["arrays"]["dist_daily"]
@@ -286,6 +700,12 @@ def seasonal_tails(
         counts = np.asarray(daily[key])[indices].sum(axis=0)
 
         result[method] = np.array([_hist_quantile(bins, counts, probability) for probability, _ in metrics])
+
+    # Corrected land-only QM tails
+    if qm_histograms is not None:
+        bins, counts, _ = (_external_seasonal_histogram(qm_histograms, reference_daily, season, name="QM"))
+
+        result["qm"] = np.array([_hist_quantile(bins, counts, probability) for probability, _ in metrics])
 
     member_quantiles = None
 
@@ -359,9 +779,9 @@ def seasonal_tails(
             offset = (index - (len(methods) - 1) / 2) * height
 
             if method == "ceddar_members":
-                member_median = np.nanmedian(member_quantiles, axis=0,)
-                member_q25 = np.nanpercentile(member_quantiles, 25, axis=0,)
-                member_q75 = np.nanpercentile(member_quantiles, 75, axis=0,)
+                member_median = np.nanmedian(member_quantiles, axis=0,) # type: ignore
+                member_q25 = np.nanpercentile(member_quantiles, 25, axis=0,) # type: ignore
+                member_q75 = np.nanpercentile(member_quantiles, 75, axis=0,) # type: ignore
 
                 ax.barh(
                     y + offset,

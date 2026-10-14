@@ -77,6 +77,30 @@ def reliability_counts(ensemble, observation, threshold):
     return rows
 
 
+def daily_spread_skill(ensemble, observation,):
+    """Daily domain spread and ensemble-mean RMSE.
+    ensemble: [member, case]
+    observation: [case]
+    """
+
+    ensemble = np.asarray(ensemble, dtype=float,)
+    observation = np.asarray(observation, dtype=float,)
+
+    if observation.size == 0:
+        return dict(mean_spread=float("nan"), rmse=float("nan"), n_cases=0,)
+
+    spread = np.std(ensemble, axis=0, ddof=1,)
+    ensemble_mean = np.mean(ensemble, axis=0,)
+
+    squared_error = (ensemble_mean - observation) ** 2
+
+    return dict(
+        mean_spread=float(np.mean(spread)),
+        rmse=float(np.sqrt(np.mean(squared_error))),
+        n_cases=int(observation.size),
+    )
+
+
 def spread_edges(spreads, n_bins=10):
     """Exact pooled spread quantiles, with repeated edges collapsed; one bin if constant."""
     if n_bins < 1:
