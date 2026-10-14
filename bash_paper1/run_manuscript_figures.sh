@@ -10,9 +10,23 @@ set -euo pipefail
 #   Supplementary Figures S05 - S10
 # =============================================================================
 
-REPO="/Users/au728490/Code/CEDDAR"
-DATA_ROOT="/Users/au728490/ceddar_runs/P1_figures_data"
-OUT="/Users/au728490/ceddar_runs/P1_figures"
+# Usage (activate the figure environment first):
+#   DATA_ROOT=/path/to/CEDDAR_manuscript_figure_data \
+#   OUT=/path/to/output bash /path/to/CEDDAR/bash_paper1/run_manuscript_figures.sh
+# REPO defaults to this checkout; OUT defaults to a sibling output directory.
+# Relative overrides are resolved from the directory where this script is invoked.
+REPO="$(cd "${REPO:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd)"
+DATA_ROOT="${DATA_ROOT:?Set DATA_ROOT to the manuscript figure-data directory}"
+OUT="${OUT:-$REPO/../CEDDAR_manuscript_figures}"
+
+case "$DATA_ROOT" in
+    /*) ;;
+    *) DATA_ROOT="$PWD/$DATA_ROOT" ;;
+esac
+case "$OUT" in
+    /*) ;;
+    *) OUT="$PWD/$OUT" ;;
+esac
 
 LEGACY_ROOT="$DATA_ROOT/P1_legacy"
 REVISION="$DATA_ROOT/P1_revision/evaluation"
