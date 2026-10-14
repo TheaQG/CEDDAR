@@ -45,4 +45,13 @@ Preparation overrides old smoke output/cache environment variables so outputs re
 
 The regression suite checks frozen global reference outputs with a toy denoiser, the alpha=1 baseline, initial-state scaling, denoiser sigma arguments, terminal Euler behavior, default ramp indices, unchanged early churn, actual churn magnitude versus manifest, invalid settings before RNG draws, full runner argument forwarding, provenance mismatch/completion rejection, external output isolation and preparation without checkpoint loading. Existing portability/workflow tests are included. These are CPU software checks; they do not establish a physically admissible alpha interval, calibration, monotonicity, or historical figure provenance. The local Python environment emitted an existing NumPy binary-compatibility warning during an import; ATMO should run the same tests in its own environment.
 
+`test_strict_metrics_reject_missing_arrays` is a documented expected failure.
+The frozen evaluator skips dates with missing HR observations before reaching its
+strict missing-array guard; if no dates remain, it writes header-only outputs
+instead of raising the expected error. Recomputed sigma* metrics therefore need
+complete physical inputs and a check of the evaluated dates. The final manuscript
+figure runner reads saved evaluation products and does not call this evaluator.
+The test assertion is retained so an eventual fix produces an unexpected success
+until the expected-failure marker is removed.
+
 Suggested minimal manuscript wording, subject to the chosen experiment and results: “We perturb the inference-time EDM noise schedule by a dimensionless factor alpha. In late-ramp mode the multiplier transitions smoothly from one to alpha over specified sampling indices. The modified noise levels enter denoiser conditioning, preconditioning and numerical integration. We evaluate the resulting changes in spatial structure and ensemble behavior empirically; the construction does not guarantee monotonic control or physical admissibility.”
