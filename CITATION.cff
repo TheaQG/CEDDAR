@@ -17,8 +17,8 @@ abstract: >-
   GMD manuscript and includes the audited sigma-star implementation fixes,
   revised evaluation framework and manuscript figure workflow. The manuscript's
   model identity remains CEDDAR v1.0.2; trained weights and architecture are
-  unchanged. Derived manuscript figure data have the reserved Zenodo DOI
-  10.5281/zenodo.23369324, with publication pending.
+  unchanged. Derived manuscript figure data are archived on Zenodo at
+  https://doi.org/10.5281/zenodo.23369324.
 keywords:
   - precipitation downscaling
   - diffusion models

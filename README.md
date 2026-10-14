@@ -113,9 +113,10 @@ from saved ensembles is a separate workflow under `revision_evaluation/` and
 | --- | --- |
 | Original v1.0.2 source code | [Zenodo: 10.5281/zenodo.18643186](https://doi.org/10.5281/zenodo.18643186) |
 | Trained B0/final-model weights and `Data_DiffMod_small` | [Zenodo: 10.5281/zenodo.18643307](https://doi.org/10.5281/zenodo.18643307) |
-| Compact manuscript figure data | [Zenodo: 10.5281/zenodo.23369324](https://doi.org/10.5281/zenodo.23369324); DOI reserved, publication pending |
+| Compact manuscript figure data | [Zenodo: 10.5281/zenodo.23369324](https://doi.org/10.5281/zenodo.23369324) |
 | Revised source release (v1.1.0) | [GitHub releases](https://github.com/TheaQG/CEDDAR/releases); publication and new source DOI pending |
-| Manuscript | GMD manuscript DOI pending |
+| Manuscript preprint | [EGUsphere: 10.5194/egusphere-2026-1139](https://doi.org/10.5194/egusphere-2026-1139) |
+| Final GMD article | DOI pending |
 
 The figure-data archive contains derived products and does not replace source
 reanalyses. Source data are available separately through
@@ -130,8 +131,8 @@ preparation; optional preprocessing dependencies are in
 Please cite the associated manuscript and the archived software version used.
 [`CITATION.cff`](CITATION.cff) contains the prepared v1.1.0 software citation
 metadata; its DOI will be added after publication.
-Until the revised release and manuscript citations are assigned, the original
-software record is:
+The preprint is linked above; the revised software DOI and final article citation
+are pending. The original software record is:
 
 ```bibtex
 @software{quistgaard_ceddar_2026,

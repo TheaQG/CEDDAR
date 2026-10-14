@@ -51,9 +51,10 @@ are provided for exact rendering on that platform.
 - [Original v1.0.2 source](https://doi.org/10.5281/zenodo.18643186).
 - [Trained models and example data](https://doi.org/10.5281/zenodo.18643307).
 - [Compact manuscript figure data](https://doi.org/10.5281/zenodo.23369324):
-  DOI reserved; publication pending. The derived figure data do not replace
-  DANRA or ERA5 source data.
-- Revised v1.1.0 source and manuscript DOIs: pending.
+  published. The derived figure data do not replace DANRA or ERA5 source data.
+- [Manuscript preprint](https://doi.org/10.5194/egusphere-2026-1139).
+  The final GMD article DOI is pending.
+- Revised v1.1.0 source DOI: pending.
 
 See the [figure-data guide](../repro/MANUSCRIPT_FIGURE_DATA.md) for archive
 contents, checksums and reproduction instructions.
