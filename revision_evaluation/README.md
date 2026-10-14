@@ -1,143 +1,127 @@
-# GMD revision evaluation — Group 1
+# Revised evaluation of saved precipitation fields
 
-For the individual-member QM/object comparison, see [Group 4 morphology](MORPHOLOGY.md).
+This package computes deterministic, probabilistic, dry-bias and morphology
+products from saved physical CEDDAR and benchmark fields. Model inference,
+checkpoint loading and QM fitting are separate workflows. The scientific
+implementations, metric definitions and manuscript samples are frozen.
 
-This package evaluates saved precipitation fields. It does not load a model,
-generate samples, fit QM, alter physical values, or call the legacy evaluation
-or plotting runners. Group 1 implements deterministic metrics and common input
-validation; probabilistic calibration, dry-bias decomposition, morphology and
-figures will be separate additions. No new dependencies are required.
+For **final manuscript figures**, use
+[`run_manuscript_figures.sh`](../bash_paper1/run_manuscript_figures.sh) and the
+[compact figure-data archive](../repro/MANUSCRIPT_FIGURE_DATA.md). Recomputing the
+diagnostics below requires the original generated fields, which are not all
+included in that compact archive.
 
-## Run on ATMO
+## Inputs and date selection
 
-Use the existing environment and the `paper1-revision-2026` checkout. The supplied
-`atmo.yaml` contains the three original input paths provided for this revision.
-Review its unit declarations and reference tolerances before the full evaluation.
+Copy [`atmo.yaml`](atmo.yaml) to your run directory and configure its input and
+output paths for your machine. Preserve the scientific settings for manuscript
+reproduction. Each method declares its physical units and layout:
 
-From a **tcsh** terminal (preferably inside tmux):
+- CEDDAR: `ensembles_phys/`, `lr_hr_phys/` and saved `pmm_phys/` fields.
+- Baselines: `physical` uses `pmm_phys/` and `lr_hr_phys/`;
+  `legacy_physical` uses `pmm/` and `lr_hr/`. Directory names alone do not prove units.
+- Land masks: dated `lsm/YYYYMMDD.npz` takes precedence over `meta/land_mask.npz`.
+  Accepted keys are `lsm_hr`, `lsm`, `mask`, `roi`; masks must be finite binary 0/1.
+  A corrupt dated mask fails rather than falling back. An optional ROI must share
+  the grid. All methods' masks and saved DANRA references must agree.
 
-```tcsh
-cd /home/theaqg/CEDDAR_GMD_revision
-source /home/theaqg/envs/ceddar-revision/bin/activate.csh
-bash repro/run_revision_deterministic.sh --preflight-only
-```
-
-Preflight reads **every common date**, including all ensemble members, without
-calculating metric tables. It hashes the files read and checks arrays, keys,
-member counts, shapes, saved DANRA references and binary land masks. It creates
-`evaluation/preflight_<UTC timestamp>/` and prints its full path. Inspect:
-
-- `manifest.json`: completion status, Git/runtime, methods, thresholds, mask
-  policy, member count, reference tolerances, units declarations, date/pixel counts.
-- `date_inventory.json`: common 2019–2020 dates, dates missing from each artifact
-  folder, and dates outside the evaluation period.
-- `daily_support.csv`: valid/common land pixels and excluded nonfinite pixels.
-- `input_files.csv`: exact source paths, byte sizes, modification times and SHA256.
-- `dates.txt` and `resolved_config.yaml`: inputs for reproducing the same analysis.
-
-Freeze that date selection for the calculation (replace the example path):
-
-```tcsh
-setenv REVISION_DATES /home/theaqg/CEDDAR_runs/paper1_revision/evaluation/preflight_TIMESTAMP/dates.txt
-bash repro/run_revision_deterministic.sh --dates-file "$REVISION_DATES"
-```
-
-Results go to
-`/home/theaqg/CEDDAR_runs/paper1_revision/evaluation/deterministic/`.
-The final manifest must say `"status": "complete"`. A failed run retains its error
-and partial diagnostics. The runner **refuses an existing deterministic directory**;
-use a new `--output-root /home/theaqg/CEDDAR_runs/paper1_revision/evaluation_retry`
-for another attempt. Do not delete original generation results.
-
-`--config /path/to/settings.yaml` selects a different configuration. Relative
-paths in that YAML resolve against its directory. `--output-root` and `--dates-file`
-also resolve against the YAML directory if relative; absolute ATMO paths avoid
-ambiguity. An input method can be omitted explicitly from `methods`; there is no
-silent per-date omission. CEDDAR remains the reference/ensemble source. If no
-`--dates-file` is supplied, the runner selects the current complete common date
-intersection and writes it. Later analyses should reuse that list, not rescan a
-different method/date population. A supplied list must match the current common
-set exactly; added or missing files require deliberate review.
-
-## Definitions and output tables
-
-All precipitation is mm/day. The selected methods are ERA5 bilinear, QM, CEDDAR
-ensemble mean, CEDDAR ensemble median and saved CEDDAR PMM. Exactly 32 members are
-expected by default. A declared smaller `expected_members` supports synthetic
-fixtures only; the runner warns that it is not the manuscript ensemble.
-
-The shared daily support is land (intersected with any explicit ROI), finite DANRA,
-finite predictions from **all selected methods**, and finite values in **all ensemble
-members**. Thus every method uses the same pixels that day. Pixel counts can still
-vary between days. There is no renormalization, clipping or NaN filling. Negative
-valid field values are retained, counted and warned about. Zero valid cases yield
-NaN statistics, saved as **empty numeric CSV cells**, with explicit zero counts.
-
-| Table | Definition |
-|---|---|
-| `daily_continuous_metrics.csv` | One row per date/season/method: spatial bias (prediction minus DANRA), MAE, RMSE, Pearson correlation and valid pixel count. No space–time pooling. Constant-field or fewer-than-two-pixel correlation is NaN. |
-| `occurrence_metrics.csv` | DANRA and every selected method: pooled >=1 mm/day frequency, DANRA frequency and their difference, wet/valid pixel-day counts; ALL/DJF/MAM/JJA/SON. |
-| `event_detection_metrics.csv` | Each method at >=1/10/20 mm/day: pooled hits, misses, false alarms, correct negatives, POD/FAR/CSI and sample/event/date counts. No averaging daily ratios. |
-| `occurrence_daily_counts.csv` | Daily sufficient counts, retained for shared dry-bias calculations and possible date-level resampling. |
-| `event_detection_daily_counts.csv` | Daily contingency counts for possible paired, whole-date bootstrap calculations. |
-| `daily_support.csv` | Per-date land and finite common support, including excluded nonfinite pixels. |
-
-POD = H/(H+M), FAR = F/(H+F), CSI = H/(H+M+F); zero denominators yield NaN.
-`n_dates` includes dates with no finite support; `n_valid_dates` counts dates with
-positive support. Occurrence pools valid land **pixel-days**, not daily frequencies.
-An absent season is retained with zero counts and NaN frequency. No confidence
-intervals are calculated in Group 1. Pixels are not treated as independent
-replicates; the primary continuous-metric distributions are across dates. The two
-years provide descriptive seasonal diagnostics, not climatological inference.
-
-Mean and median are calculated from physical members using float64 arithmetic.
-The median uses the linear 0.5 quantile (average of the two middle members for
-M=32). PMM is loaded unchanged: the producer constructs PMM in model space and
-then back-transforms it. Recomputing PMM from physical members would change that
-method definition. Saved baseline fields are already on the target grid and are
-not interpolated again.
-
-## Input validation and its limits
-
-The existing `EvalDataResolver` and `BaselineDataResolver` load fields; strict
-prechecks disable their ambiguous model-space fallbacks. CEDDAR requires
-`ensembles_phys/`, `lr_hr_phys/`, and `pmm_phys/` when PMM is selected. Baselines
-explicitly declare either `physical` (`pmm_phys/`, `lr_hr_phys/`) or
-`legacy_physical` (`pmm/`, `lr_hr/`). The latter is appropriate for the original
-unscaled baseline producer; directory names alone do not establish units.
-
-Land masks are checked separately because of legacy resolver bugs. Per-date
-`lsm/YYYYMMDD.npz` takes precedence over `meta/land_mask.npz`; accepted keys are
-`lsm_hr`, `lsm`, `mask`, `roi`. A supplied ROI is a separate NPZ on the same grid.
-Only finite binary 0/1 masks are accepted. A corrupt existing per-date mask is an
-error, not an invitation to fall back. All methods' land masks must agree.
-
-Saved DANRA references must have matching shapes, finite support and values within
-the configured tolerances. The example permits rtol=0.001 and atol=0.001 mm/day for
-float16 versus float32 storage; these tolerances never modify a field. Matching
-references/masks are evidence for alignment, **not a coordinate-system proof**.
-The reader does not reproject data or infer units from its magnitude. Configuration
-unit declarations and source metadata hashes document the assumptions; review the
-original generation configuration when provenance is uncertain. Model-space-only
-artifacts require a separate explicit conversion with original statistics, not an
-automatic fallback here.
-
-The common dates are the intersection of all required artifact folders within
-20190101–20201231 (731 calendar days). Missing dates are listed and warned about;
-no claim of all 731 days is made if fewer are available. Invalid date filenames,
-missing masks, wrong member counts and inconsistent reference fields fail clearly.
-Read input files are checked for size/mtime changes before completion; their hashes
-are recorded for later verification. Inputs must remain unchanged during a run.
-
-## Tests
+Preflight checks every common date and member. It records input hashes, units,
+reference tolerances, finite support and missing dates without computing metrics:
 
 ```bash
-python -m unittest revision_evaluation.tests.test_deterministic -v
+bash repro/run_revision_deterministic.sh \
+  --config /absolute/path/to/evaluation.yaml --preflight-only
 ```
 
-Tests use tiny synthetic physical NPZs with the same folder/key conventions as
-CEDDAR and the baselines. They check definitions, common masks, ties at physical
-thresholds, empty subsets, member counts, even-member median, physical-only loading,
-reference/land alignment, common/frozen dates, source-file preservation, external
-output guards, failure status, and the Bash preflight entry point. No real data,
-checkpoint, GPU, server access or plotting is required.
+The configured period is 2019-2020 (731 calendar dates). The actual shared date
+set is recorded; missing dates are reported. Freeze the preflight `dates.txt` for
+the deterministic pass, then reuse it for all later stages:
+
+```bash
+bash repro/run_revision_deterministic.sh \
+  --config /absolute/path/to/evaluation.yaml \
+  --dates-file /absolute/path/to/preflight_TIMESTAMP/dates.txt
+
+bash repro/run_revision_probabilistic.sh \
+  --config /absolute/path/to/evaluation.yaml \
+  --dates-file /absolute/path/to/deterministic/dates.txt
+
+bash repro/run_revision_dry_bias.sh \
+  --config /absolute/path/to/evaluation.yaml \
+  --dates-file /absolute/path/to/deterministic/dates.txt
+
+bash repro/run_revision_morphology.sh \
+  --config /absolute/path/to/evaluation.yaml \
+  --dates-file /absolute/path/to/deterministic/dates.txt
+```
+
+Relative paths resolve against the selected YAML directory. A supplied date list
+must match the complete current common set; there is no silent per-method or
+per-date omission. The manuscript expects 32 members. Smaller ensembles are for
+explicit synthetic fixtures, not replacement manuscript samples.
+
+## Products and interpretation
+
+| Stage | Principal saved products |
+| --- | --- |
+| Deterministic | Daily bias/MAE/RMSE/correlation; pooled occurrence and event-detection metrics; daily sufficient counts |
+| Probabilistic | CRPS, central coverage/width, reliability, randomized ranks and pooled spread-skill tables |
+| Dry bias | Own-wet-mask occurrence/intensity and quantiles, including separate member/season summaries |
+| Morphology | Absolute/equal-area object tables and physical-threshold SAL; see [details](MORPHOLOGY.md) |
+
+Each stage retains `manifest.json`, `dates.txt`, `resolved_config.yaml`,
+`daily_support.csv` and `input_files.csv` as applicable. Successful manifests say
+`status: complete`; failed runs retain partial diagnostics and failure status.
+Existing stage directories are refused. Use a fresh external `--output-root`
+for another run, preserving the intended dates. Inputs are checked for size/mtime
+changes before completion, with SHA256 recorded for subsequent verification.
+
+All precipitation is mm/day. Daily support intersects land/ROI with finite DANRA,
+all selected predictions and every ensemble member. Methods therefore use the
+same pixels each day. Undefined statistics remain NaN (empty numeric CSV cells),
+not zero. Negative precipitation is retained and reported, not clipped. Reference
+matching uses the configured tolerances without changing values or reprojecting;
+matching arrays are evidence of alignment, not a coordinate-system proof.
+
+Continuous errors describe dates. Occurrence/detection pool valid pixel-days,
+with inclusive thresholds and NaN for zero denominators; daily ratios are not
+averaged. Empty seasons retain zero counts and undefined statistics. Physical
+ensemble mean/median use float64, with the linear median for even member counts.
+PMM is loaded as saved: the original producer constructs it in model space and
+back-transforms it. Recomputing PMM from physical members would change the method.
+The manuscript and Supplementary Information provide the full scientific methods.
+
+Additional daily correlation, daily spread-skill, common-event ISS, histogram and
+spatial products are generated under
+[`revision_manuscript_plots/data/`](../revision_manuscript_plots/data/).
+
+## Optional diagnostic plots
+
+`plot_probabilistic.py` retains interval-width, observed-wet binned spread-skill
+and bin-population diagnostics beyond the final manuscript panels.
+`plot_morphology.py` retains object/SAL diagnostics and exports date-level summaries.
+These are standalone diagnostic layouts, separate from the final figure runner:
+
+```bash
+bash repro/plot_revision.sh probabilistic \
+  --input-dir /absolute/path/to/evaluation/probabilistic \
+  --output-dir /absolute/path/to/new-diagnostic-plots
+```
+
+Use `morphology` for object/SAL plots. Outputs must be new external directories.
+The final manuscript morphology panels also import `date_summaries` and
+`common_dates` from `plot_morphology.py`; keep that module and `plot_common.py`.
+
+## Lightweight checks
+
+```bash
+python -m unittest revision_evaluation.tests.test_deterministic \
+  revision_evaluation.tests.test_probabilistic \
+  revision_evaluation.tests.test_dry_bias \
+  revision_evaluation.tests.test_object_metrics -v
+```
+
+These checks cover numerical definitions, empty populations, shared masks and
+dates, physical-only input validation, source preservation, output guards and
+retained launcher/plot integration. They use small synthetic fixtures and need
+no archived checkpoint, source reanalysis download or GPU.
