@@ -35,9 +35,35 @@ full generation and evaluation; it does not reuse ensembles from either global r
 The script contains the current ATMO data/checkpoint paths and bundled statistics
 path. Existing `DATA_DIR`, `STATS_LOAD_DIR`, and `PUBLISHED_CHECKPOINT` environment
 variables override those defaults. Other overrides are `CPU_THREADS`, `SIGMA_SEED`,
-`MAX_DATES`, `ENSEMBLE_SIZE`, `SIGMA_CONFIG`, `PYTHON`, and `COMPARISON_DIR`.
+`MAX_DATES`, `ENSEMBLE_SIZE`, `SIGMA_CONFIG`, `SIGMA_STAR_GRID`, `PYTHON`, and `COMPARISON_DIR`.
 For example, `setenv MAX_DATES 1` and `setenv ENSEMBLE_SIZE 2` make a smaller test.
 Inspect all resolved configurations if you override the base YAML.
+
+## Retained larger-run example
+
+The following historical launch settings cap the comparison at 1000 validation
+dates with 32 members and four CPU threads. They are an optional investigation
+example, not the settings used by the final figure runner. The date count remains
+a cap on available inputs. Use a fresh comparison directory and inspect the
+resolved settings before generation.
+
+From a tcsh session (optionally started with
+`tmux new-session -s ceddar-sigma /bin/tcsh`):
+
+```tcsh
+cd /home/theaqg/CEDDAR_GMD_revision
+source /home/theaqg/envs/ceddar-revision/bin/activate.csh
+unsetenv COMPARISON_DIR
+setenv MAX_DATES 1000
+setenv ENSEMBLE_SIZE 32
+setenv SIGMA_SEED 504
+setenv CPU_THREADS 4
+setenv PYTHONUNBUFFERED 1
+setenv SIGMA_STAR_GRID "0.95 1.00 1.05"
+bash repro/run_sigma_initialization_comparison.sh
+```
+
+## Outputs and checks
 
 Outputs default to:
 
