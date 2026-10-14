@@ -126,6 +126,8 @@ preparation; optional preprocessing dependencies are in
 ## Citation
 
 Please cite the associated manuscript and the archived software version used.
+[`CITATION.cff`](CITATION.cff) contains the prepared v1.1.0 software citation
+metadata; its DOI will be added after publication.
 Until the revised release and manuscript citations are assigned, the original
 software record is:
 

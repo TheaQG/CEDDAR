@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite this software release and the associated
+  CEDDAR manuscript. The archived v1.1.0 software DOI will be added after publication.
+type: software
+title: 'CEDDAR: Controllable Ensemble Diffusion Downscaling for Atmospheric Rainfall'
+version: 1.1.0
+authors:
+  - family-names: Quistgaard
+    given-names: Thea
+repository-code: 'https://github.com/TheaQG/CEDDAR'
+url: 'https://github.com/TheaQG/CEDDAR'
+license: MIT
+abstract: >-
+  Conditional diffusion-based downscaling of daily ERA5 precipitation to
+  DANRA-scale precipitation over Denmark. Software v1.1.0 accompanies the revised
+  GMD manuscript and includes the audited sigma-star implementation fixes,
+  revised evaluation framework and manuscript figure workflow. The manuscript's
+  model identity remains CEDDAR v1.0.2; trained weights and architecture are
+  unchanged. Derived manuscript figure data have the reserved Zenodo DOI
+  10.5281/zenodo.23369324, with publication pending.
+keywords:
+  - precipitation downscaling
+  - diffusion models
+  - ensemble generation
+  - model evaluation
+  - reproducibility
