@@ -1,4 +1,4 @@
-# Python 3.11 reference environment for model training, inference and evaluation.
+# Python 3.11 reference environment for model workflows and manuscript figures.
 # ATMO CPU wheel installation: see repro/README.md. Keep torch/torchvision paired.
 # These are revision validation pins, not recovered historical LUMI versions.
 torch==2.2.0
@@ -11,4 +11,6 @@ netCDF4==1.6.5
 omegaconf==2.3.0
 PyYAML==6.0.1
 matplotlib==3.7.1
+# Saved-table loaders for the final manuscript and supplementary figures.
+pandas==2.0.3
 tqdm==4.65.0
