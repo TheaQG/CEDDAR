@@ -1,10 +1,12 @@
 cff-version: 1.2.0
 message: >-
   If you use this software, please cite this software release and the associated
-  CEDDAR manuscript. The archived v1.1.0 software DOI will be added after publication.
+  CEDDAR manuscript.
 type: software
 title: 'CEDDAR: Controllable Ensemble Diffusion Downscaling for Atmospheric Rainfall'
 version: 1.1.0
+doi: '10.5281/zenodo.23373100'
+date-released: '2026-10-14'
 authors:
   - family-names: Quistgaard
     given-names: Thea

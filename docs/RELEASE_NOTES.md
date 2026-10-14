@@ -1,6 +1,6 @@
 # CEDDAR software v1.1.0
 
-Prepared release; publication and the revised-source DOI are pending.
+Released 14 October 2026.
 
 This software release accompanies the revised GMD manuscript **“CEDDAR v1.0.2:
 Evaluating stochastic diffusion-based precipitation downscaling beyond pointwise
@@ -48,13 +48,13 @@ are provided for exact rendering on that platform.
 
 ## Separate archives
 
-- [Original v1.0.2 source](https://doi.org/10.5281/zenodo.18643186).
+- [Original v1.0.2 source](https://doi.org/10.5281/zenodo.18802547).
 - [Trained models and example data](https://doi.org/10.5281/zenodo.18643307).
 - [Compact manuscript figure data](https://doi.org/10.5281/zenodo.23369324):
   published. The derived figure data do not replace DANRA or ERA5 source data.
 - [Manuscript preprint](https://doi.org/10.5194/egusphere-2026-1139).
   The final GMD article DOI is pending.
-- Revised v1.1.0 source DOI: pending.
+- [Revised v1.1.0 source](https://doi.org/10.5281/zenodo.23373100).
 
 See the [figure-data guide](../repro/MANUSCRIPT_FIGURE_DATA.md) for archive
 contents, checksums and reproduction instructions.

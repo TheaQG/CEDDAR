@@ -7,7 +7,7 @@ precipitation over Denmark.
 
 ![CEDDAR model overview: ERA5 precipitation, seasonal and geographic conditions feed an EDM downscaler that generates daily precipitation ensembles.](figures/fig01.png)
 
-[Source archive](https://doi.org/10.5281/zenodo.18643186) ·
+[Source v1.1.0](https://doi.org/10.5281/zenodo.23373100) ·
 [Trained models and example data](https://doi.org/10.5281/zenodo.18643307) ·
 [GitHub releases](https://github.com/TheaQG/CEDDAR/releases) · [MIT license](LICENSE)
 
@@ -36,8 +36,8 @@ precipitation beyond pointwise accuracy.
 archive. This checkout includes the revised evaluation and previously audited
 $\sigma^{*}$ implementation fixes; the trained weights and architecture are
 unchanged. The scientific implementations and final figure settings are now
-frozen. This checkout is prepared for software release **v1.1.0**, with publication
-pending; see the [release notes](docs/RELEASE_NOTES.md).
+frozen. Software **v1.1.0** is [archived on Zenodo](https://doi.org/10.5281/zenodo.23373100);
+see the [release notes](docs/RELEASE_NOTES.md).
 
 ## Repository structure
 
@@ -111,10 +111,10 @@ from saved ensembles is a separate workflow under `revision_evaluation/` and
 
 | Resource | Location |
 | --- | --- |
-| Original v1.0.2 source code | [Zenodo: 10.5281/zenodo.18643186](https://doi.org/10.5281/zenodo.18643186) |
+| Original v1.0.2 source code | [Zenodo: 10.5281/zenodo.18802547](https://doi.org/10.5281/zenodo.18802547) |
 | Trained B0/final-model weights and `Data_DiffMod_small` | [Zenodo: 10.5281/zenodo.18643307](https://doi.org/10.5281/zenodo.18643307) |
 | Compact manuscript figure data | [Zenodo: 10.5281/zenodo.23369324](https://doi.org/10.5281/zenodo.23369324) |
-| Revised source release (v1.1.0) | [GitHub releases](https://github.com/TheaQG/CEDDAR/releases); publication and new source DOI pending |
+| Revised source release (v1.1.0) | [Zenodo: 10.5281/zenodo.23373100](https://doi.org/10.5281/zenodo.23373100) · [GitHub release](https://github.com/TheaQG/CEDDAR/releases/tag/v1.1.0) |
 | Manuscript preprint | [EGUsphere: 10.5194/egusphere-2026-1139](https://doi.org/10.5194/egusphere-2026-1139) |
 | Final GMD article | DOI pending |
 
@@ -129,20 +129,20 @@ preparation; optional preprocessing dependencies are in
 ## Citation
 
 Please cite the associated manuscript and the archived software version used.
-[`CITATION.cff`](CITATION.cff) contains the prepared v1.1.0 software citation
-metadata; its DOI will be added after publication.
-The preprint is linked above; the revised software DOI and final article citation
-are pending. The original software record is:
+[`CITATION.cff`](CITATION.cff) contains the v1.1.0 software citation metadata.
+The preprint is linked above; the final GMD article citation is pending.
+The revised software citation is:
 
 ```bibtex
-@software{quistgaard_ceddar_2026,
+@software{quistgaard_ceddar_v110_2026,
   author    = {Quistgaard, Thea},
-  title     = {{CEDDAR v1.0.2}: Controllable Ensemble Diffusion
-               Downscaling for Atmospheric Rainfall (Code)},
+  title     = {{CEDDAR}: Controllable Ensemble Diffusion
+               Downscaling for Atmospheric Rainfall},
+  version   = {v1.1.0},
   year      = {2026},
   publisher = {Zenodo},
-  doi       = {10.5281/zenodo.18643186},
-  url       = {https://doi.org/10.5281/zenodo.18643186}
+  doi       = {10.5281/zenodo.23373100},
+  url       = {https://doi.org/10.5281/zenodo.23373100}
 }
 ```
 
