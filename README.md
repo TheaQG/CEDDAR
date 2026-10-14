@@ -1,89 +1,146 @@
 # CEDDAR
 
-## Controllable Ensemble Diffusion Downscaling for Atmospheric Rainfall
+**Controllable Ensemble Diffusion Downscaling for Atmospheric Rainfall**
 
-CEDDAR is a diffusion-based statistical downscaling framework for generating high-resolution precipitation ensembles over Denmark from low-resolution ERA5 precipitation.
+Stochastic EDM-based downscaling of daily ERA5 precipitation to 2.5-km DANRA-scale
+precipitation over Denmark.
 
-It is built around the Elucidated Diffusion Model (EDM) and includes a modular evaluation suite tailored to precipitation (probabilistic, spatial, distributional, and temporal diagnostics).
+![CEDDAR model overview: ERA5 precipitation, seasonal and geographic conditions feed an EDM downscaler that generates daily precipitation ensembles.](figures/fig01.png)
 
----
+[Source archive](https://doi.org/10.5281/zenodo.18643186) ·
+[Trained models and example data](https://doi.org/10.5281/zenodo.18643307) ·
+[GitHub releases](https://github.com/TheaQG/CEDDAR/releases) · [MIT license](LICENSE)
 
 ## Overview
-![alt text](figures/introduction_long.png)
 
-CEDDAR learns a conditional generative mapping:
+CEDDAR learns a conditional generative mapping from ERA5 to DANRA-scale daily
+precipitation using an Elucidated Diffusion Model (EDM). Seasonal context,
+topography and land-sea information condition a stochastic downscaler that
+produces 32-member ensembles.
 
-ERA5 (low resolution) → DANRA-scale (high resolution)
+The associated revised GMD manuscript is:
 
-Key ideas:
-- Diffusion-based generative modelling of precipitation fields
-- Ensemble generation for uncertainty quantification
-- Scale control through sampling parameters (e.g., $\sigma^{*}$)
-- Evaluation suite focused on precipitation skill (CRPS, MAE, spatial structure)
+> **CEDDAR v1.0.2: Evaluating stochastic diffusion-based precipitation
+> downscaling beyond pointwise skill**
+>
+> Thea Quistgaard, Tanja Denager, Raphael J. M. Schneider, Jesper R. Christiansen,
+> Simon Stisen and Peter L. Langen. Manuscript DOI: pending.
 
----
+The revised evaluation examines deterministic skill, event detection,
+probabilistic calibration, precipitation climatology, spatial structure, temporal
+persistence and $\sigma^{*}$ sensitivity, with bilinear ERA5 and quantile mapping
+as benchmarks. These diagnostics assess complementary properties of generated
+precipitation beyond pointwise accuracy.
 
-## Example outputs
-![alt text](figures/Dates_final.png)
+**Version scope.** v1.0.2 identifies the manuscript's model and original source
+archive. This checkout includes the revised evaluation and previously audited
+$\sigma^{*}$ implementation fixes; the trained weights and architecture are
+unchanged. The scientific implementations and final figure settings are now
+frozen. The revised software release version is pending.
 
-CEDDAR produces:
-- Spatially structured high-resolution precipitation fields
-- Ensemble variability across members
-- Probabilistic evaluation maps (e.g., mean CRPS)
-- Date-based diagnostics with CRPS and MAE
+## Repository structure
 
-The reduced reproducibility run (repro/04_reduced_run) generates figures similar to the examples above.
+| Location | Purpose |
+| --- | --- |
+| [`sbgm/`](sbgm/) | Model, training, sampling, transforms and scientific configurations |
+| [`revision_evaluation/`](revision_evaluation/) | Revised metrics and validation of saved physical fields |
+| [`revision_manuscript_plots/`](revision_manuscript_plots/) | Final data loaders, derived-data generators, panels and figures |
+| [`bash_paper1/run_manuscript_figures.sh`](bash_paper1/run_manuscript_figures.sh) | Final manuscript figure runner |
+| [`repro/`](repro/) | Portable launchers, smoke checks, bundled statistics and archive tooling |
+| [`baselines/`](baselines/) | Benchmark implementations |
+| [`data_analysis_pipeline/`](data_analysis_pipeline/) · [`era5_download_pipeline/`](era5_download_pipeline/) | Input-data preparation |
+| [`figures/`](figures/) | Existing manuscript image assets, including Figure 1 above |
 
----
+The final model is `B1_GSDF_RGBCE`. Its
+[model configuration](sbgm/config/component_study/B1s/B1_GSDF_RGBCE.yaml) and
+[final test/evaluation configuration](sbgm/config/component_study/F_final_test_eval.yaml)
+are retained under `sbgm/config/`. Trained weights are distributed separately.
 
-## Quickstart (Reproducibility)
+## Installation and small example
 
-Follow the [portable setup guide](repro/README.md) for the external environment,
-CPU wheels, tcsh/bash syntax and run paths. Then start with:
+Use **Python 3.11** and an environment outside the checkout. For Linux CPU or GPU
+installations, first select the matching PyTorch wheels using the
+[environment guide](repro/README.md#environment).
+From the repository root:
 
 ```bash
+python3.11 -m venv ../ceddar-env
+source ../ceddar-env/bin/activate
+# Linux: install the platform-specific PyTorch wheels here (see guide).
+python -m pip install -r requirements.txt
+python -m pip check
 bash repro/01_small_test/run_small_test.sh
 ```
 
-Level 01 creates synthetic inputs and random weights; no dataset download is needed.
-[Level 02](repro/02_real_artifact_smoke/README.md) checks a supplied checkpoint against
-real inputs and matching training statistics. Level 03 is reserved/unimplemented.
-[Level 04](repro/04_reduced_run/README.md) deliberately trains on real data; its LUMI
-launcher remains a site-specific template. None of these reproduces manuscript skill
-by passing a smoke check.
+The [small example](repro/01_small_test/README.md) uses synthetic inputs and random
+weights for a bounded CPU inference check. It needs no data download and performs
+no training; its scores are installation checks, not manuscript skill estimates.
+For an archived checkpoint and real inputs, use the
+[real-artifact smoke workflow](repro/02_real_artifact_smoke/README.md).
 
----
+## Reproducing the manuscript figures
 
-## Usage
+Extract the **compact manuscript figure-data archive** outside the checkout.
+It contains saved diagnostics, selected physical examples and provenance;
+plotting requires no checkpoint, inference or access to full ERA5/DANRA datasets.
+With the environment active, run:
 
-CEDDAR is configuration-driven, with modular runners for local and HPC execution, with example usage:
 ```bash
-bash repro/run_model.sh --config_path path/to/config.yaml --mode train --device cpu
+DATA_ROOT=/absolute/path/to/CEDDAR_manuscript_figure_data \
+OUT=/absolute/path/to/figures \
+bash bash_paper1/run_manuscript_figures.sh
 ```
-For working examples, use the reproducibility workflows in repro/ or the full ablation and model bash scripts in bash_scripts/ or bash_ablations/.
 
----
+This creates main **Figures 2-7** and supplementary **Figures S5-S10**, each as
+PNG and PDF. Figure 1 and S1-S4 were manually prepared. `REPO` defaults to the
+checkout; `OUT` defaults to a sibling `CEDDAR_manuscript_figures` directory.
+Relative overrides resolve from the invocation directory.
 
-## Data
+The compact archive was checked against the full data tree: all 12 PNGs matched
+the final outputs exactly, and PDFs matched apart from timestamp metadata.
+See the [archive workflow](repro/MANUSCRIPT_FIGURE_DATA.md) for manifests,
+checksums, dependency tracing and guarded reproduction. Generating new diagnostics
+from saved ensembles is a separate workflow under `revision_evaluation/` and
+`revision_manuscript_plots/data/`; useful
+[$\sigma^{*}$ investigation workflows](docs/SIGMA_INITIALIZATION_DRIVER.md) are retained.
 
-Full datasets are not included due to size and licensing.
-A small example dataset (Data_DiffMod_small) is available on Zenodo for testing and reproducibility purposes.
-The full dataset used in the paper can be reproduced by following the data processing steps outlined in the paper and code, starting from ERA5 precipitation data or by contacting the authors for access to the processed dataset.
+## Data, trained models and releases
 
----
+| Resource | Location |
+| --- | --- |
+| Original v1.0.2 source code | [Zenodo: 10.5281/zenodo.18643186](https://doi.org/10.5281/zenodo.18643186) |
+| Trained B0/final-model weights and `Data_DiffMod_small` | [Zenodo: 10.5281/zenodo.18643307](https://doi.org/10.5281/zenodo.18643307) |
+| Compact manuscript figure data | Zenodo DOI pending |
+| Revised source release | [GitHub releases](https://github.com/TheaQG/CEDDAR/releases); version and new source DOI pending |
+| Manuscript | GMD manuscript DOI pending |
+
+The figure-data archive contains derived products and does not replace source
+reanalyses. Source data are available separately through
+[DANRA v0.5](https://doi.org/10.5281/zenodo.17294180) and the
+[Copernicus Climate Data Store](https://cds.climate.copernicus.eu/).
+See the manuscript and Supplementary Information for scientific methods and data
+preparation; optional preprocessing dependencies are in
+[`requirements-preprocess.txt`](requirements-preprocess.txt).
 
 ## Citation
+
+Please cite the associated manuscript and the archived software version used.
+Until the revised release and manuscript citations are assigned, the original
+software record is:
+
 ```bibtex
-@misc{CEDDAR,
-    author          = {Quistgaard, Thea and collaborators},
-    title           = {CEDDAR: Controllable Ensemble Diffusion Downscaling for Atmospheric Rainfall},
-    year            = {2026},
-    howpublished    = {GitHub repository}, 
+@software{quistgaard_ceddar_2026,
+  author    = {Quistgaard, Thea},
+  title     = {{CEDDAR v1.0.2}: Controllable Ensemble Diffusion
+               Downscaling for Atmospheric Rainfall (Code)},
+  year      = {2026},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.18643186},
+  url       = {https://doi.org/10.5281/zenodo.18643186}
 }
 ```
 
----
-
 ## License
 
-MIT License. See LICENSE file for details.
+Source code is released under the [MIT license](LICENSE). Consult the individual
+data records for their terms of use.
