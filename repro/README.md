@@ -114,7 +114,6 @@ does not rewrite their filesystem behavior. No archived outputs are moved/delete
 |---|---|---|
 | [01_small_test](01_small_test/README.md) | Synthetic inputs/random weights; inference, transforms, saved arrays and CRPS | Runnable; CPU by default |
 | [02_real_artifact_smoke](02_real_artifact_smoke/README.md) | Same checks with explicit real data, archived checkpoint and matching statistics | Runnable; artifact must be supplied |
-| [03_end_to_end_smoke](03_end_to_end_smoke/README.md) | Future bounded training lifecycle test | Not implemented; exits nonzero |
 | [04_reduced_run](04_reduced_run/README.md) | Deliberate training/generation/evaluation experiment | Existing workflow; potentially expensive |
 
 ```tcsh

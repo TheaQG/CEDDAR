@@ -44,12 +44,6 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn('--require-real needs', result.stderr)
             self.assertFalse(output.exists())
 
-    def test_unimplemented_level_does_not_pass(self):
-        result = subprocess.run(['bash', str(ROOT / 'repro/03_end_to_end_smoke/run_end_to_end_smoke.sh')],
-                                cwd='/tmp', capture_output=True, text=True)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn('not implemented', result.stderr)
-
     def test_missing_checkpoint_fails_before_creating_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / 'must-not-exist'
