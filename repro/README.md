@@ -162,6 +162,15 @@ checkpoints.
 Preserve output metadata/date lists, input data/statistics versions and original
 checkpoints separately; the manifest hashes the checkpoint, not the entire dataset.
 
+Historical validation limits: the 14 September 2026 infrastructure check compared
+the original v1.0.2 runner with the then-revised runner using one synthetic batch,
+random checkpoint and seed 7382. Model/physical ensembles, PMM and physical HR/LR
+arrays were bitwise identical. That comparison predates the sigma* audit fixes and
+does not establish equivalence of later sampling settings or across hardware.
+The 15 September real-artifact loading/preflight checks used synthetic paired data
+and saved random weights at 128×128; they exercised that loading path without
+validating the published checkpoint or original normalization statistics.
+
 ## Sigma* audit and revision
 
 See [the frozen-code audit](../docs/SIGMA_STAR_AUDIT.md) and [revision/ATMO instructions](../docs/SIGMA_STAR_REVISION.md). Prepare an isolated pilot with `bash repro/run_sigma_star.sh prepare --run-dir /external/runs/sigma_star_pilot`; generation and evaluation are separate explicit actions.
