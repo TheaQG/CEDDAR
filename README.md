@@ -111,7 +111,7 @@ from saved ensembles is a separate workflow under `revision_evaluation/` and
 | --- | --- |
 | Original v1.0.2 source code | [Zenodo: 10.5281/zenodo.18643186](https://doi.org/10.5281/zenodo.18643186) |
 | Trained B0/final-model weights and `Data_DiffMod_small` | [Zenodo: 10.5281/zenodo.18643307](https://doi.org/10.5281/zenodo.18643307) |
-| Compact manuscript figure data | Zenodo DOI pending |
+| Compact manuscript figure data | [Zenodo: 10.5281/zenodo.23369324](https://doi.org/10.5281/zenodo.23369324); DOI reserved, publication pending |
 | Revised source release (v1.1.0) | [GitHub releases](https://github.com/TheaQG/CEDDAR/releases); publication and new source DOI pending |
 | Manuscript | GMD manuscript DOI pending |
 
