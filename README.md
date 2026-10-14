@@ -24,7 +24,7 @@ The associated revised GMD manuscript is:
 > downscaling beyond pointwise skill**
 >
 > Thea Quistgaard, Tanja Denager, Raphael J. M. Schneider, Jesper R. Christiansen,
-> Simon Stisen and Peter L. Langen. Manuscript DOI: pending.
+> Simon Stisen and Peter L. Langen. Manuscript preprint DOI: [preprint](https://doi.org/10.5194/egusphere-2026-1139).
 
 The revised evaluation examines deterministic skill, event detection,
 probabilistic calibration, precipitation climatology, spatial structure, temporal
