@@ -36,7 +36,8 @@ precipitation beyond pointwise accuracy.
 archive. This checkout includes the revised evaluation and previously audited
 $\sigma^{*}$ implementation fixes; the trained weights and architecture are
 unchanged. The scientific implementations and final figure settings are now
-frozen. The revised software release version is pending.
+frozen. This checkout is prepared for software release **v1.1.0**, with publication
+pending; see the [release notes](docs/RELEASE_NOTES.md).
 
 ## Repository structure
 
@@ -111,7 +112,7 @@ from saved ensembles is a separate workflow under `revision_evaluation/` and
 | Original v1.0.2 source code | [Zenodo: 10.5281/zenodo.18643186](https://doi.org/10.5281/zenodo.18643186) |
 | Trained B0/final-model weights and `Data_DiffMod_small` | [Zenodo: 10.5281/zenodo.18643307](https://doi.org/10.5281/zenodo.18643307) |
 | Compact manuscript figure data | Zenodo DOI pending |
-| Revised source release | [GitHub releases](https://github.com/TheaQG/CEDDAR/releases); version and new source DOI pending |
+| Revised source release (v1.1.0) | [GitHub releases](https://github.com/TheaQG/CEDDAR/releases); publication and new source DOI pending |
 | Manuscript | GMD manuscript DOI pending |
 
 The figure-data archive contains derived products and does not replace source
