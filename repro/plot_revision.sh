@@ -8,8 +8,8 @@ export PYTHONDONTWRITEBYTECODE=1
 export MPLBACKEND=Agg
 
 case "${1:-}" in
-    probabilistic|dry_bias|morphology) GROUP="$1"; shift ;;
-    *) echo "Usage: $0 {probabilistic|dry_bias|morphology} --input-dir METRIC_DIRECTORY [--output-dir NEW_EXTERNAL_DIRECTORY]" >&2; exit 2 ;;
+    probabilistic|morphology) GROUP="$1"; shift ;;
+    *) echo "Usage: $0 {probabilistic|morphology} --input-dir METRIC_DIRECTORY [--output-dir NEW_EXTERNAL_DIRECTORY]" >&2; exit 2 ;;
 esac
 
 exec "${PYTHON:-python}" -m "revision_evaluation.plot_${GROUP}" "$@"
