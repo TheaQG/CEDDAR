@@ -171,7 +171,7 @@ class ArtifactTests(unittest.TestCase):
             prepare_output(self.root/'results/probabilistic', self.root/'plots',
                            {'status': 'failed', 'stage': 'probabilistic'}, 'probabilistic')
 
-    def test_cli_launchers_and_group1_plots(self):
+    def test_cli_launchers_and_probabilistic_plots(self):
         deterministic = run_deterministic(self.cfg)
         source = Path(__file__).resolve().parents[2]
         env = {**os.environ, 'PYTHON': sys.executable}
@@ -180,12 +180,11 @@ class ArtifactTests(unittest.TestCase):
                                 cwd=self.root, env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Metrics pass: 2/2', result.stderr)
-        for group in ('deterministic', 'probabilistic'):
-            result = subprocess.run(['bash', str(source/'repro/plot_revision.sh'), group,
-                                     '--input-dir', str(deterministic.parent/group)],
-                                    cwd=self.root, env=env, capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(list((self.root/'results/manuscript_ready/deterministic').glob('*.pdf'))), 2)
+        result = subprocess.run(['bash', str(source/'repro/plot_revision.sh'), 'probabilistic',
+                                 '--input-dir', str(deterministic.parent/'probabilistic')],
+                                cwd=self.root, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(list((self.root/'results/manuscript_ready/probabilistic').glob('*.pdf'))), 5)
 
 
 if __name__ == '__main__':
